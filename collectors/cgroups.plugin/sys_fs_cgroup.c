@@ -23,6 +23,11 @@ static int cgroup_enable_blkio_throttle_io = CONFIG_BOOLEAN_AUTO;
 static int cgroup_enable_blkio_throttle_ops = CONFIG_BOOLEAN_AUTO;
 static int cgroup_enable_blkio_merged_ops = CONFIG_BOOLEAN_AUTO;
 static int cgroup_enable_blkio_queued_ops = CONFIG_BOOLEAN_AUTO;
+static int cgroup_enable_pressure_cpu = CONFIG_BOOLEAN_AUTO;
+static int cgroup_enable_pressure_io_some = CONFIG_BOOLEAN_AUTO;
+static int cgroup_enable_pressure_io_full = CONFIG_BOOLEAN_AUTO;
+static int cgroup_enable_pressure_memory_some = CONFIG_BOOLEAN_AUTO;
+static int cgroup_enable_pressure_memory_full = CONFIG_BOOLEAN_AUTO;
 
 static int cgroup_enable_systemd_services = CONFIG_BOOLEAN_YES;
 static int cgroup_enable_systemd_services_detailed_memory = CONFIG_BOOLEAN_NO;
@@ -105,6 +110,12 @@ void read_cgroup_plugin_configuration() {
     cgroup_enable_blkio_queued_ops = config_get_boolean_ondemand("plugin:cgroups", "enable blkio queued operations", cgroup_enable_blkio_queued_ops);
     cgroup_enable_blkio_merged_ops = config_get_boolean_ondemand("plugin:cgroups", "enable blkio merged operations", cgroup_enable_blkio_merged_ops);
 
+    cgroup_enable_pressure_cpu = config_get_boolean_ondemand("plugin:cgroups", "enable cpu pressure", cgroup_enable_pressure_cpu);
+    cgroup_enable_pressure_io_some = config_get_boolean_ondemand("plugin:cgroups", "enable io some pressure", cgroup_enable_pressure_io_some);
+    cgroup_enable_pressure_io_full = config_get_boolean_ondemand("plugin:cgroups", "enable io full pressure", cgroup_enable_pressure_io_full);
+    cgroup_enable_pressure_memory_some = config_get_boolean_ondemand("plugin:cgroups", "enable memory some pressure", cgroup_enable_pressure_memory_some);
+    cgroup_enable_pressure_memory_full = config_get_boolean_ondemand("plugin:cgroups", "enable memory full pressure", cgroup_enable_pressure_memory_full);
+
     cgroup_recheck_zero_blkio_every_iterations = (int)config_get_number("plugin:cgroups", "recheck zero blkio every iterations", cgroup_recheck_zero_blkio_every_iterations);
     cgroup_recheck_zero_mem_failcnt_every_iterations = (int)config_get_number("plugin:cgroups", "recheck zero memory failcnt every iterations", cgroup_recheck_zero_mem_failcnt_every_iterations);
     cgroup_recheck_zero_mem_detailed_every_iterations = (int)config_get_number("plugin:cgroups", "recheck zero detailed memory every iterations", cgroup_recheck_zero_mem_detailed_every_iterations);
@@ -116,6 +127,13 @@ void read_cgroup_plugin_configuration() {
     char filename[FILENAME_MAX + 1], *s;
     struct mountinfo *mi, *root = mountinfo_read(0);
     if(!cgroup_use_unified_cgroups) {
+        // cgroup v1 does not have pressure metrics
+        cgroup_enable_pressure_cpu =
+        cgroup_enable_pressure_io_some =
+        cgroup_enable_pressure_io_full =
+        cgroup_enable_pressure_memory_some =
+        cgroup_enable_pressure_memory_full = CONFIG_BOOLEAN_NO;
+
         mi = mountinfo_find_by_filesystem_super_option(root, "cgroup", "cpuacct");
         if(!mi) mi = mountinfo_find_by_filesystem_mount_source(root, "cgroup", "cpuacct");
         if(!mi) {
@@ -461,6 +479,10 @@ struct cgroup {
 
     struct cgroup_network_interface *interfaces;
 
+    struct pressure cpu_pressure;
+    struct pressure io_pressure;
+    struct pressure memory_pressure;
+
     // per cgroup charts
     RRDSET *st_cpu;
     RRDSET *st_cpu_limit;
@@ -575,7 +597,8 @@ static inline void cgroup_read_cpuacct_stat(struct cpuacct_stat *cp) {
 
         cp->updated = 1;
 
-        if(unlikely(cp->enabled == CONFIG_BOOLEAN_AUTO && (cp->user || cp->system)))
+        if(unlikely(cp->enabled == CONFIG_BOOLEAN_AUTO &&
+                    (cp->user || cp->system || netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES)))
             cp->enabled = CONFIG_BOOLEAN_YES;
     }
 }
@@ -611,7 +634,8 @@ static inline void cgroup2_read_cpuacct_stat(struct cpuacct_stat *cp) {
 
         cp->updated = 1;
 
-        if(unlikely(cp->enabled == CONFIG_BOOLEAN_AUTO && (cp->user || cp->system)))
+        if(unlikely(cp->enabled == CONFIG_BOOLEAN_AUTO &&
+                    (cp->user || cp->system || netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES)))
             cp->enabled = CONFIG_BOOLEAN_YES;
     }
 }
@@ -668,7 +692,8 @@ static inline void cgroup_read_cpuacct_usage(struct cpuacct_usage *ca) {
 
         ca->updated = 1;
 
-        if(unlikely(ca->enabled == CONFIG_BOOLEAN_AUTO && total))
+        if(unlikely(ca->enabled == CONFIG_BOOLEAN_AUTO &&
+                    (total || netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES)))
             ca->enabled = CONFIG_BOOLEAN_YES;
     }
 }
@@ -737,7 +762,7 @@ static inline void cgroup_read_blkio(struct blkio *io) {
         io->updated = 1;
 
         if(unlikely(io->enabled == CONFIG_BOOLEAN_AUTO)) {
-            if(unlikely(io->Read || io->Write))
+            if(unlikely(io->Read || io->Write || netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES))
                 io->enabled = CONFIG_BOOLEAN_YES;
             else
                 io->delay_counter = cgroup_recheck_zero_blkio_every_iterations;
@@ -787,12 +812,60 @@ static inline void cgroup2_read_blkio(struct blkio *io, unsigned int word_offset
             io->updated = 1;
 
             if(unlikely(io->enabled == CONFIG_BOOLEAN_AUTO)) {
-                if(unlikely(io->Read || io->Write))
+                if(unlikely(io->Read || io->Write || netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES))
                     io->enabled = CONFIG_BOOLEAN_YES;
                 else
                     io->delay_counter = cgroup_recheck_zero_blkio_every_iterations;
             }
         }
+}
+
+static inline void cgroup2_read_pressure(struct pressure *res) {
+    static procfile *ff = NULL;
+
+    if (likely(res->filename)) {
+        ff = procfile_reopen(ff, res->filename, " =", PROCFILE_FLAG_DEFAULT);
+        if (unlikely(!ff)) {
+            res->updated = 0;
+            cgroups_check = 1;
+            return;
+        }
+
+        ff = procfile_readall(ff);
+        if (unlikely(!ff)) {
+            res->updated = 0;
+            cgroups_check = 1;
+            return;
+        }
+
+        size_t lines = procfile_lines(ff);
+        if (lines < 1) {
+            error("CGROUP: file '%s' should have 1+ lines.", res->filename);
+            res->updated = 0;
+            return;
+        }
+
+        res->some.value10 = strtod(procfile_lineword(ff, 0, 2), NULL);
+        res->some.value60 = strtod(procfile_lineword(ff, 0, 4), NULL);
+        res->some.value300 = strtod(procfile_lineword(ff, 0, 6), NULL);
+
+        if (lines > 2) {
+            res->full.value10 = strtod(procfile_lineword(ff, 1, 2), NULL);
+            res->full.value60 = strtod(procfile_lineword(ff, 1, 4), NULL);
+            res->full.value300 = strtod(procfile_lineword(ff, 1, 6), NULL);
+        }
+
+        res->updated = 1;
+
+        if (unlikely(res->some.enabled == CONFIG_BOOLEAN_AUTO)) {
+            res->some.enabled = CONFIG_BOOLEAN_YES;
+            if (lines > 2) {
+                res->full.enabled = CONFIG_BOOLEAN_YES;
+            } else {
+                res->full.enabled = CONFIG_BOOLEAN_NO;
+            }
+        }
+    }
 }
 
 static inline void cgroup_read_memory(struct memory *mem, char parent_cg_is_unified) {
@@ -881,7 +954,8 @@ static inline void cgroup_read_memory(struct memory *mem, char parent_cg_is_unif
             if(( (!parent_cg_is_unified) && ( mem->total_cache || mem->total_dirty || mem->total_rss || mem->total_rss_huge || mem->total_mapped_file || mem->total_writeback
                     || mem->total_swap || mem->total_pgpgin || mem->total_pgpgout || mem->total_pgfault || mem->total_pgmajfault))
                || (parent_cg_is_unified && ( mem->anon || mem->total_dirty || mem->kernel_stack || mem->slab || mem->sock || mem->total_writeback
-                    || mem->anon_thp || mem->total_pgfault || mem->total_pgmajfault)))
+                    || mem->anon_thp || mem->total_pgfault || mem->total_pgmajfault))
+               || netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES)
                 mem->enabled_detailed = CONFIG_BOOLEAN_YES;
             else
                 mem->delay_counter_detailed = cgroup_recheck_zero_mem_detailed_every_iterations;
@@ -893,14 +967,16 @@ memory_next:
     // read usage_in_bytes
     if(likely(mem->filename_usage_in_bytes)) {
         mem->updated_usage_in_bytes = !read_single_number_file(mem->filename_usage_in_bytes, &mem->usage_in_bytes);
-        if(unlikely(mem->updated_usage_in_bytes && mem->enabled_usage_in_bytes == CONFIG_BOOLEAN_AUTO && mem->usage_in_bytes))
+        if(unlikely(mem->updated_usage_in_bytes && mem->enabled_usage_in_bytes == CONFIG_BOOLEAN_AUTO &&
+                    (mem->usage_in_bytes || netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES)))
             mem->enabled_usage_in_bytes = CONFIG_BOOLEAN_YES;
     }
 
     // read msw_usage_in_bytes
     if(likely(mem->filename_msw_usage_in_bytes)) {
         mem->updated_msw_usage_in_bytes = !read_single_number_file(mem->filename_msw_usage_in_bytes, &mem->msw_usage_in_bytes);
-        if(unlikely(mem->updated_msw_usage_in_bytes && mem->enabled_msw_usage_in_bytes == CONFIG_BOOLEAN_AUTO && mem->msw_usage_in_bytes))
+        if(unlikely(mem->updated_msw_usage_in_bytes && mem->enabled_msw_usage_in_bytes == CONFIG_BOOLEAN_AUTO &&
+                    (mem->msw_usage_in_bytes || netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES)))
             mem->enabled_msw_usage_in_bytes = CONFIG_BOOLEAN_YES;
     }
 
@@ -913,10 +989,10 @@ memory_next:
         else {
             mem->updated_failcnt = !read_single_number_file(mem->filename_failcnt, &mem->failcnt);
             if(unlikely(mem->updated_failcnt && mem->enabled_failcnt == CONFIG_BOOLEAN_AUTO)) {
-                if(unlikely(!mem->failcnt))
-                    mem->delay_counter_failcnt = cgroup_recheck_zero_mem_failcnt_every_iterations;
-                else
+                if(unlikely(mem->failcnt || netdata_zero_metrics_enabled == CONFIG_BOOLEAN_YES))
                     mem->enabled_failcnt = CONFIG_BOOLEAN_YES;
+                else
+                    mem->delay_counter_failcnt = cgroup_recheck_zero_mem_failcnt_every_iterations;
             }
         }
     }
@@ -940,6 +1016,9 @@ static inline void cgroup_read(struct cgroup *cg) {
         cgroup2_read_blkio(&cg->io_service_bytes, 0);
         cgroup2_read_blkio(&cg->io_serviced, 4);
         cgroup2_read_cpuacct_stat(&cg->cpuacct_stat);
+        cgroup2_read_pressure(&cg->cpu_pressure);
+        cgroup2_read_pressure(&cg->io_pressure);
+        cgroup2_read_pressure(&cg->memory_pressure);
         cgroup_read_memory(&cg->memory, 1);
     }
 }
@@ -1230,6 +1309,12 @@ static inline struct cgroup *cgroup_add(const char *id) {
     return cg;
 }
 
+static inline void free_pressure(struct pressure *res) {
+    if (res->some.st)   rrdset_is_obsolete(res->some.st);
+    if (res->full.st)   rrdset_is_obsolete(res->full.st);
+    freez(res->filename);
+}
+
 static inline void cgroup_free(struct cgroup *cg) {
     debug(D_CGROUP, "Removing cgroup '%s' with chart id '%s' (was %s and %s)", cg->id, cg->chart_id, (cg->enabled)?"enabled":"disabled", (cg->available)?"available":"not available");
 
@@ -1277,6 +1362,10 @@ static inline void cgroup_free(struct cgroup *cg) {
 
     freez(cg->io_merged.filename);
     freez(cg->io_queued.filename);
+
+    free_pressure(&cg->cpu_pressure);
+    free_pressure(&cg->io_pressure);
+    free_pressure(&cg->memory_pressure);
 
     freez(cg->id);
     freez(cg->chart_id);
@@ -1741,6 +1830,42 @@ static inline void find_all_cgroups() {
                 }
                 else
                     debug(D_CGROUP, "memory.swap file for cgroup '%s': '%s' does not exist.", cg->id, filename);
+            }
+
+            if (unlikely(cgroup_enable_pressure_cpu && !cg->cpu_pressure.filename)) {
+                snprintfz(filename, FILENAME_MAX, "%s%s/cpu.pressure", cgroup_unified_base, cg->id);
+                if (likely(stat(filename, &buf) != -1)) {
+                    cg->cpu_pressure.filename = strdupz(filename);
+                    cg->cpu_pressure.some.enabled = cgroup_enable_pressure_cpu;
+                    cg->cpu_pressure.full.enabled = CONFIG_BOOLEAN_NO;
+                    debug(D_CGROUP, "cpu.pressure filename for cgroup '%s': '%s'", cg->id, cg->cpu_pressure.filename);
+                } else {
+                    debug(D_CGROUP, "cpu.pressure file for cgroup '%s': '%s' does not exist", cg->id, filename);
+                }
+            }
+
+            if (unlikely((cgroup_enable_pressure_io_some || cgroup_enable_pressure_io_full) && !cg->io_pressure.filename)) {
+                snprintfz(filename, FILENAME_MAX, "%s%s/io.pressure", cgroup_unified_base, cg->id);
+                if (likely(stat(filename, &buf) != -1)) {
+                    cg->io_pressure.filename = strdupz(filename);
+                    cg->io_pressure.some.enabled = cgroup_enable_pressure_io_some;
+                    cg->io_pressure.full.enabled = cgroup_enable_pressure_io_full;
+                    debug(D_CGROUP, "io.pressure filename for cgroup '%s': '%s'", cg->id, cg->io_pressure.filename);
+                } else {
+                    debug(D_CGROUP, "io.pressure file for cgroup '%s': '%s' does not exist", cg->id, filename);
+                }
+            }
+
+            if (unlikely((cgroup_enable_pressure_memory_some || cgroup_enable_pressure_memory_full) && !cg->memory_pressure.filename)) {
+                snprintfz(filename, FILENAME_MAX, "%s%s/memory.pressure", cgroup_unified_base, cg->id);
+                if (likely(stat(filename, &buf) != -1)) {
+                    cg->memory_pressure.filename = strdupz(filename);
+                    cg->memory_pressure.some.enabled = cgroup_enable_pressure_memory_some;
+                    cg->memory_pressure.full.enabled = cgroup_enable_pressure_memory_full;
+                    debug(D_CGROUP, "memory.pressure filename for cgroup '%s': '%s'", cg->id, cg->memory_pressure.filename);
+                } else {
+                    debug(D_CGROUP, "memory.pressure file for cgroup '%s': '%s' does not exist", cg->id, filename);
+                }
             }
         }
     }
@@ -2831,17 +2956,16 @@ void update_cgroup_charts(int update_every) {
                                     , RRDSET_TYPE_LINE
                             );
 
-                            rrddim_add(cg->st_cpu_limit, "used", NULL, 1, 1, RRD_ALGORITHM_ABSOLUTE);
+                            if(!(cg->options & CGROUP_OPTIONS_IS_UNIFIED))
+                                rrddim_add(cg->st_cpu_limit, "used", NULL, 1, system_hz, RRD_ALGORITHM_ABSOLUTE);
+                            else
+                                rrddim_add(cg->st_cpu_limit, "used", NULL, 1, 1000000, RRD_ALGORITHM_ABSOLUTE);
                         }
                         else
                             rrdset_next(cg->st_cpu_limit);
 
                         calculated_number cpu_usage = 0;
-                        if(!(cg->options & CGROUP_OPTIONS_IS_UNIFIED))
-                            cpu_usage = (calculated_number)(cg->cpuacct_stat.user + cg->cpuacct_stat.system) * 100 / system_hz;
-                        else
-                            cpu_usage = (calculated_number)(cg->cpuacct_stat.user + cg->cpuacct_stat.system) * 100 / 1000000;
-
+                        cpu_usage = (calculated_number)(cg->cpuacct_stat.user + cg->cpuacct_stat.system) * 100;
                         calculated_number cpu_used = 100 * (cpu_usage - cg->prev_cpu_usage) / (value * update_every);
 
                         rrdset_isnot_obsolete(cg->st_cpu_limit);
@@ -3358,6 +3482,156 @@ void update_cgroup_charts(int update_every) {
             rrddim_set(cg->st_merged_ops, "read", cg->io_merged.Read);
             rrddim_set(cg->st_merged_ops, "write", cg->io_merged.Write);
             rrdset_done(cg->st_merged_ops);
+        }
+
+        if (cg->options & CGROUP_OPTIONS_IS_UNIFIED) {
+            struct pressure *res = &cg->cpu_pressure;
+            if (likely(res->updated && res->some.enabled)) {
+                if (unlikely(!res->some.st)) {
+                    RRDSET *chart;
+                    snprintfz(title, CHART_TITLE_MAX, "CPU pressure for cgroup %s", cg->chart_title);
+
+                    chart = res->some.st = rrdset_create_localhost(
+                        cgroup_chart_type(type, cg->chart_id, RRD_ID_LENGTH_MAX)
+                        , "cpu_pressure"
+                        , NULL
+                        , "cpu"
+                        , "cgroup.cpu_pressure"
+                        , title
+                        , "percentage"
+                        , PLUGIN_CGROUPS_NAME
+                        , PLUGIN_CGROUPS_MODULE_CGROUPS_NAME
+                        , cgroup_containers_chart_priority + 2200
+                        , update_every,
+                        RRDSET_TYPE_LINE);
+
+                    res->some.rd10 = rrddim_add(chart, "some 10", NULL, 1, 100, RRD_ALGORITHM_ABSOLUTE);
+                    res->some.rd60 = rrddim_add(chart, "some 60", NULL, 1, 100, RRD_ALGORITHM_ABSOLUTE);
+                    res->some.rd300 = rrddim_add(chart, "some 300", NULL, 1, 100, RRD_ALGORITHM_ABSOLUTE);
+                } else {
+                    rrdset_next(res->some.st);
+                }
+
+                update_pressure_chart(&res->some);
+            }
+
+            res = &cg->memory_pressure;
+            if (likely(res->updated && res->some.enabled)) {
+                if (unlikely(!res->some.st)) {
+                    RRDSET *chart;
+                    snprintfz(title, CHART_TITLE_MAX, "Memory pressure for cgroup %s", cg->chart_title);
+
+                    chart = res->some.st = rrdset_create_localhost(
+                        cgroup_chart_type(type, cg->chart_id, RRD_ID_LENGTH_MAX)
+                        , "mem_pressure"
+                        , NULL
+                        , "mem"
+                        , "cgroup.memory_pressure"
+                        , title
+                        , "percentage"
+                        , PLUGIN_CGROUPS_NAME
+                        , PLUGIN_CGROUPS_MODULE_CGROUPS_NAME
+                        , cgroup_containers_chart_priority + 2300
+                        , update_every,
+                        RRDSET_TYPE_LINE);
+
+                    res->some.rd10 = rrddim_add(chart, "some 10", NULL, 1, 100, RRD_ALGORITHM_ABSOLUTE);
+                    res->some.rd60 = rrddim_add(chart, "some 60", NULL, 1, 100, RRD_ALGORITHM_ABSOLUTE);
+                    res->some.rd300 = rrddim_add(chart, "some 300", NULL, 1, 100, RRD_ALGORITHM_ABSOLUTE);
+                } else {
+                    rrdset_next(res->some.st);
+                }
+
+                update_pressure_chart(&res->some);
+            }
+
+            if (likely(res->updated && res->full.enabled)) {
+                if (unlikely(!res->full.st)) {
+                    RRDSET *chart;
+                    snprintfz(title, CHART_TITLE_MAX, "Memory full pressure for cgroup %s", cg->chart_title);
+
+                    chart = res->full.st = rrdset_create_localhost(
+                        cgroup_chart_type(type, cg->chart_id, RRD_ID_LENGTH_MAX)
+                        , "mem_full_pressure"
+                        , NULL
+                        , "mem"
+                        , "cgroup.memory_full_pressure"
+                        , title
+                        , "percentage"
+                        , PLUGIN_CGROUPS_NAME
+                        , PLUGIN_CGROUPS_MODULE_CGROUPS_NAME
+                        , cgroup_containers_chart_priority + 2350
+                        , update_every,
+                        RRDSET_TYPE_LINE);
+
+                    res->full.rd10 = rrddim_add(chart, "full 10", NULL, 1, 100, RRD_ALGORITHM_ABSOLUTE);
+                    res->full.rd60 = rrddim_add(chart, "full 60", NULL, 1, 100, RRD_ALGORITHM_ABSOLUTE);
+                    res->full.rd300 = rrddim_add(chart, "full 300", NULL, 1, 100, RRD_ALGORITHM_ABSOLUTE);
+                } else {
+                    rrdset_next(res->full.st);
+                }
+
+                update_pressure_chart(&res->full);
+            }
+
+            res = &cg->io_pressure;
+            if (likely(res->updated && res->some.enabled)) {
+                if (unlikely(!res->some.st)) {
+                    RRDSET *chart;
+                    snprintfz(title, CHART_TITLE_MAX, "I/O pressure for cgroup %s", cg->chart_title);
+
+                    chart = res->some.st = rrdset_create_localhost(
+                        cgroup_chart_type(type, cg->chart_id, RRD_ID_LENGTH_MAX)
+                        , "io_pressure"
+                        , NULL
+                        , "disk"
+                        , "cgroup.io_pressure"
+                        , title
+                        , "percentage"
+                        , PLUGIN_CGROUPS_NAME
+                        , PLUGIN_CGROUPS_MODULE_CGROUPS_NAME
+                        , cgroup_containers_chart_priority + 2400
+                        , update_every,
+                        RRDSET_TYPE_LINE);
+
+                    res->some.rd10 = rrddim_add(chart, "some 10", NULL, 1, 100, RRD_ALGORITHM_ABSOLUTE);
+                    res->some.rd60 = rrddim_add(chart, "some 60", NULL, 1, 100, RRD_ALGORITHM_ABSOLUTE);
+                    res->some.rd300 = rrddim_add(chart, "some 300", NULL, 1, 100, RRD_ALGORITHM_ABSOLUTE);
+                } else {
+                    rrdset_next(res->some.st);
+                }
+
+                update_pressure_chart(&res->some);
+            }
+
+            if (likely(res->updated && res->full.enabled)) {
+                if (unlikely(!res->full.st)) {
+                    RRDSET *chart;
+                    snprintfz(title, CHART_TITLE_MAX, "I/O full pressure for cgroup %s", cg->chart_title);
+
+                    chart = res->full.st = rrdset_create_localhost(
+                        cgroup_chart_type(type, cg->chart_id, RRD_ID_LENGTH_MAX)
+                        , "io_full_pressure"
+                        , NULL
+                        , "disk"
+                        , "cgroup.io_full_pressure"
+                        , title
+                        , "percentage"
+                        , PLUGIN_CGROUPS_NAME
+                        , PLUGIN_CGROUPS_MODULE_CGROUPS_NAME
+                        , cgroup_containers_chart_priority + 2450
+                        , update_every,
+                        RRDSET_TYPE_LINE);
+
+                    res->full.rd10 = rrddim_add(chart, "full 10", NULL, 1, 100, RRD_ALGORITHM_ABSOLUTE);
+                    res->full.rd60 = rrddim_add(chart, "full 60", NULL, 1, 100, RRD_ALGORITHM_ABSOLUTE);
+                    res->full.rd300 = rrddim_add(chart, "full 300", NULL, 1, 100, RRD_ALGORITHM_ABSOLUTE);
+                } else {
+                    rrdset_next(res->full.st);
+                }
+
+                update_pressure_chart(&res->full);
+            }
         }
     }
 

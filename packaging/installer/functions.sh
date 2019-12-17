@@ -303,7 +303,7 @@ install_non_systemd_init() {
 				run rc-update add netdata default &&
 				return 0
 
-		elif [ "${key}" = "debian-7" ] || [ "${key}" = "ubuntu-12.04" ] || [ "${key}" = "ubuntu-14.04" ]; then
+		elif [ "${key}" =~ ^devuan* ] || [ "${key}" = "debian-7" ] || [ "${key}" = "ubuntu-12.04" ] || [ "${key}" = "ubuntu-14.04" ]; then
 			echo >&2 "Installing LSB init file..."
 			run cp system/netdata-lsb /etc/init.d/netdata &&
 				run chmod 755 /etc/init.d/netdata &&
@@ -380,10 +380,17 @@ install_netdata_service() {
 			fi
 
 			if [ "${SYSTEMD_DIRECTORY}x" != "x" ]; then
+				ENABLE_NETDATA_IF_PREVIOUSLY_ENABLED="run systemctl enable netdata"
+				IS_NETDATA_ENABLED="$(systemctl is-enabled netdata 2> /dev/null || echo "Netdata not there")"
+				if [ "${IS_NETDATA_ENABLED}" == "disabled" ]; then
+					echo >&2 "Netdata was there and disabled, make sure we don't re-enable it ourselves"
+					ENABLE_NETDATA_IF_PREVIOUSLY_ENABLED="true"
+				fi
+
 				echo >&2 "Installing systemd service..."
 				run cp system/netdata.service "${SYSTEMD_DIRECTORY}/netdata.service" &&
 					run systemctl daemon-reload &&
-					run systemctl enable netdata &&
+					${ENABLE_NETDATA_IF_PREVIOUSLY_ENABLED} &&
 					return 0
 			else
 				echo >&2 "no systemd directory; cannot install netdata.service"
@@ -719,4 +726,103 @@ safe_sha256sum() {
 	else
 		fatal "I could not find a suitable checksum binary to use"
 	fi
+}
+
+_get_crondir() {
+	if [ -d /etc/cron.daily ]; then
+		echo /etc/cron.daily
+	elif [ -d /etc/periodic/daily ]; then
+		echo /etc/periodic/daily
+	else
+		echo >&2 "Cannot figure out the cron directory to handle netdata-updater.sh activation/deactivation"
+		return 1
+	fi
+
+	return 0
+}
+
+_check_crondir_permissions() {
+	if [ "${UID}" -ne "0" ]; then
+		# We cant touch cron if we are not running as root
+		echo >&2 "You need to run the installer as root for auto-updating via cron"
+		return 1
+	fi
+
+	return 0
+}
+
+install_netdata_updater() {
+	if [ "${INSTALLER_DIR}" ] && [ -f "${INSTALLER_DIR}/packaging/installer/netdata-updater.sh" ]; then
+		cat "${INSTALLER_DIR}/packaging/installer/netdata-updater.sh" > "${NETDATA_PREFIX}/usr/libexec/netdata/netdata-updater.sh" || return 1
+	fi
+
+	if [ "${NETDATA_SOURCE_DIR}" ] && [ -f "${NETDATA_SOURCE_DIR}/packaging/installer/netdata-updater.sh" ]; then
+		cat "${NETDATA_SOURCE_DIR}/packaging/installer/netdata-updater.sh" > "${NETDATA_PREFIX}/usr/libexec/netdata/netdata-updater.sh" || return 1
+	fi
+
+	sed -e "s|THIS_SHOULD_BE_REPLACED_BY_INSTALLER_SCRIPT|${NETDATA_USER_CONFIG_DIR}/.environment|" -i "${NETDATA_PREFIX}/usr/libexec/netdata/netdata-updater.sh" || return 1
+
+	chmod 0755 ${NETDATA_PREFIX}/usr/libexec/netdata/netdata-updater.sh
+	echo >&2 "Update script is located at ${TPUT_GREEN}${TPUT_BOLD}${NETDATA_PREFIX}/usr/libexec/netdata/netdata-updater.sh${TPUT_RESET}"
+	echo >&2
+
+	return 0
+}
+
+cleanup_old_netdata_updater() {
+	if [ -f "${NETDATA_PREFIX}"/usr/libexec/netdata-updater.sh ]; then
+		echo >&2 "Removing updater from deprecated location"
+		rm -f "${NETDATA_PREFIX}"/usr/libexec/netdata-updater.sh
+	fi
+
+	crondir="$(_get_crondir)" || return 1
+	_check_crondir_permissions "${crondir}" || return 1
+
+	if [ -f "${crondir}/netdata-updater.sh" ]; then
+		echo >&2 "Removing incorrect netdata-updater filename in cron"
+		rm -f "${crondir}/netdata-updater.sh"
+	fi
+
+	return 0
+}
+
+enable_netdata_updater() {
+	crondir="$(_get_crondir)" || return 1
+	_check_crondir_permissions "${crondir}" || return 1
+
+	echo >&2 "Adding to cron"
+
+	rm -f "${crondir}/netdata-updater"
+	ln -sf "${NETDATA_PREFIX}/usr/libexec/netdata/netdata-updater.sh" "${crondir}/netdata-updater"
+
+	echo >&2 "Auto-updating has been enabled. Updater script linked to: ${TPUT_RED}${TPUT_BOLD}${crondir}/netdata-update${TPUT_RESET}"
+	echo >&2
+	echo >&2 "${TPUT_DIM}${TPUT_BOLD}netdata-updater.sh${TPUT_RESET}${TPUT_DIM} works from cron. It will trigger an email from cron"
+	echo >&2 "only if it fails (it should not print anything when it can update netdata).${TPUT_RESET}"
+	echo >&2
+
+	return 0
+}
+
+disable_netdata_updater() {
+	crondir="$(_get_crondir)" || return 1
+	_check_crondir_permissions "${crondir}" || return 1
+
+	echo >&2 "You chose *NOT* to enable auto-update, removing any links to the updater from cron (it may have happened if you are reinstalling)"
+	echo >&2
+
+	if [ -f "${crondir}/netdata-updater" ]; then
+		echo >&2 "Removing cron reference: ${crondir}/netdata-updater"
+		echo >&2
+		rm -f "${crondir}/netdata-updater"
+	else
+		echo >&2 "Did not find any cron entries to remove"
+		echo >&2
+	fi
+
+	return 0
+}
+
+set_netdata_updater_channel() {
+	sed -e "s/^RELEASE_CHANNEL=.*/RELEASE_CHANNEL=\"${RELEASE_CHANNEL}\"/" -i "${NETDATA_USER_CONFIG_DIR}/.environment"
 }

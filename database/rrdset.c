@@ -150,7 +150,7 @@ int rrdset_set_name(RRDSET *st, const char *name) {
     rrdset_strncpyz_name(b, n, CONFIG_MAX_VALUE);
 
     if(rrdset_index_find_name(host, b, 0)) {
-        error("RRDSET: chart name '%s' on host '%s' already exists.", b, host->hostname);
+        info("RRDSET: chart name '%s' on host '%s' already exists.", b, host->hostname);
         return 0;
     }
 
@@ -210,7 +210,7 @@ inline void rrdset_update_heterogeneous_flag(RRDSET *st) {
 
     RRDDIM *rd;
 
-    rrdset_flag_clear(st, RRDSET_FLAG_HOMEGENEOUS_CHECK);
+    rrdset_flag_clear(st, RRDSET_FLAG_HOMOGENEOUS_CHECK);
 
     RRD_ALGORITHM algorithm = st->dimensions->algorithm;
     collected_number multiplier = abs(st->dimensions->multiplier);
@@ -251,6 +251,7 @@ void rrdset_reset(RRDSET *st) {
     st->current_entry = 0;
     st->counter = 0;
     st->counter_done = 0;
+    st->rrddim_page_alignment = 0;
 
     RRDDIM *rd;
     rrddim_foreach_read(rd, st) {
@@ -258,6 +259,11 @@ void rrdset_reset(RRDSET *st) {
         rd->last_collected_time.tv_usec = 0;
         rd->collections_counter = 0;
         // memset(rd->values, 0, rd->entries * sizeof(storage_number));
+#ifdef ENABLE_DBENGINE
+        if (RRD_MEMORY_MODE_DBENGINE == st->rrd_memory_mode) {
+            rrdeng_store_metric_flush_current_page(rd);
+        }
+#endif
     }
 }
 
@@ -322,6 +328,8 @@ void rrdset_free(RRDSET *st) {
     // ------------------------------------------------------------------------
     // free its children structures
 
+    freez(st->exporting_flags);
+
     while(st->variables)  rrdsetvar_free(st->variables);
     while(st->alarms)     rrdsetcalc_unlink(st->alarms);
     while(st->dimensions) rrddim_free(st, st->dimensions);
@@ -363,13 +371,13 @@ void rrdset_free(RRDSET *st) {
         case RRD_MEMORY_MODE_SAVE:
         case RRD_MEMORY_MODE_MAP:
         case RRD_MEMORY_MODE_RAM:
-        case RRD_MEMORY_MODE_DBENGINE:
             debug(D_RRD_CALLS, "Unmapping stats '%s'.", st->name);
             munmap(st, st->memsize);
             break;
 
         case RRD_MEMORY_MODE_ALLOC:
         case RRD_MEMORY_MODE_NONE:
+        case RRD_MEMORY_MODE_DBENGINE:
             freez(st);
             break;
     }
@@ -505,6 +513,12 @@ RRDSET *rrdset_create_custom(
     if(st) {
         rrdset_flag_set(st, RRDSET_FLAG_SYNC_CLOCK);
         rrdset_flag_clear(st, RRDSET_FLAG_UPSTREAM_EXPOSED);
+
+        if(unlikely(name))
+            rrdset_set_name(st, name);
+        else
+            rrdset_set_name(st, id);
+
         return st;
     }
 
@@ -557,9 +571,9 @@ RRDSET *rrdset_create_custom(
 
     snprintfz(fullfilename, FILENAME_MAX, "%s/main.db", cache_dir);
     if(memory_mode == RRD_MEMORY_MODE_SAVE || memory_mode == RRD_MEMORY_MODE_MAP ||
-       memory_mode == RRD_MEMORY_MODE_RAM || memory_mode == RRD_MEMORY_MODE_DBENGINE) {
+       memory_mode == RRD_MEMORY_MODE_RAM) {
         st = (RRDSET *) mymmap(
-                  (memory_mode == RRD_MEMORY_MODE_RAM || memory_mode == RRD_MEMORY_MODE_DBENGINE)?NULL:fullfilename
+                  (memory_mode == RRD_MEMORY_MODE_RAM) ? NULL : fullfilename
                 , size
                 , ((memory_mode == RRD_MEMORY_MODE_MAP) ? MAP_SHARED : MAP_PRIVATE)
                 , 0
@@ -590,7 +604,7 @@ RRDSET *rrdset_create_custom(
             st->alarms = NULL;
             st->flags = 0x00000000;
 
-            if(memory_mode == RRD_MEMORY_MODE_RAM || memory_mode == RRD_MEMORY_MODE_DBENGINE) {
+            if(memory_mode == RRD_MEMORY_MODE_RAM) {
                 memset(st, 0, size);
             }
             else {
@@ -702,6 +716,7 @@ RRDSET *rrdset_create_custom(
     st->last_collected_time.tv_sec = 0;
     st->last_collected_time.tv_usec = 0;
     st->counter_done = 0;
+    st->rrddim_page_alignment = 0;
 
     st->gap_when_lost_iterations_above = (int) (gap_when_lost_iterations_above + 2);
 
@@ -1273,6 +1288,22 @@ void rrdset_done(RRDSET *st) {
         first_entry = 1;
     }
 
+#ifdef ENABLE_DBENGINE
+    // check if we will re-write the entire page
+    if(unlikely(st->rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE &&
+                dt_usec(&st->last_collected_time, &st->last_updated) > (RRDENG_BLOCK_SIZE / sizeof(storage_number)) * update_every_ut)) {
+        info("%s: too old data (last updated at %ld.%ld, last collected at %ld.%ld). Resetting it. Will not store the next entry.", st->name, st->last_updated.tv_sec, st->last_updated.tv_usec, st->last_collected_time.tv_sec, st->last_collected_time.tv_usec);
+        rrdset_reset(st);
+        rrdset_init_last_updated_time(st);
+
+        st->usec_since_last_update = update_every_ut;
+
+        // the first entry should not be stored
+        store_this_entry = 0;
+        first_entry = 1;
+    }
+#endif
+
     // these are the 3 variables that will help us in interpolation
     // last_stored_ut = the last time we added a value to the storage
     // now_collect_ut = the time the current value has been collected
@@ -1418,9 +1449,11 @@ void rrdset_done(RRDSET *st) {
                     continue;
                 }
 
-                // if the new is smaller than the old (an overflow, or reset), set the old equal to the new
-                // to reset the calculation (it will give zero as the calculation for this second)
-                if(unlikely(rd->last_collected_value > rd->collected_value)) {
+                // If the new is smaller than the old (an overflow, or reset), set the old equal to the new
+                // to reset the calculation (it will give zero as the calculation for this second).
+                // It is imperative to set the comparison to uint64_t since type collected_number is signed and
+                // produces wrong results as far as incremental counters are concerned.
+                if(unlikely((uint64_t)rd->last_collected_value > (uint64_t)rd->collected_value)) {
                     debug(D_RRD_STATS, "%s.%s: RESET or OVERFLOW. Last collected value = " COLLECTED_NUMBER_FORMAT ", current = " COLLECTED_NUMBER_FORMAT
                           , st->name, rd->name
                           , rd->last_collected_value
@@ -1434,17 +1467,29 @@ void rrdset_done(RRDSET *st) {
                     uint64_t max = (uint64_t)rd->collected_value_max;
                     uint64_t cap = 0;
 
-                         if(max > 0x00000000FFFFFFFFULL) cap = 0xFFFFFFFFFFFFFFFFULL;
-                    else if(max > 0x000000000000FFFFULL) cap = 0x00000000FFFFFFFFULL;
-                    else if(max > 0x00000000000000FFULL) cap = 0x000000000000FFFFULL;
-                    else                                 cap = 0x00000000000000FFULL;
+                    // Signed values are handled by exploiting two's complement which will produce positive deltas
+                    if (max > 0x00000000FFFFFFFFULL)
+                        cap = 0xFFFFFFFFFFFFFFFFULL; // handles signed and unsigned 64-bit counters
+                    else
+                        cap = 0x00000000FFFFFFFFULL; // handles signed and unsigned 32-bit counters
 
                     uint64_t delta = cap - last + new;
+                    uint64_t max_acceptable_rate = (cap / 100) * MAX_INCREMENTAL_PERCENT_RATE;
 
-                    rd->calculated_value +=
-                            (calculated_number) delta
-                            * (calculated_number) rd->multiplier
-                            / (calculated_number) rd->divisor;
+                    // If the delta is less than the maximum acceptable rate and the previous value was near the cap
+                    // then this is an overflow. There can be false positives such that a reset is detected as an
+                    // overflow.
+                    // TODO: remember recent history of rates and compare with current rate to reduce this chance.
+                    if (delta < max_acceptable_rate) {
+                        rd->calculated_value +=
+                                (calculated_number) delta
+                                * (calculated_number) rd->multiplier
+                                / (calculated_number) rd->divisor;
+                    } else {
+                        // This is a reset. Any overflow with a rate greater than MAX_INCREMENTAL_PERCENT_RATE will also
+                        // be detected as a reset instead.
+                        rd->calculated_value += (calculated_number)0;
+                    }
                 }
                 else {
                     rd->calculated_value +=

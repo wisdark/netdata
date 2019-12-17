@@ -55,7 +55,7 @@ download_go() {
 	else
 		echo >&2
 		echo >&2 "Downloading go.d plugin from '${url}' failed because of missing mandatory packages."
-	        echo >&2 "Either add packages or disable it by issuing '--disable-go' in the installer"
+		echo >&2 "Either add packages or disable it by issuing '--disable-go' in the installer"
 		echo >&2
 
 		run_failed "I need curl or wget to proceed, but neither is available on this system."
@@ -158,6 +158,8 @@ USAGE: ${PROGRAM} [options]
   --disable-go               Disable installation of go.d.plugin.
   --enable-plugin-freeipmi   Enable the FreeIPMI plugin. Default: enable it when libipmimonitoring is available.
   --disable-plugin-freeipmi
+  --disable-https            Explicitly disable TLS support
+  --disable-dbengine         Explicitly disable DB engine support
   --enable-plugin-nfacct     Enable nfacct plugin. Default: enable it when libmnl and libnetfilter_acct are available.
   --disable-plugin-nfacct
   --enable-plugin-xenstat    Enable the xenstat plugin. Default: enable it when libxenstat and libyajl are available
@@ -165,6 +167,11 @@ USAGE: ${PROGRAM} [options]
   --enable-backend-kinesis   Enable AWS Kinesis backend. Default: enable it when libaws_cpp_sdk_kinesis and libraries
                              it depends on are available.
   --disable-backend-kinesis
+  --enable-backend-prometheus-remote-write Enable Prometheus remote write backend. Default: enable it when libprotobuf and
+                             libsnappy are available.
+  --disable-backend-prometheus-remote-write
+  --enable-backend-mongodb   Enable MongoDB backend. Default: enable it when libmongoc is available.
+  --disable-backend-mongodb
   --enable-lto               Enable Link-Time-Optimization. Default: enabled
   --disable-lto
   --disable-x86-sse          Disable SSE instructions. By default SSE optimizations are enabled.
@@ -196,6 +203,7 @@ NETDATA_PREFIX=
 LIBS_ARE_HERE=0
 NETDATA_CONFIGURE_OPTIONS="${NETDATA_CONFIGURE_OPTIONS-}"
 RELEASE_CHANNEL="nightly"
+IS_NETDATA_STATIC_BINARY="${IS_NETDATA_STATIC_BINARY:-"no"}"
 while [ -n "${1}" ]; do
 	case "${1}" in
 		"--zlib-is-really-here") LIBS_ARE_HERE=1;;
@@ -206,12 +214,18 @@ while [ -n "${1}" ]; do
 		"--stable-channel") RELEASE_CHANNEL="stable";;
 		"--enable-plugin-freeipmi")  NETDATA_CONFIGURE_OPTIONS="${NETDATA_CONFIGURE_OPTIONS//--enable-plugin-freeipmi/} --enable-plugin-freeipmi";;
 		"--disable-plugin-freeipmi") NETDATA_CONFIGURE_OPTIONS="${NETDATA_CONFIGURE_OPTIONS//--disable-plugin-freeipmi/} --disable-plugin-freeipmi";;
+		"--disable-https") NETDATA_CONFIGURE_OPTIONS="${NETDATA_CONFIGURE_OPTIONS//--disable-https/} --disable-https";;
+		"--disable-dbengine") NETDATA_CONFIGURE_OPTIONS="${NETDATA_CONFIGURE_OPTIONS//--disable-dbengine/} --disable-dbengine";;
 		"--enable-plugin-nfacct") NETDATA_CONFIGURE_OPTIONS="${NETDATA_CONFIGURE_OPTIONS//--enable-plugin-nfacct/} --enable-plugin-nfacct";;
 		"--disable-plugin-nfacct") NETDATA_CONFIGURE_OPTIONS="${NETDATA_CONFIGURE_OPTIONS//--disable-plugin-nfacct/} --disable-plugin-nfacct";;
 		"--enable-plugin-xenstat") NETDATA_CONFIGURE_OPTIONS="${NETDATA_CONFIGURE_OPTIONS//--enable-plugin-xenstat/} --enable-plugin-xenstat";;
 		"--disable-plugin-xenstat") NETDATA_CONFIGURE_OPTIONS="${NETDATA_CONFIGURE_OPTIONS//--disable-plugin-xenstat/} --disable-plugin-xenstat";;
-        "--enable-backend-kinesis") NETDATA_CONFIGURE_OPTIONS="${NETDATA_CONFIGURE_OPTIONS//--enable-backend-kinesis/} --enable-backend-kinesis";;
-        "--disable-backend-kinesis") NETDATA_CONFIGURE_OPTIONS="${NETDATA_CONFIGURE_OPTIONS//--disable-backend-kinesis/} --disable-backend-kinesis";;
+		"--enable-backend-kinesis") NETDATA_CONFIGURE_OPTIONS="${NETDATA_CONFIGURE_OPTIONS//--enable-backend-kinesis/} --enable-backend-kinesis";;
+		"--disable-backend-kinesis") NETDATA_CONFIGURE_OPTIONS="${NETDATA_CONFIGURE_OPTIONS//--disable-backend-kinesis/} --disable-backend-kinesis";;
+		"--enable-backend-prometheus-remote-write") NETDATA_CONFIGURE_OPTIONS="${NETDATA_CONFIGURE_OPTIONS//--enable-backend-prometheus-remote-write/} --enable-backend-prometheus-remote-write";;
+		"--disable-backend-prometheus-remote-write") NETDATA_CONFIGURE_OPTIONS="${NETDATA_CONFIGURE_OPTIONS//--disable-backend-prometheus-remote-write/} --disable-backend-prometheus-remote-write";;
+		"--enable-backend-mongodb") NETDATA_CONFIGURE_OPTIONS="${NETDATA_CONFIGURE_OPTIONS//--enable-backend-mongodb/} --enable-backend-mongodb";;
+		"--disable-backend-mongodb") NETDATA_CONFIGURE_OPTIONS="${NETDATA_CONFIGURE_OPTIONS//--disable-backend-mongodb/} --disable-backend-mongodb";;
 		"--enable-lto") NETDATA_CONFIGURE_OPTIONS="${NETDATA_CONFIGURE_OPTIONS//--enable-lto/} --enable-lto";;
 		"--disable-lto") NETDATA_CONFIGURE_OPTIONS="${NETDATA_CONFIGURE_OPTIONS//--disable-lto/} --disable-lto";;
 		"--disable-x86-sse") NETDATA_CONFIGURE_OPTIONS="${NETDATA_CONFIGURE_OPTIONS//--disable-x86-sse/} --disable-x86-sse";;
@@ -389,6 +403,8 @@ run ./configure \
 	--prefix="${NETDATA_PREFIX}/usr" \
 	--sysconfdir="${NETDATA_PREFIX}/etc" \
 	--localstatedir="${NETDATA_PREFIX}/var" \
+	--libexecdir="${NETDATA_PREFIX}/usr/libexec" \
+	--libdir="${NETDATA_PREFIX}/usr/lib" \
 	--with-zlib \
 	--with-math \
 	--with-user=netdata \
@@ -574,7 +590,7 @@ if [ "${UID}" = "0" ]; then
 	ROOT_USER="root"
 else
 	NETDATA_USER="${USER}"
-	ROOT_USER="${NETDATA_USER}"
+	ROOT_USER="${USER}"
 fi
 NETDATA_GROUP="$(id -g -n "${NETDATA_USER}")"
 [ -z "${NETDATA_GROUP}" ] && NETDATA_GROUP="${NETDATA_USER}"
@@ -632,19 +648,6 @@ if [ ! -d "${NETDATA_RUN_DIR}" ]; then
 	# this is needed if NETDATA_PREFIX is not empty
 	run mkdir -p "${NETDATA_RUN_DIR}" || exit 1
 fi
-
-# --- conf dir ----
-
-for x in "python.d" "charts.d" "node.d" "health.d" "statsd.d" "go.d" "custom-plugins.d" "ssl"; do
-	if [ ! -d "${NETDATA_USER_CONFIG_DIR}/${x}" ]; then
-		echo >&2 "Creating directory '${NETDATA_USER_CONFIG_DIR}/${x}'"
-		run mkdir -p "${NETDATA_USER_CONFIG_DIR}/${x}" || exit 1
-	fi
-done
-run chown -R "${ROOT_USER}:${NETDATA_GROUP}" "${NETDATA_USER_CONFIG_DIR}"
-run find "${NETDATA_USER_CONFIG_DIR}" -type f -exec chmod 0640 {} \;
-run find "${NETDATA_USER_CONFIG_DIR}" -type d -exec chmod 0755 {} \;
-run chmod 755 "${NETDATA_USER_CONFIG_DIR}/edit-config"
 
 # --- stock conf dir ----
 
@@ -730,15 +733,25 @@ if [ "${UID}" -eq 0 ]; then
 		run chmod 4750 "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/nfacct.plugin"
 	fi
 
-    if [ -f "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/xenstat.plugin" ]; then
-        run chown root:${NETDATA_GROUP} "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/xenstat.plugin"
-        run chmod 4750 "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/xenstat.plugin"
-    fi
+	if [ -f "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/xenstat.plugin" ]; then
+		run chown root:${NETDATA_GROUP} "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/xenstat.plugin"
+		run chmod 4750 "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/xenstat.plugin"
+	fi
 
-    if [ -f "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/ioping" ]; then
-        run chown root:${NETDATA_GROUP} "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/ioping"
-        run chmod 4750 "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/ioping"
-    fi
+	if [ -f "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/perf.plugin" ]; then
+		run chown root:${NETDATA_GROUP} "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/perf.plugin"
+		run chmod 4750 "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/perf.plugin"
+	fi
+
+	if [ -f "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/slabinfo.plugin" ]; then
+		run chown root:${NETDATA_GROUP} "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/slabinfo.plugin"
+		run chmod 4750 "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/slabinfo.plugin"
+	fi
+
+	if [ -f "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/ioping" ]; then
+		run chown root:${NETDATA_GROUP} "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/ioping"
+		run chmod 4750 "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/ioping"
+	fi
 
 	if [ -f "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/cgroup-network" ]; then
 		run chown "root:${NETDATA_GROUP}" "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/cgroup-network"
@@ -762,7 +775,7 @@ fi
 
 install_go() {
 	# When updating this value, ensure correct checksums in packaging/go.d.checksums
-	GO_PACKAGE_VERSION="v0.6.0"
+	GO_PACKAGE_VERSION="$(cat packaging/go.d.version)"
 	ARCH_MAP=(
 		'i386::386'
 		'i686::386'
@@ -788,11 +801,21 @@ install_go() {
 			fi
 		done
 		tmp=$(mktemp -d /tmp/netdata-go-XXXXXX)
-		GO_PACKAGE_BASENAME="go.d.plugin-${GO_PACKAGE_VERSION}.${OS}-${ARCH}"
+		GO_PACKAGE_BASENAME="go.d.plugin-${GO_PACKAGE_VERSION}.${OS}-${ARCH}.tar.gz"
 
-		download_go "https://github.com/netdata/go.d.plugin/releases/download/${GO_PACKAGE_VERSION}/${GO_PACKAGE_BASENAME}" "${tmp}/${GO_PACKAGE_BASENAME}"
+		if [ -z "${NETDATA_LOCAL_TARBALL_OVERRIDE_GO_PLUGIN}" ]; then
+			download_go "https://github.com/netdata/go.d.plugin/releases/download/${GO_PACKAGE_VERSION}/${GO_PACKAGE_BASENAME}" "${tmp}/${GO_PACKAGE_BASENAME}"
+		else
+			progress "Using provided go.d tarball ${NETDATA_LOCAL_TARBALL_OVERRIDE_GO_PLUGIN}"
+			run cp "${NETDATA_LOCAL_TARBALL_OVERRIDE_GO_PLUGIN}" "${tmp}/${GO_PACKAGE_BASENAME}"
+		fi
 
-		download_go "https://github.com/netdata/go.d.plugin/releases/download/${GO_PACKAGE_VERSION}/config.tar.gz" "${tmp}/config.tar.gz"
+		if [ -z "${NETDATA_LOCAL_TARBALL_OVERRIDE_GO_PLUGIN_CONFIG}" ]; then
+			download_go "https://github.com/netdata/go.d.plugin/releases/download/${GO_PACKAGE_VERSION}/config.tar.gz" "${tmp}/config.tar.gz"
+		else
+			progress "Using provided config file for go.d ${NETDATA_LOCAL_TARBALL_OVERRIDE_GO_PLUGIN_CONFIG}"
+			run cp "${NETDATA_LOCAL_TARBALL_OVERRIDE_GO_PLUGIN_CONFIG}" "${tmp}/config.tar.gz"
+		fi
 
 		if [ ! -f "${tmp}/${GO_PACKAGE_BASENAME}" ] || [ ! -f "${tmp}/config.tar.gz" ] || [ ! -s "${tmp}/config.tar.gz" ] || [ ! -s "${tmp}/${GO_PACKAGE_BASENAME}" ]; then
 			run_failed "go.d plugin download failed, go.d plugin will not be available"
@@ -821,11 +844,13 @@ install_go() {
 		run tar -xf "${tmp}/config.tar.gz" -C "${NETDATA_STOCK_CONFIG_DIR}/"
 		run chown -R "${ROOT_USER}:${NETDATA_GROUP}" "${NETDATA_STOCK_CONFIG_DIR}"
 
-		run mv "${tmp}/$GO_PACKAGE_BASENAME" "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/go.d.plugin"
+		run tar xf "${tmp}/${GO_PACKAGE_BASENAME}"
+		run mv "${GO_PACKAGE_BASENAME/\.tar\.gz/}" "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/go.d.plugin"
 		if [ "${UID}" -eq 0 ]; then
 			run chown "root:${NETDATA_GROUP}" "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/go.d.plugin"
 		fi
 		run chmod 0750 "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/go.d.plugin"
+		rm -rf "${tmp}"
 	fi
 	return 0
 }
@@ -847,7 +872,20 @@ progress "Install netdata at system init"
 NETDATA_START_CMD="${NETDATA_PREFIX}/usr/sbin/netdata"
 
 if grep -q docker /proc/1/cgroup >/dev/null 2>&1; then
-	echo >&2 "We are running within a docker container, will not be installing netdata service"
+	# If docker runs systemd for some weird reason, let the install proceed
+	is_systemd_running="NO"
+	if command -v pidof >/dev/null 2>&1; then
+		is_systemd_running="$(pidof /usr/sbin/init || pidof systemd || echo "NO")"
+	else
+		is_systemd_running="$( (ps -p 1 | grep -q systemd && echo "1") || echo "NO")"
+	fi
+
+	if [ "${is_systemd_running}" == "1" ]; then
+		echo >&2 "Found systemd within the docker container, running install_netdata_service() method"
+		install_netdata_service || run_failed "Cannot install netdata init service."
+	else
+		echo >&2 "We are running within a docker container, will not be installing netdata service"
+	fi
 	echo >&2
 else
 	install_netdata_service || run_failed "Cannot install netdata init service."
@@ -869,10 +907,7 @@ else
 	run_ok "netdata started!"
 	create_netdata_conf "${NETDATA_PREFIX}/etc/netdata/netdata.conf" "http://localhost:${NETDATA_PORT}/netdata.conf"
 fi
-if [ "${UID}" -eq 0 ]; then
-        run chown "${NETDATA_USER}" "${NETDATA_PREFIX}/etc/netdata/netdata.conf"
-fi
-run chmod 0664 "${NETDATA_PREFIX}/etc/netdata/netdata.conf"
+run chmod 0644 "${NETDATA_PREFIX}/etc/netdata/netdata.conf"
 
 if [ "$(uname)" = "Linux" ]; then
 	# -------------------------------------------------------------------------
@@ -954,14 +989,14 @@ either of the following sets of commands:
 
 To run apps.plugin with escalated capabilities:
 
-    ${TPUT_YELLOW}${TPUT_BOLD}sudo chown root:${NETDATA_GROUP} \"${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/apps.plugin\"${TPUT_RESET}
-    ${TPUT_YELLOW}${TPUT_BOLD}sudo chmod 0750 \"${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/apps.plugin\"${TPUT_RESET}
-    ${TPUT_YELLOW}${TPUT_BOLD}sudo setcap cap_dac_read_search,cap_sys_ptrace+ep \"${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/apps.plugin\"${TPUT_RESET}
+    ${TPUT_YELLOW}${TPUT_BOLD}sudo chown root:${NETDATA_GROUP} "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/apps.plugin"${TPUT_RESET}
+    ${TPUT_YELLOW}${TPUT_BOLD}sudo chmod 0750 "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/apps.plugin"${TPUT_RESET}
+    ${TPUT_YELLOW}${TPUT_BOLD}sudo setcap cap_dac_read_search,cap_sys_ptrace+ep "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/apps.plugin"${TPUT_RESET}
 
 or, to run apps.plugin as root:
 
-    ${TPUT_YELLOW}${TPUT_BOLD}sudo chown root:${NETDATA_GROUP} \"${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/apps.plugin\"${TPUT_RESET}
-    ${TPUT_YELLOW}${TPUT_BOLD}sudo chmod 4750 \"${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/apps.plugin\"${TPUT_RESET}
+    ${TPUT_YELLOW}${TPUT_BOLD}sudo chown root:${NETDATA_GROUP} "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/apps.plugin"${TPUT_RESET}
+    ${TPUT_YELLOW}${TPUT_BOLD}sudo chmod 4750 "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/apps.plugin"${TPUT_RESET}
 
 apps.plugin is performing a hard-coded function of data collection for all
 running processes. It cannot be instructed from the netdata daemon to perform
@@ -973,8 +1008,13 @@ fi
 
 # -----------------------------------------------------------------------------
 progress "Copy uninstaller"
-sed "s|ENVIRONMENT_FILE=\"/etc/netdata/.environment\"|ENVIRONMENT_FILE=\"${NETDATA_PREFIX}/etc/netdata/.environment\"|" packaging/installer/netdata-uninstaller.sh > ${NETDATA_PREFIX}/usr/libexec/netdata-uninstaller.sh
-chmod 750 ${NETDATA_PREFIX}/usr/libexec/netdata-uninstaller.sh
+if [ -f "${NETDATA_PREFIX}"/usr/libexec/netdata-uninstaller.sh ]; then
+	echo >&2 "Removing uninstaller from old location"
+	rm -f "${NETDATA_PREFIX}"/usr/libexec/netdata-uninstaller.sh;
+fi
+
+sed "s|ENVIRONMENT_FILE=\"/etc/netdata/.environment\"|ENVIRONMENT_FILE=\"${NETDATA_PREFIX}/etc/netdata/.environment\"|" packaging/installer/netdata-uninstaller.sh > ${NETDATA_PREFIX}/usr/libexec/netdata/netdata-uninstaller.sh
+chmod 750 ${NETDATA_PREFIX}/usr/libexec/netdata/netdata-uninstaller.sh
 
 # -----------------------------------------------------------------------------
 progress "Basic netdata instructions"
@@ -995,62 +1035,27 @@ To start netdata run:
   ${TPUT_YELLOW}${TPUT_BOLD}${NETDATA_START_CMD}${TPUT_RESET}
 
 END
-echo >&2 "Uninstall script copied to: ${TPUT_RED}${TPUT_BOLD}${NETDATA_PREFIX}/usr/libexec/netdata-uninstaller.sh${TPUT_RESET}"
+echo >&2 "Uninstall script copied to: ${TPUT_RED}${TPUT_BOLD}${NETDATA_PREFIX}/usr/libexec/netdata/netdata-uninstaller.sh${TPUT_RESET}"
 echo >&2
 
-progress "Install netdata updater tool"
+# -----------------------------------------------------------------------------
+progress "Installing (but not enabling) the netdata updater tool"
+cleanup_old_netdata_updater || run_failed "Cannot cleanup old netdata updater tool."
+install_netdata_updater || run_failed "Cannot install netdata updater tool."
 
-if [ -f "${INSTALLER_DIR}/packaging/installer/netdata-updater.sh" ]; then
-	sed "s|THIS_SHOULD_BE_REPLACED_BY_INSTALLER_SCRIPT|${NETDATA_USER_CONFIG_DIR}/.environment|" "${INSTALLER_DIR}/packaging/installer/netdata-updater.sh" > "${NETDATA_PREFIX}/usr/libexec/netdata-updater.sh" || exit 1
+progress "Check if we must enable/disable the netdata updater tool"
+if [ "${AUTOUPDATE}" = "1" ]; then
+	enable_netdata_updater || run_failed "Cannot enable netdata updater tool"
 else
-	sed "s|THIS_SHOULD_BE_REPLACED_BY_INSTALLER_SCRIPT|${NETDATA_USER_CONFIG_DIR}/.environment|" "${NETDATA_SOURCE_DIR}/packaging/installer/netdata-updater.sh" > "${NETDATA_PREFIX}/usr/libexec/netdata-updater.sh" || exit 1
+	disable_netdata_updater || run_failed "Cannot disable netdata updater tool"
 fi
 
-chmod 0755 ${NETDATA_PREFIX}/usr/libexec/netdata-updater.sh
-echo >&2 "Update script is located at ${TPUT_GREEN}${TPUT_BOLD}${NETDATA_PREFIX}/usr/libexec/netdata-updater.sh${TPUT_RESET}"
-echo >&2
 
-# Figure out the cron directory for the distro
-crondir=
-[ -d "/etc/periodic/daily" ] && crondir="/etc/periodic/daily"
-[ -d "/etc/cron.daily" ] && crondir="/etc/cron.daily"
-
-if [ -z "${crondir}" ]; then
-	echo >&2 "Cannot figure out the cron directory to handle netdata-updater.sh activation/deactivation"
-elif [ "${UID}" -ne "0" ]; then
-	# We cant touch cron if we are not running as root
-	echo >&2 "You need to run the installer as root for auto-updating via cron."
-else
-	progress "Check if we must enable/disable the netdata updater"
-	if [ "${AUTOUPDATE}" = "1" ]; then
-		if [ -f "${crondir}/netdata-updater.sh" ]; then
-			progress "Removing incorrect netdata-updater filename in cron"
-			rm -f "${crondir}/netdata-updater.sh"
-		fi
-
-		echo >&2 "Adding to cron"
-
-		rm -f "${crondir}/netdata-updater"
-		ln -sf "${NETDATA_PREFIX}/usr/libexec/netdata-updater.sh" "${crondir}/netdata-updater"
-
-		echo >&2 "Auto-updating has been enabled. Updater script linked to: ${TPUT_RED}${TPUT_BOLD}${crondir}/netdata-update${TPUT_RESET}"
-		echo >&2
-		echo >&2 "${TPUT_DIM}${TPUT_BOLD}netdata-updater.sh${TPUT_RESET}${TPUT_DIM} works from cron. It will trigger an email from cron"
-		echo >&2 "only if it fails (it should not print anything when it can update netdata).${TPUT_RESET}"
-	else
-		echo >&2 "You chose *NOT* to enable auto-update, removing any links to the updater from cron (it may have happened if you are reinstalling)"
-		echo >&2
-
-		if [ -f "${crondir}/netdata-updater" ]; then
-			echo >&2 "Removing cron reference: ${crondir}/netdata-updater"
-			rm -f "${crondir}/netdata-updater"
-		else
-			echo >&2 "Did not find any cron entries to remove"
-		fi
-	fi
-fi
+# -----------------------------------------------------------------------------
+progress "Wrap up environment set up"
 
 # Save environment variables
+echo >&2 "Preparing .environment file"
 cat <<EOF > "${NETDATA_USER_CONFIG_DIR}/.environment"
 # Created by installer
 PATH="${PATH}"
@@ -1062,10 +1067,15 @@ INSTALL_UID="${UID}"
 NETDATA_GROUP="${NETDATA_GROUP}"
 REINSTALL_COMMAND="${REINSTALL_COMMAND}"
 RELEASE_CHANNEL="${RELEASE_CHANNEL}"
-# This value is meant to be populated by autoupdater (if enabled)
-NETDATA_TARBALL_CHECKSUM="new_installation"
+IS_NETDATA_STATIC_BINARY="${IS_NETDATA_STATIC_BINARY}"
+NETDATA_LIB_DIR="${NETDATA_LIB_DIR}"
 EOF
+run chmod 0644 "${NETDATA_USER_CONFIG_DIR}/.environment"
 
+echo >&2 "Setting netdata.tarball.checksum to 'new_installation'"
+cat <<EOF > "${NETDATA_LIB_DIR}/netdata.tarball.checksum"
+new_installation
+EOF
 
 # -----------------------------------------------------------------------------
 echo >&2

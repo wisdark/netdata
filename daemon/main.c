@@ -2,6 +2,7 @@
 
 #include "common.h"
 
+int netdata_zero_metrics_enabled;
 int netdata_anonymous_statistics_enabled;
 
 struct config netdata_config = {
@@ -24,7 +25,7 @@ void netdata_cleanup_and_exit(int ret) {
     error_log_limit_unlimited();
     info("EXIT: netdata prepares to exit with code %d...", ret);
 
-	send_statistics("EXIT", ret?"ERROR":"OK","-");
+    send_statistics("EXIT", ret?"ERROR":"OK","-");
 
     // cleanup/save the database and exit
     info("EXIT: cleaning up the database...");
@@ -50,7 +51,7 @@ void netdata_cleanup_and_exit(int ret) {
     }
 
 #ifdef ENABLE_HTTPS
-	security_clean_openssl();
+    security_clean_openssl();
 #endif
 
     info("EXIT: all done - netdata is now exiting - bye bye...");
@@ -74,6 +75,9 @@ struct netdata_static_thread static_threads[] = {
 
         // common plugins for all systems
     {"BACKENDS",             NULL,                    NULL,         1, NULL, NULL, backends_main},
+#ifdef ENABLE_EXPORTING
+    {"EXPORTING",            NULL,                    NULL,         1, NULL, NULL, exporting_main},
+#endif
     {"WEB_SERVER[static1]",  NULL,                    NULL,         0, NULL, NULL, socket_listen_main_static_threaded},
     {"STREAM",               NULL,                    NULL,         0, NULL, NULL, rrdpush_sender_thread},
 
@@ -95,22 +99,69 @@ void web_server_threading_selection(void) {
     }
 }
 
-void web_server_config_options(void) {
-    web_client_timeout = (int) config_get_number(CONFIG_SECTION_WEB, "disconnect idle clients after seconds", web_client_timeout);
-    web_client_first_request_timeout = (int) config_get_number(CONFIG_SECTION_WEB, "timeout for first request", web_client_first_request_timeout);
-    web_client_streaming_rate_t = config_get_number(CONFIG_SECTION_WEB, "accept a streaming request every seconds", web_client_streaming_rate_t);
+int make_dns_decision(const char *section_name, const char *config_name, const char *default_value, SIMPLE_PATTERN *p)
+{
+    char *value = config_get(section_name,config_name,default_value);
+    if(!strcmp("yes",value))
+        return 1;
+    if(!strcmp("no",value))
+        return 0;
+    if(strcmp("heuristic",value))
+        error("Invalid configuration option '%s' for '%s'/'%s'. Valid options are 'yes', 'no' and 'heuristic'. Proceeding with 'heuristic'",
+              value, section_name, config_name);
+    return simple_pattern_is_potential_name(p);
+}
 
-    respect_web_browser_do_not_track_policy = config_get_boolean(CONFIG_SECTION_WEB, "respect do not track policy", respect_web_browser_do_not_track_policy);
+void web_server_config_options(void)
+{
+    web_client_timeout =
+        (int)config_get_number(CONFIG_SECTION_WEB, "disconnect idle clients after seconds", web_client_timeout);
+    web_client_first_request_timeout =
+        (int)config_get_number(CONFIG_SECTION_WEB, "timeout for first request", web_client_first_request_timeout);
+    web_client_streaming_rate_t =
+        config_get_number(CONFIG_SECTION_WEB, "accept a streaming request every seconds", web_client_streaming_rate_t);
+
+    respect_web_browser_do_not_track_policy =
+        config_get_boolean(CONFIG_SECTION_WEB, "respect do not track policy", respect_web_browser_do_not_track_policy);
     web_x_frame_options = config_get(CONFIG_SECTION_WEB, "x-frame-options response header", "");
-    if(!*web_x_frame_options) web_x_frame_options = NULL;
+    if(!*web_x_frame_options)
+        web_x_frame_options = NULL;
 
-    web_allow_connections_from = simple_pattern_create(config_get(CONFIG_SECTION_WEB, "allow connections from", "localhost *"), NULL, SIMPLE_PATTERN_EXACT);
-    web_allow_dashboard_from   = simple_pattern_create(config_get(CONFIG_SECTION_WEB, "allow dashboard from", "localhost *"), NULL, SIMPLE_PATTERN_EXACT);
-    web_allow_badges_from      = simple_pattern_create(config_get(CONFIG_SECTION_WEB, "allow badges from", "*"), NULL, SIMPLE_PATTERN_EXACT);
-    web_allow_registry_from    = simple_pattern_create(config_get(CONFIG_SECTION_REGISTRY, "allow from", "*"), NULL, SIMPLE_PATTERN_EXACT);
-    web_allow_streaming_from   = simple_pattern_create(config_get(CONFIG_SECTION_WEB, "allow streaming from", "*"), NULL, SIMPLE_PATTERN_EXACT);
-    web_allow_netdataconf_from = simple_pattern_create(config_get(CONFIG_SECTION_WEB, "allow netdata.conf from", "localhost fd* 10.* 192.168.* 172.16.* 172.17.* 172.18.* 172.19.* 172.20.* 172.21.* 172.22.* 172.23.* 172.24.* 172.25.* 172.26.* 172.27.* 172.28.* 172.29.* 172.30.* 172.31.*"), NULL, SIMPLE_PATTERN_EXACT);
-    web_allow_mgmt_from        = simple_pattern_create(config_get(CONFIG_SECTION_WEB, "allow management from", "localhost"), NULL, SIMPLE_PATTERN_EXACT);
+    web_allow_connections_from =
+        simple_pattern_create(config_get(CONFIG_SECTION_WEB, "allow connections from", "localhost *"),
+                              NULL, SIMPLE_PATTERN_EXACT);
+    web_allow_connections_dns  =
+        make_dns_decision(CONFIG_SECTION_WEB, "allow connections by dns", "heuristic", web_allow_connections_from);
+    web_allow_dashboard_from   =
+        simple_pattern_create(config_get(CONFIG_SECTION_WEB, "allow dashboard from", "localhost *"),
+                              NULL, SIMPLE_PATTERN_EXACT);
+    web_allow_dashboard_dns    =
+        make_dns_decision(CONFIG_SECTION_WEB, "allow dashboard by dns", "heuristic", web_allow_dashboard_from);
+    web_allow_badges_from      =
+        simple_pattern_create(config_get(CONFIG_SECTION_WEB, "allow badges from", "*"), NULL, SIMPLE_PATTERN_EXACT);
+    web_allow_badges_dns       =
+        make_dns_decision(CONFIG_SECTION_WEB, "allow badges by dns", "heuristic", web_allow_badges_from);
+    web_allow_registry_from    =
+        simple_pattern_create(config_get(CONFIG_SECTION_REGISTRY, "allow from", "*"), NULL, SIMPLE_PATTERN_EXACT);
+    web_allow_registry_dns     = make_dns_decision(CONFIG_SECTION_REGISTRY, "allow by dns", "heuristic",
+                                                   web_allow_registry_from);
+    web_allow_streaming_from   = simple_pattern_create(config_get(CONFIG_SECTION_WEB, "allow streaming from", "*"),
+                                                       NULL, SIMPLE_PATTERN_EXACT);
+    web_allow_streaming_dns    = make_dns_decision(CONFIG_SECTION_WEB, "allow streaming by dns", "heuristic",
+                                                   web_allow_streaming_from);
+    // Note the default is not heuristic, the wildcards could match DNS but the intent is ip-addresses.
+    web_allow_netdataconf_from = simple_pattern_create(config_get(CONFIG_SECTION_WEB, "allow netdata.conf from",
+                                                       "localhost fd* 10.* 192.168.* 172.16.* 172.17.* 172.18.*"
+                                                       " 172.19.* 172.20.* 172.21.* 172.22.* 172.23.* 172.24.*"
+                                                       " 172.25.* 172.26.* 172.27.* 172.28.* 172.29.* 172.30.*"
+                                                       " 172.31.*"), NULL, SIMPLE_PATTERN_EXACT);
+    web_allow_netdataconf_dns  =
+        make_dns_decision(CONFIG_SECTION_WEB, "allow netdata.conf by dns", "no", web_allow_mgmt_from);
+    web_allow_mgmt_from        =
+        simple_pattern_create(config_get(CONFIG_SECTION_WEB, "allow management from", "localhost"),
+                              NULL, SIMPLE_PATTERN_EXACT);
+    web_allow_mgmt_dns         =
+        make_dns_decision(CONFIG_SECTION_WEB, "allow management by dns","heuristic",web_allow_mgmt_from);
 
 
 #ifdef NETDATA_WITH_ZLIB
@@ -145,44 +196,26 @@ void web_server_config_options(void) {
 }
 
 
-int killpid(pid_t pid, int signal)
-{
-    int ret = -1;
+// killpid kills pid with SIGTERM.
+int killpid(pid_t pid) {
+    int ret;
     debug(D_EXIT, "Request to kill pid %d", pid);
 
     errno = 0;
-    if(kill(pid, 0) == -1) {
+    ret = kill(pid, SIGTERM);
+    if (ret == -1) {
         switch(errno) {
             case ESRCH:
-                error("Request to kill pid %d, but it is not running.", pid);
-                break;
+                // We wanted the process to exit so just let the caller handle.
+                return ret;
 
             case EPERM:
-                error("Request to kill pid %d, but I do not have enough permissions.", pid);
+                error("Cannot kill pid %d, but I do not have enough permissions.", pid);
                 break;
 
             default:
-                error("Request to kill pid %d, but I received an error.", pid);
+                error("Cannot kill pid %d, but I received an error.", pid);
                 break;
-        }
-    }
-    else {
-        errno = 0;
-        ret = kill(pid, signal);
-        if(ret == -1) {
-            switch(errno) {
-                case ESRCH:
-                    error("Cannot kill pid %d, but it is not running.", pid);
-                    break;
-
-                case EPERM:
-                    error("Cannot kill pid %d, but I do not have enough permissions.", pid);
-                    break;
-
-                default:
-                    error("Cannot kill pid %d, but I received an error.", pid);
-                    break;
-            }
         }
     }
 
@@ -305,7 +338,15 @@ int help(int exitcode) {
             "  -W stacksize=N           Set the stacksize (in bytes).\n\n"
             "  -W debug_flags=N         Set runtime tracing to debug.log.\n\n"
             "  -W unittest              Run internal unittests and exit.\n\n"
+#ifdef ENABLE_DBENGINE
             "  -W createdataset=N       Create a DB engine dataset of N seconds and exit.\n\n"
+            "  -W stresstest=A,B,C,D,E,F\n"
+            "                           Run a DB engine stress test for A seconds,\n"
+            "                           with B writers and C readers, with a ramp up\n"
+            "                           time of D seconds for writers, a page cache\n"
+            "                           size of E MiB, an optional disk space limit\n"
+            "                           of F MiB and exit.\n\n"
+#endif
             "  -W set section option value\n"
             "                           set netdata.conf option from the command line.\n\n"
             "  -W simple-pattern pattern string\n"
@@ -373,9 +414,9 @@ static void log_init(void) {
     snprintfz(filename, FILENAME_MAX, "%s/access.log", netdata_configured_log_dir);
     stdaccess_filename = config_get(CONFIG_SECTION_GLOBAL, "access log", filename);
 
-	char deffacility[8];
-	snprintfz(deffacility,7,"%s","daemon");
-	facility_log = config_get(CONFIG_SECTION_GLOBAL, "facility log",  deffacility);
+    char deffacility[8];
+    snprintfz(deffacility,7,"%s","daemon");
+    facility_log = config_get(CONFIG_SECTION_GLOBAL, "facility log",  deffacility);
 
     error_log_throttle_period = config_get_number(CONFIG_SECTION_GLOBAL, "errors flood protection period", error_log_throttle_period);
     error_log_errors_per_period = (unsigned long)config_get_number(CONFIG_SECTION_GLOBAL, "errors to trigger flood protection", (long long int)error_log_errors_per_period);
@@ -664,20 +705,20 @@ static int load_netdata_conf(char *filename, char overwrite_used) {
     int ret = 0;
 
     if(filename && *filename) {
-        ret = config_load(filename, overwrite_used);
+        ret = config_load(filename, overwrite_used, NULL);
         if(!ret)
             error("CONFIG: cannot load config file '%s'.", filename);
     }
     else {
         filename = strdupz_path_subpath(netdata_configured_user_config_dir, "netdata.conf");
 
-        ret = config_load(filename, overwrite_used);
+        ret = config_load(filename, overwrite_used, NULL);
         if(!ret) {
             info("CONFIG: cannot load user config '%s'. Will try the stock version.", filename);
             freez(filename);
 
             filename = strdupz_path_subpath(netdata_configured_stock_config_dir, "netdata.conf");
-            ret = config_load(filename, overwrite_used);
+            ret = config_load(filename, overwrite_used, NULL);
             if(!ret)
                 info("CONFIG: cannot load stock config '%s'. Running with internal defaults.", filename);
         }
@@ -718,7 +759,7 @@ int get_system_info(struct rrdhost_system_info *system_info) {
                 }
                 char n[51], v[101];
                 snprintfz(n, 50,"%s",name);
-                snprintfz(v, 101,"%s",value);
+                snprintfz(v, 100,"%s",value);
                 if(unlikely(rrdhost_set_system_info_variable(system_info, n, v))) {
                     info("Unexpected environment variable %s=%s", n, v);
                 }
@@ -742,20 +783,20 @@ void send_statistics( const char *action, const char *action_result, const char 
         if (likely(access(optout_file, R_OK) != 0)) {
             as_script = mallocz(sizeof(char) * (strlen(netdata_configured_primary_plugins_dir) + strlen("anonymous-statistics.sh") + 2));
             sprintf(as_script, "%s/%s", netdata_configured_primary_plugins_dir, "anonymous-statistics.sh");
-			if (unlikely(access(as_script, R_OK) != 0)) {
-				netdata_anonymous_statistics_enabled=0;
-				info("Anonymous statistics script %s not found.",as_script);
-				freez(as_script);
-			} else {
-				netdata_anonymous_statistics_enabled=1;
-			}
-		} else {
+            if (unlikely(access(as_script, R_OK) != 0)) {
+               netdata_anonymous_statistics_enabled=0;
+               info("Anonymous statistics script %s not found.",as_script);
+               freez(as_script);
+            } else {
+               netdata_anonymous_statistics_enabled=1;
+            }
+        } else {
             netdata_anonymous_statistics_enabled = 0;
             as_script = NULL;
         }
         freez(optout_file);
     }
-	if(!netdata_anonymous_statistics_enabled) return;
+    if(!netdata_anonymous_statistics_enabled) return;
     if (!action) return;
     if (!action_result) action_result="";
     if (!action_data) action_data="";
@@ -772,6 +813,12 @@ void send_statistics( const char *action, const char *action_result, const char 
         mypclose(fp, command_pid);
     }
     freez(command_to_run);
+}
+
+void set_silencers_filename() {
+    char filename[FILENAME_MAX + 1];
+    snprintfz(filename, FILENAME_MAX, "%s/health.silencers.json", netdata_configured_varlib_dir);
+    silencers_filename = config_get(CONFIG_SECTION_HEALTH, "silencers file", filename);
 }
 
 int main(int argc, char **argv) {
@@ -879,7 +926,10 @@ int main(int argc, char **argv) {
                     {
                         char* stacksize_string = "stacksize=";
                         char* debug_flags_string = "debug_flags=";
+#ifdef ENABLE_DBENGINE
                         char* createdataset_string = "createdataset=";
+                        char* stresstest_string = "stresstest=";
+#endif
 
                         if(strcmp(optarg, "unittest") == 0) {
                             if(unit_test_buffer()) return 1;
@@ -898,17 +948,35 @@ int main(int argc, char **argv) {
                             fprintf(stderr, "\n\nALL TESTS PASSED\n\n");
                             return 0;
                         }
-                        else if(strncmp(optarg, createdataset_string, strlen(createdataset_string)) == 0) {
-                            unsigned history_seconds;
-
-                            optarg += strlen(createdataset_string);
-                            history_seconds = (unsigned )strtoull(optarg, NULL, 0);
-
 #ifdef ENABLE_DBENGINE
+                        else if(strncmp(optarg, createdataset_string, strlen(createdataset_string)) == 0) {
+                            optarg += strlen(createdataset_string);
+                            unsigned history_seconds = strtoul(optarg, NULL, 0);
                             generate_dbengine_dataset(history_seconds);
-#endif
                             return 0;
                         }
+                        else if(strncmp(optarg, stresstest_string, strlen(stresstest_string)) == 0) {
+                            char *endptr;
+                            unsigned test_duration_sec = 0, dset_charts = 0, query_threads = 0, ramp_up_seconds = 0,
+                            page_cache_mb = 0, disk_space_mb = 0;
+
+                            optarg += strlen(stresstest_string);
+                            test_duration_sec = (unsigned)strtoul(optarg, &endptr, 0);
+                            if (',' == *endptr)
+                                dset_charts = (unsigned)strtoul(endptr + 1, &endptr, 0);
+                            if (',' == *endptr)
+                                query_threads = (unsigned)strtoul(endptr + 1, &endptr, 0);
+                            if (',' == *endptr)
+                                ramp_up_seconds = (unsigned)strtoul(endptr + 1, &endptr, 0);
+                            if (',' == *endptr)
+                                page_cache_mb = (unsigned)strtoul(endptr + 1, &endptr, 0);
+                            if (',' == *endptr)
+                                disk_space_mb = (unsigned)strtoul(endptr + 1, &endptr, 0);
+                            dbengine_stress_test(test_duration_sec, dset_charts, query_threads, ramp_up_seconds,
+                                                 page_cache_mb, disk_space_mb);
+                            return 0;
+                        }
+#endif
                         else if(strcmp(optarg, "simple-pattern") == 0) {
                             if(optind + 2 > argc) {
                                 fprintf(stderr, "%s", "\nUSAGE: -W simple-pattern 'pattern' 'string'\n\n"
@@ -1044,6 +1112,7 @@ int main(int argc, char **argv) {
     if(!config_loaded)
         load_netdata_conf(NULL, 0);
 
+
     // ------------------------------------------------------------------------
     // initialize netdata
     {
@@ -1103,6 +1172,11 @@ int main(int argc, char **argv) {
 #ifdef ENABLE_HTTPS
         security_init();
 #endif
+
+        // --------------------------------------------------------------------
+        // This is the safest place to start the SILENCERS structure
+        set_silencers_filename();
+        health_initialize_global_silencers();
 
         // --------------------------------------------------------------------
         // setup process signals
@@ -1191,7 +1265,7 @@ int main(int argc, char **argv) {
     // ------------------------------------------------------------------------
     // initialize rrd, registry, health, rrdpush, etc.
 
-	netdata_anonymous_statistics_enabled=-1;
+    netdata_anonymous_statistics_enabled=-1;
     struct rrdhost_system_info *system_info = calloc(1, sizeof(struct rrdhost_system_info));
     get_system_info(system_info);
 
@@ -1201,10 +1275,15 @@ int main(int argc, char **argv) {
 
     error_log_limit_reset();
 
+    // Load host labels
+    reload_host_labels();
+
     // ------------------------------------------------------------------------
     // spawn the threads
 
     web_server_config_options();
+
+    netdata_zero_metrics_enabled = config_get_boolean_ondemand(CONFIG_SECTION_GLOBAL, "enable zero metrics", CONFIG_BOOLEAN_NO);
 
     for (i = 0; static_threads[i].name != NULL ; i++) {
         struct netdata_static_thread *st = &static_threads[i];
@@ -1217,10 +1296,15 @@ int main(int argc, char **argv) {
         else debug(D_SYSTEM, "Not starting thread %s.", st->name);
     }
 
+    // ------------------------------------------------------------------------
+    // Initialize netdata agent command serving from cli and signals
+
+    commands_init();
+
     info("netdata initialization completed. Enjoy real-time performance monitoring!");
     netdata_ready = 1;
-  
-    send_statistics("START","-", "-");
+
+    send_statistics("START", "-",  "-");
 
     // ------------------------------------------------------------------------
     // unblock signals

@@ -92,7 +92,7 @@ class Service(SimpleService):
         SimpleService.__init__(self, configuration=configuration, name=name)
         self.order = list()
         self.definitions = dict()
-        self.chips = list()
+        self.chips = configuration.get('chips')
 
     def get_data(self):
         data = dict()
@@ -162,4 +162,4 @@ class Service(SimpleService):
 
         self.create_definitions()
 
-        return True
+        return bool(self.get_data())

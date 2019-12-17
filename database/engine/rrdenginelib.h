@@ -3,10 +3,9 @@
 #ifndef NETDATA_RRDENGINELIB_H
 #define NETDATA_RRDENGINELIB_H
 
-#include "rrdengine.h"
-
 /* Forward declarations */
 struct rrdeng_page_descr;
+struct rrdengine_instance;
 
 #define STR_HELPER(x) #x
 #define STR(x) STR_HELPER(x)
@@ -23,6 +22,8 @@ struct rrdeng_page_descr;
 #define ALIGN_BYTES_FLOOR(x) (((x) / RRDENG_BLOCK_SIZE) * RRDENG_BLOCK_SIZE)
 #define ALIGN_BYTES_CEILING(x) ((((x) + RRDENG_BLOCK_SIZE - 1) / RRDENG_BLOCK_SIZE) * RRDENG_BLOCK_SIZE)
 
+#define ROUND_USEC_TO_SEC(x) (((x) + USEC_PER_SEC / 2 - 1) / USEC_PER_SEC)
+
 typedef uintptr_t rrdeng_stats_t;
 
 #ifdef __ATOMIC_RELAXED
@@ -30,6 +31,8 @@ typedef uintptr_t rrdeng_stats_t;
 #else
 #define rrd_stat_atomic_add(p, n) do {(void) __sync_fetch_and_add(p, n);} while(0)
 #endif
+
+#define RRDENG_PATH_MAX (4096)
 
 /* returns old *ptr value */
 static inline unsigned long ulong_compare_and_swap(volatile unsigned long *ptr,

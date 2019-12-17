@@ -2,159 +2,238 @@
 
 #include "../libnetdata.h"
 
-/*
+static pthread_mutex_t myp_lock;
+static int myp_tracking = 0;
+
 struct mypopen {
     pid_t pid;
-    FILE *fp;
     struct mypopen *next;
     struct mypopen *prev;
 };
 
 static struct mypopen *mypopen_root = NULL;
 
-static void mypopen_add(FILE *fp, pid_t *pid) {
-    struct mypopen *mp = malloc(sizeof(struct mypopen));
-    if(!mp) {
-        fatal("Cannot allocate %zu bytes", sizeof(struct mypopen))
+// myp_add_lock takes the lock if we're tracking.
+static void myp_add_lock(void) {
+    if (myp_tracking == 0)
         return;
-    }
 
-    mp->fp = fp;
-    mp->pid = pid;
-    mp->next = popen_root;
-    mp->prev = NULL;
-    if(mypopen_root) mypopen_root->prev = mp;
-    mypopen_root = mp;
+    netdata_mutex_lock(&myp_lock);
 }
 
-static void mypopen_del(FILE *fp) {
+// myp_add_unlock release the lock if we're tracking.
+static void myp_add_unlock(void) {
+    if (myp_tracking == 0)
+        return;
+
+    netdata_mutex_unlock(&myp_lock);
+}
+
+// myp_add_locked adds pid if we're tracking.
+// myp_add_lock must have been called previously.
+static void myp_add_locked(pid_t pid) {
     struct mypopen *mp;
 
-    for(mp = mypopen_root; mp; mp = mp->next)
-        if(mp->fd == fp) break;
+    if (myp_tracking == 0)
+        return;
 
-    if(!mp) error("Cannot find mypopen() file pointer in open childs.");
-    else {
-        if(mp->next) mp->next->prev = mp->prev;
-        if(mp->prev) mp->prev->next = mp->next;
-        if(mypopen_root == mp) mypopen_root = mp->next;
-        free(mp);
-    }
+    mp = mallocz(sizeof(struct mypopen));
+    mp->pid = pid;
+
+    mp->next = mypopen_root;
+    mp->prev = NULL;
+    if (mypopen_root != NULL)
+        mypopen_root->prev = mp;
+    mypopen_root = mp;
+    netdata_mutex_unlock(&myp_lock);
 }
-*/
+
+// myp_del deletes pid if we're tracking.
+static void myp_del(pid_t pid) {
+    struct mypopen *mp;
+
+    if (myp_tracking == 0)
+        return;
+
+    netdata_mutex_lock(&myp_lock);
+    for (mp = mypopen_root; mp != NULL; mp = mp->next) {
+        if (mp->pid == pid) {
+            if (mp->next != NULL)
+                mp->next->prev = mp->prev;
+            if (mp->prev != NULL)
+                mp->prev->next = mp->next;
+            if (mypopen_root == mp)
+                mypopen_root = mp->next;
+            freez(mp);
+            break;
+        }
+    }
+
+    if (mp == NULL)
+        error("Cannot find pid %d.", pid);
+
+    netdata_mutex_unlock(&myp_lock);
+}
+
 #define PIPE_READ 0
 #define PIPE_WRITE 1
 
-FILE *mypopen(const char *command, volatile pid_t *pidptr)
-{
-    int pipefd[2];
+static inline FILE *custom_popene(const char *command, volatile pid_t *pidptr, char **env) {
+    FILE *fp;
+    int pipefd[2], error;
+    pid_t pid;
+    char *const spawn_argv[] = {
+            "sh",
+            "-c",
+            (char *)command,
+            NULL
+    };
+    posix_spawnattr_t attr;
+    posix_spawn_file_actions_t fa;
 
-    if(pipe(pipefd) == -1) return NULL;
-
-    int pid = fork();
-    if(pid == -1) {
-        close(pipefd[PIPE_READ]);
-        close(pipefd[PIPE_WRITE]);
+    if (pipe(pipefd) == -1)
         return NULL;
+    if ((fp = fdopen(pipefd[PIPE_READ], "r")) == NULL) {
+        goto error_after_pipe;
     }
-    if(pid != 0) {
-        // the parent
-        *pidptr = pid;
-        close(pipefd[PIPE_WRITE]);
-        FILE *fp = fdopen(pipefd[PIPE_READ], "r");
-        /*mypopen_add(fp, pid);*/
-        return(fp);
-    }
-    // the child
 
-    // close all files
+    // Mark all files to be closed by the exec() stage of posix_spawn()
     int i;
-    for(i = (int) (sysconf(_SC_OPEN_MAX) - 1); i >= 0; i--)
-        if(i != STDIN_FILENO && i != STDERR_FILENO && i != pipefd[PIPE_WRITE]) close(i);
+    for (i = (int) (sysconf(_SC_OPEN_MAX) - 1); i >= 0; i--)
+        if(i != STDIN_FILENO && i != STDERR_FILENO)
+            (void)fcntl(i, F_SETFD, FD_CLOEXEC);
 
-    // move the pipe to stdout
-    if(pipefd[PIPE_WRITE] != STDOUT_FILENO) {
-        dup2(pipefd[PIPE_WRITE], STDOUT_FILENO);
-        close(pipefd[PIPE_WRITE]);
+    if (!posix_spawn_file_actions_init(&fa)) {
+        // move the pipe to stdout in the child
+        if (posix_spawn_file_actions_adddup2(&fa, pipefd[PIPE_WRITE], STDOUT_FILENO)) {
+            error("posix_spawn_file_actions_adddup2() failed");
+            goto error_after_posix_spawn_file_actions_init;
+        }
+    } else {
+        error("posix_spawn_file_actions_init() failed.");
+        goto error_after_pipe;
+    }
+    if (!(error = posix_spawnattr_init(&attr))) {
+        // reset all signals in the child
+        sigset_t mask;
+
+        if (posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF))
+            error("posix_spawnattr_setflags() failed.");
+        sigemptyset(&mask);
+        if (posix_spawnattr_setsigmask(&attr, &mask))
+            error("posix_spawnattr_setsigmask() failed.");
+    } else {
+        error("posix_spawnattr_init() failed.");
     }
 
-#ifdef DETACH_PLUGINS_FROM_NETDATA
-    // this was an attempt to detach the child and use the suspend mode charts.d
-    // unfortunatelly it does not work as expected.
+    // Take the lock while we fork to ensure we don't race with SIGCHLD
+    // delivery on a process which exits quickly.
+    myp_add_lock();
+    if (!posix_spawn(&pid, "/bin/sh", &fa, &attr, spawn_argv, env)) {
+        *pidptr = pid;
+        myp_add_locked(pid);
+        debug(D_CHILDS, "Spawned command: '%s' on pid %d from parent pid %d.", command, pid, getpid());
+    } else {
+        myp_add_unlock();
+        error("Failed to spawn command: '%s' from parent pid %d.", command, getpid());
+        fclose(fp);
+        fp = NULL;
+    }
+    close(pipefd[PIPE_WRITE]);
 
-    // fork again to become session leader
-    pid = fork();
-    if(pid == -1)
-        error("pre-execution of command '%s' on pid %d: Cannot fork 2nd time.", command, getpid());
+    if (!error) {
+        // posix_spawnattr_init() succeeded
+        if (posix_spawnattr_destroy(&attr))
+            error("posix_spawnattr_destroy");
+    }
+    if (posix_spawn_file_actions_destroy(&fa))
+        error("posix_spawn_file_actions_destroy");
 
-    if(pid != 0) {
-        // the parent
-        exit(0);
+    return fp;
+
+error_after_posix_spawn_file_actions_init:
+    if (posix_spawn_file_actions_destroy(&fa))
+        error("posix_spawn_file_actions_destroy");
+error_after_pipe:
+    if (fp)
+        fclose(fp);
+    else
+        close(pipefd[PIPE_READ]);
+
+    close(pipefd[PIPE_WRITE]);
+    return NULL;
+}
+
+// See man environ
+extern char **environ;
+
+// myp_init should be called by apps which act as init
+// (pid 1) so that processes created by mypopen and mypopene
+// are tracked. This enables the reaper to ignore processes
+// which will be handled internally, by calling myp_reap, to
+// avoid issues with already reaped processes during wait calls.
+//
+// Callers should call myp_free() to clean up resources.
+void myp_init(void) {
+    info("process tracking enabled.");
+    myp_tracking = 1;
+
+    if (netdata_mutex_init(&myp_lock) != 0) {
+	fatal("myp_init() mutex init failed.");
+    }
+}
+
+// myp_free cleans up any resources allocated for process
+// tracking.
+void myp_free(void) {
+    struct mypopen *mp, *next;
+
+    if (myp_tracking == 0)
+        return;
+
+    netdata_mutex_lock(&myp_lock);
+    for (mp = mypopen_root; mp != NULL; mp = next) {
+        next = mp->next;
+        freez(mp);
     }
 
-    // set a new process group id for just this child
-    if( setpgid(0, 0) != 0 )
-        error("pre-execution of command '%s' on pid %d: Cannot set a new process group.", command, getpid());
+    mypopen_root = NULL;
+    myp_tracking = 0;
+    netdata_mutex_unlock(&myp_lock);
+}
 
-    if( getpgid(0) != getpid() )
-        error("pre-execution of command '%s' on pid %d: Cannot set a new process group. Process group set is incorrect. Expected %d, found %d", command, getpid(), getpid(), getpgid(0));
+// myp_reap returns 1 if pid should be reaped, 0 otherwise.
+int myp_reap(pid_t pid) {
+    struct mypopen *mp;
 
-    if( setsid() != 0 )
-        error("pre-execution of command '%s' on pid %d: Cannot set session id.", command, getpid());
+    if (myp_tracking == 0)
+        return 0;
 
-    fprintf(stdout, "MYPID %d\n", getpid());
-    fflush(NULL);
-#endif
+    netdata_mutex_lock(&myp_lock);
+    for (mp = mypopen_root; mp != NULL; mp = mp->next) {
+        if (mp->pid == pid) {
+            netdata_mutex_unlock(&myp_lock);
+            return 0;
+        }
+    }
+    netdata_mutex_unlock(&myp_lock);
 
-    // reset all signals
-    signals_unblock();
-    signals_reset();
+    return 1;
+}
 
-    debug(D_CHILDS, "executing command: '%s' on pid %d.", command, getpid());
-    execl("/bin/sh", "sh", "-c", command, NULL);
-    exit(1);
+FILE *mypopen(const char *command, volatile pid_t *pidptr) {
+    return custom_popene(command, pidptr, environ);
 }
 
 FILE *mypopene(const char *command, volatile pid_t *pidptr, char **env) {
-    int pipefd[2];
-
-    if(pipe(pipefd) == -1)
-        return NULL;
-
-    int pid = fork();
-    if(pid == -1) {
-        close(pipefd[PIPE_READ]);
-        close(pipefd[PIPE_WRITE]);
-        return NULL;
-    }
-    if(pid != 0) {
-        // the parent
-        *pidptr = pid;
-        close(pipefd[PIPE_WRITE]);
-        FILE *fp = fdopen(pipefd[PIPE_READ], "r");
-        return(fp);
-    }
-    // the child
-
-    // close all files
-    int i;
-    for(i = (int) (sysconf(_SC_OPEN_MAX) - 1); i >= 0; i--)
-        if(i != STDIN_FILENO && i != STDERR_FILENO && i != pipefd[PIPE_WRITE]) close(i);
-
-    // move the pipe to stdout
-    if(pipefd[PIPE_WRITE] != STDOUT_FILENO) {
-        dup2(pipefd[PIPE_WRITE], STDOUT_FILENO);
-        close(pipefd[PIPE_WRITE]);
-    }
-
-    execle("/bin/sh", "sh", "-c", command, NULL, env);
-    exit(1);
+    return custom_popene(command, pidptr, env);
 }
 
 int mypclose(FILE *fp, pid_t pid) {
-    debug(D_EXIT, "Request to mypclose() on pid %d", pid);
+    int ret;
+    siginfo_t info;
 
-    /*mypopen_del(fp);*/
+    debug(D_EXIT, "Request to mypclose() on pid %d", pid);
 
     // close the pipe fd
     // this is required in musl
@@ -166,9 +245,11 @@ int mypclose(FILE *fp, pid_t pid) {
 
     errno = 0;
 
-    siginfo_t info;
-    if(waitid(P_PID, (id_t) pid, &info, WEXITED) != -1) {
-        switch(info.si_code) {
+    ret = waitid(P_PID, (id_t) pid, &info, WEXITED);
+    myp_del(pid);
+
+    if (ret != -1) {
+        switch (info.si_code) {
             case CLD_EXITED:
                 if(info.si_status)
                     error("child pid %d exited with code %d.", info.si_pid, info.si_status);

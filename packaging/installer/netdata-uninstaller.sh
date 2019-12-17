@@ -2,14 +2,15 @@
 #shellcheck disable=SC2181
 #
 # This is the netdata uninstaller script
+#
 # Variables needed by script and taken from '.environment' file:
 #  - NETDATA_PREFIX
 #  - NETDATA_ADDED_TO_GROUPS
 #
 # Copyright: SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Author: Paul Emm. Katsoulakis <paul@netdata.cloud>
-#
+# Author: Paweł Krupa <paulfantom@gmail.com>
+# Author: Pavlos Emm. Katsoulakis <paul@netdata.cloud>
 
 usage="$(basename "$0") [-h] [-f ] -- program to calculate the answer to life, the universe and everything
 
@@ -157,7 +158,12 @@ portable_del_group() {
 
 	# Linux
 	if command -v groupdel 1>/dev/null 2>&1; then
-		run groupdel -f "${groupname}" && return 0
+		if grep -q "${groupname}" /etc/group; then
+		  run groupdel "${groupname}" && return 0
+		else
+		  echo >&2 "Group ${groupname} already removed in a previous step."
+		  run_ok
+		fi
 	fi
 
 	# mac OS
@@ -306,6 +312,7 @@ if [ -n "${NETDATA_PREFIX}" ] && [ -d "${NETDATA_PREFIX}" ]; then
 	rm_dir "${NETDATA_PREFIX}"
 else
 	rm_file "/usr/sbin/netdata"
+	rm_file "/usr/sbin/netdatacli"
 	rm_dir "/usr/share/netdata"
 	rm_dir "/usr/libexec/netdata"
 	rm_dir "/var/lib/netdata"

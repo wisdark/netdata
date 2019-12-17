@@ -2,27 +2,29 @@
 
 ## Supported Versions
 
-| Version | Supported          |
-| ------- | ------------------ |
-| Latest  | Yes                |
+| Version | Supported |
+|-------  | --------- |
+| Latest  | Yes       |
 
 ## Reporting a Vulnerability
 
 We’re extremely grateful for security researchers and users that report vulnerabilities to Netdata Open Source Community. All reports are thoroughly investigated by a set of community volunteers.
 
-To make a report, please create a post [here](https://groups.google.com/a/netdata.cloud/forum/#!newtopic/security) with the vulnerability details and the details expected for [all Netdata bug reports](.github/ISSUE_TEMPLATE/bug_report.md).
+To make a report, please create a post [here](https://groups.google.com/a/netdata.cloud/forum/#!newtopic/security) with
+the vulnerability details and the details expected for [all Netdata bug
+reports](https://github.com/netdata/netdata/blob/c1f4c6cf503995cd4d896c5821b00d55afcbde87/.github/ISSUE_TEMPLATE/bug_report.md).
 
 ### When Should I Report a Vulnerability?
 
-- You think you discovered a potential security vulnerability in Netdata
-- You are unsure how a vulnerability affects Netdata
-- You think you discovered a vulnerability in another project that Netdata depends on (e.g. python, node, etc)
+-   You think you discovered a potential security vulnerability in Netdata
+-   You are unsure how a vulnerability affects Netdata
+-   You think you discovered a vulnerability in another project that Netdata depends on (e.g. python, node, etc)
 
 ### When Should I NOT Report a Vulnerability?
 
-- You need help tuning Netdata for security
-- You need help applying security related updates
-- Your issue is not security related
+-   You need help tuning Netdata for security
+-   You need help applying security related updates
+-   Your issue is not security related
 
 ### Security Vulnerability Response
 
@@ -40,4 +42,4 @@ A public disclosure date is negotiated by the Netdata team and the bug submitter
 
 Every time a security issue is fixed in Netdata, we immediately release a new version of it. So, to get notified of all security incidents, please subscribe to our releases on github.
 
-[![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Fdocs%2FSECURITY&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)]()
+[![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Fdocs%2FSECURITY&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)](<>)

@@ -1014,7 +1014,8 @@ void *statsd_collector_thread(void *ptr) {
             , statsd_rcv_callback
             , statsd_snd_callback
             , statsd_timer_callback
-            , NULL
+            , NULL                     // No access control pattern
+            , 0                        // No dns lookups for access control pattern
             , (void *)d
             , 0                        // tcp request timeout, 0 = disabled
             , statsd.tcp_idle_timeout  // tcp idle timeout, 0 = disabled
@@ -1067,7 +1068,7 @@ static const char *valuetype2string(STATSD_APP_CHART_DIM_VALUE_TYPE type) {
 }
 
 static STATSD_APP_CHART_DIM *add_dimension_to_app_chart(
-        STATSD_APP *app
+        STATSD_APP *app __maybe_unused
         , STATSD_APP_CHART *chart
         , const char *metric_name
         , const char *dim_name
@@ -2222,7 +2223,7 @@ void *statsd_main(void *ptr) {
     // ----------------------------------------------------------------------------------------------------------------
     // statsd setup
 
-    if(!statsd.enabled) return NULL;
+    if(!statsd.enabled) goto cleanup;
 
     statsd_listen_sockets_setup();
     if(!statsd.sockets.opened) {

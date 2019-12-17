@@ -6,6 +6,8 @@
 
 import urllib3
 
+from distutils.version import StrictVersion as version
+
 from bases.FrameworkServices.SimpleService import SimpleService
 
 try:
@@ -13,10 +15,30 @@ try:
 except AttributeError:
     pass
 
+# https://github.com/urllib3/urllib3/blob/master/CHANGES.rst#19-2014-07-04
+# New retry logic and urllib3.util.retry.Retry configuration object. (Issue https://github.com/urllib3/urllib3/pull/326)
+URLLIB3_MIN_REQUIRED_VERSION = '1.9'
+URLLIB3_VERSION = urllib3.__version__
+URLLIB3 = 'urllib3'
+
+
+def version_check():
+    if version(URLLIB3_VERSION) >= version(URLLIB3_MIN_REQUIRED_VERSION):
+        return
+
+    err = '{0} version: {1}, minimum required version: {2}, please upgrade'.format(
+        URLLIB3,
+        URLLIB3_VERSION,
+        URLLIB3_MIN_REQUIRED_VERSION,
+    )
+    raise Exception(err)
+
 
 class UrlService(SimpleService):
     def __init__(self, configuration=None, name=None):
+        version_check()
         SimpleService.__init__(self, configuration=configuration, name=name)
+        self.debug("{0} version: {1}".format(URLLIB3, URLLIB3_VERSION))
         self.url = self.configuration.get('url')
         self.user = self.configuration.get('user')
         self.password = self.configuration.get('pass')
@@ -80,9 +102,12 @@ class UrlService(SimpleService):
             params['ca_certs'] = tls_ca_file
         try:
             url = header_kw.get('url') or self.url
-            if url.startswith('https') and not self.tls_verify and not tls_ca_file:
+            is_https = url.startswith('https')
+            if skip_tls_verify(is_https, self.tls_verify, tls_ca_file):
                 params['ca_certs'] = None
-                return manager(assert_hostname=False, cert_reqs='CERT_NONE', **params)
+                params['cert_reqs'] = 'CERT_NONE'
+                if is_https:
+                    params['assert_hostname'] = False
             return manager(**params)
         except (urllib3.exceptions.ProxySchemeUnknown, TypeError) as error:
             self.error('build_manager() error:', str(error))
@@ -152,3 +177,16 @@ class UrlService(SimpleService):
             return True
         self.error('_get_data() returned no data or type is not <dict>')
         return False
+
+
+def skip_tls_verify(is_https, tls_verify, tls_ca_file):
+    # default 'tls_verify' value is None
+    # logic is:
+    #   - never skip if there is 'tls_ca_file' file
+    #   - skip by default for https
+    #   - do not skip by default for http
+    if tls_ca_file:
+        return False
+    if is_https and not tls_verify:
+        return True
+    return tls_verify is False

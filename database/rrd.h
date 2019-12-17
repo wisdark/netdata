@@ -148,6 +148,25 @@ typedef enum rrddim_flags {
 #define rrddim_flag_clear(rd, flag) (rd)->flags &= ~(flag)
 #endif
 
+typedef enum label_source {
+    LABEL_SOURCE_AUTO             = 0,
+    LABEL_SOURCE_NETDATA_CONF     = 1,
+    LABEL_SOURCE_DOCKER           = 2,
+    LABEL_SOURCE_ENVIRONMENT      = 3,
+    LABEL_SOURCE_KUBERNETES       = 4
+} LABEL_SOURCE;
+
+struct label {
+    char *key, *value;
+    uint32_t key_hash;
+    LABEL_SOURCE label_source;
+    struct label *next;
+};
+
+char *translate_label_source(LABEL_SOURCE l);
+struct label *create_label(char *key, char *value, LABEL_SOURCE label_source);
+struct label *add_label_to_list(struct label *l, char *key, char *value, LABEL_SOURCE label_source);
+void reload_host_labels();
 
 // ----------------------------------------------------------------------------
 // RRD DIMENSION - this is a metric
@@ -250,6 +269,8 @@ union rrddim_collect_handle {
         unsigned long page_correlation_id;
         struct rrdengine_instance *ctx;
         struct pg_cache_page_index *page_index;
+        // set to 1 when this dimension is not page aligned with the other dimensions in the chart
+        uint8_t unaligned_page;
     } rrdeng; // state the database engine uses
 #endif
 };
@@ -271,8 +292,9 @@ struct rrddim_query_handle {
             struct rrdeng_page_descr *descr;
             struct rrdengine_instance *ctx;
             struct pg_cache_page_index *page_index;
-            time_t now; //TODO: remove now to implement next point iteration
-            time_t dt; //TODO: remove dt to implement next point iteration
+            time_t next_page_time;
+            time_t now;
+            unsigned position;
         } rrdeng; // state the database engine uses
 #endif
     };
@@ -305,7 +327,7 @@ struct rrddim_volatile {
         void (*init)(RRDDIM *rd, struct rrddim_query_handle *handle, time_t start_time, time_t end_time);
 
         // run this to load each metric number from the database
-        storage_number (*next_metric)(struct rrddim_query_handle *handle);
+        storage_number (*next_metric)(struct rrddim_query_handle *handle, time_t *current_time);
 
         // run this to test if the series of next_metric() database queries is finished
         int (*is_finished)(struct rrddim_query_handle *handle);
@@ -351,7 +373,7 @@ typedef enum rrdset_flags {
     RRDSET_FLAG_UPSTREAM_EXPOSED    = 1 << 8, // if set, we have sent this chart definition to netdata master (streaming)
     RRDSET_FLAG_STORE_FIRST         = 1 << 9, // if set, do not eliminate the first collection during interpolation
     RRDSET_FLAG_HETEROGENEOUS       = 1 << 10, // if set, the chart is not homogeneous (dimensions in it have multiple algorithms, multipliers or dividers)
-    RRDSET_FLAG_HOMEGENEOUS_CHECK   = 1 << 11, // if set, the chart should be checked to determine if the dimensions as homogeneous
+    RRDSET_FLAG_HOMOGENEOUS_CHECK   = 1 << 11, // if set, the chart should be checked to determine if the dimensions are homogeneous
     RRDSET_FLAG_HIDDEN              = 1 << 12, // if set, do not show this chart on the dashboard, but use it for backends
     RRDSET_FLAG_SYNC_CLOCK          = 1 << 13, // if set, microseconds on next data collection will be ignored (the chart will be synced to now)
     RRDSET_FLAG_OBSOLETE_DIMENSIONS = 1 << 14  // this is marked by the collector/module when a chart has obsolete dimensions
@@ -405,6 +427,7 @@ struct rrdset {
                                                     // it goes around in a round-robin fashion
 
     RRDSET_FLAGS flags;                             // configuration flags
+    RRDSET_FLAGS *exporting_flags;                  // array of flags for exporting connector instances
 
     int gap_when_lost_iterations_above;             // after how many lost iterations a gap should be stored
                                                     // netdata will interpolate values for gaps lower than this
@@ -431,7 +454,9 @@ struct rrdset {
     char *plugin_name;                              // the name of the plugin that generated this
     char *module_name;                              // the name of the plugin module that generated this
 
-    size_t unused[6];
+    size_t unused[5];
+
+    size_t rrddim_page_alignment;                   // keeps metric pages in alignment when using dbengine
 
     uint32_t hash;                                  // a simple hash on the id, to speed up searching
                                                     // we first compare hashes, and only if the hashes are equal we do string comparisons
@@ -568,6 +593,8 @@ struct alarm_entry {
     uint32_t updated_by_id;
     uint32_t updates_id;
 
+    time_t last_repeat;
+
     struct alarm_entry *next;
 };
 
@@ -620,6 +647,7 @@ struct rrdhost {
     const char *timezone;                           // the timezone of the host
 
     RRDHOST_FLAGS flags;                            // flags about this RRDHOST
+    RRDHOST_FLAGS *exporting_flags;                 // array of flags for exporting connector instances
 
     int rrd_update_every;                           // the update frequency of the host
     long rrd_history_entries;                       // the number of history entries for the host's charts
@@ -682,11 +710,17 @@ struct rrdhost {
     char *health_log_filename;                      // the alarms event log filename
     size_t health_log_entries_written;              // the number of alarm events writtern to the alarms event log
     FILE *health_log_fp;                            // the FILE pointer to the open alarms event log file
+    uint32_t health_default_warn_repeat_every;      // the default value for the interval between repeating warning notifications
+    uint32_t health_default_crit_repeat_every;      // the default value for the interval between repeating critical notifications
+
 
     // all RRDCALCs are primarily allocated and linked here
     // RRDCALCs may be linked to charts at any point
     // (charts may or may not exist when these are loaded)
     RRDCALC *alarms;
+    RRDCALC *alarms_with_foreach;
+    avl_tree_lock alarms_idx_health_log;
+    avl_tree_lock alarms_idx_name;
 
     ALARM_LOG health_log;                           // alarms historical events (event log)
     uint32_t health_last_processed_id;              // the last processed health id from the log
@@ -697,6 +731,7 @@ struct rrdhost {
     // these are used to create alarms when charts
     // are created or renamed, that match them
     RRDCALCTEMPLATE *templates;
+    RRDCALCTEMPLATE *alarms_template_with_foreach;
 
 
     // ------------------------------------------------------------------------
@@ -709,6 +744,11 @@ struct rrdhost {
     // locks
 
     netdata_rwlock_t rrdhost_rwlock;                // lock for this RRDHOST (protects rrdset_root linked list)
+
+    // ------------------------------------------------------------------------
+    // Support for host-level labels
+    struct label *labels;
+    netdata_rwlock_t labels_rwlock;         // lock for the label list
 
     // ------------------------------------------------------------------------
     // indexes
@@ -725,6 +765,7 @@ struct rrdhost {
 
 #ifdef ENABLE_HTTPS
     struct netdata_ssl ssl;                         //Structure used to encrypt the connection
+    struct netdata_ssl stream_ssl;                         //Structure used to encrypt the stream
 #endif
 
     struct rrdhost *next;
@@ -996,6 +1037,7 @@ static inline time_t rrdset_slot2time(RRDSET *st, size_t slot) {
 // ----------------------------------------------------------------------------
 // RRD DIMENSION functions
 
+extern void rrdcalc_link_to_rrddim(RRDDIM *rd, RRDSET *st, RRDHOST *host);
 extern RRDDIM *rrddim_add_custom(RRDSET *st, const char *id, const char *name, collected_number multiplier, collected_number divisor, RRD_ALGORITHM algorithm, RRD_MEMORY_MODE memory_mode);
 #define rrddim_add(st, id, name, multiplier, divisor, algorithm) rrddim_add_custom(st, id, name, multiplier, divisor, algorithm, (st)->rrd_memory_mode)
 
@@ -1016,6 +1058,12 @@ extern collected_number rrddim_set_by_pointer(RRDSET *st, RRDDIM *rd, collected_
 extern collected_number rrddim_set(RRDSET *st, const char *id, collected_number value);
 
 extern long align_entries_to_pagesize(RRD_MEMORY_MODE mode, long entries);
+
+// ----------------------------------------------------------------------------
+// Miscellaneous functions
+
+extern int alarm_compare_id(void *a, void *b);
+extern int alarm_compare_name(void *a, void *b);
 
 // ----------------------------------------------------------------------------
 // RRD internal functions

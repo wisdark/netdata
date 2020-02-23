@@ -31,6 +31,13 @@ echo "--- Initialize git configuration ---"
 git checkout "${1-master}"
 git pull
 
+if [ "${RELEASE_CHANNEL}" == stable ]; then
+  echo "--- Set default release channel to stable ---"
+  sed -i 's/^RELEASE_CHANNEL="nightly" *#/RELEASE_CHANNEL="stable" #/' \
+    netdata-installer.sh \
+    packaging/makeself/install-or-update.sh
+fi
+
 # Everything from this directory will be uploaded to GCS
 mkdir -p artifacts
 BASENAME="netdata-$(git describe)"
@@ -55,5 +62,10 @@ cd artifacts
 ln -s "${BASENAME}.tar.gz" netdata-latest.tar.gz
 ln -s "${BASENAME}.gz.run" netdata-latest.gz.run
 sha256sum -b ./* >"sha256sums.txt"
+
+# TODO: Remove this after 1 successfuly nightly or until there are no v1.19.0-432 instances left
+# XXX: See: https://github.com/netdata/netdata/issues/8056
+sed -i -e '/netdata-v/d' sha256sums.txt
+
 echo "checksums:"
 cat sha256sums.txt

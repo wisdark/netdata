@@ -9,6 +9,7 @@ struct health_cmdapi_thread_status {
 };
 
 unsigned int default_health_enabled = 1;
+char *silencers_filename;
 
 // ----------------------------------------------------------------------------
 // health initialization
@@ -70,7 +71,7 @@ void health_silencers_init(void) {
         }
         fclose(fd);
     } else {
-        error("Cannot open the file %s",silencers_filename);
+        info("Cannot open the file %s, so Netdata will work with the default health configuration.",silencers_filename);
     }
 }
 

@@ -1491,6 +1491,9 @@ static inline void rrddim_set_by_pointer_fake_time(RRDDIM *rd, collected_number 
 
 static RRDHOST *dbengine_rrdhost_find_or_create(char *name)
 {
+    /* We don't want to drop metrics when generating load, we prefer to block data generation itself */
+    rrdeng_drop_metrics_under_page_cache_pressure = 0;
+
     return rrdhost_find_or_create(
             name
             , name
@@ -1723,7 +1726,7 @@ int test_dbengine(void)
 
     default_rrd_memory_mode = RRD_MEMORY_MODE_DBENGINE;
 
-    fprintf(stderr, "Initializing localhost with hostname 'unittest-dbengine'\n");
+    fprintf(stderr, "Initializing localhost with hostname 'unittest-dbengine'");
     host = dbengine_rrdhost_find_or_create("unittest-dbengine");
     if (NULL == host)
         return 1;
@@ -1938,7 +1941,7 @@ void generate_dbengine_dataset(unsigned history_seconds)
     default_rrdeng_disk_quota_mb -= default_rrdeng_disk_quota_mb * EXPECTED_COMPRESSION_RATIO / 100;
 
     error_log_limit_unlimited();
-    fprintf(stderr, "Initializing localhost with hostname 'dbengine-dataset'\n");
+    fprintf(stderr, "Initializing localhost with hostname 'dbengine-dataset'");
 
     host = dbengine_rrdhost_find_or_create("dbengine-dataset");
     if (NULL == host)
@@ -2090,7 +2093,7 @@ void dbengine_stress_test(unsigned TEST_DURATION_SEC, unsigned DSET_CHARTS, unsi
 {
     const unsigned DSET_DIMS = 128;
     const uint64_t EXPECTED_COMPRESSION_RATIO = 20;
-    const unsigned HISTORY_SECONDS = 3600 * 24 * 365 * 50; /* 50 years of history */
+    const unsigned HISTORY_SECONDS = 3600 * 24 * 365 * 50; /* 50 year of history */
     RRDHOST *host = NULL;
     struct dbengine_chart_thread **chart_threads;
     struct dbengine_query_thread **query_threads;

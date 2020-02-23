@@ -40,6 +40,7 @@ static cmd_status_t cmd_save_database_execute(char *args, char **message);
 static cmd_status_t cmd_reopen_logs_execute(char *args, char **message);
 static cmd_status_t cmd_exit_execute(char *args, char **message);
 static cmd_status_t cmd_fatal_execute(char *args, char **message);
+static cmd_status_t cmd_reload_claiming_state_execute(char *args, char **message);
 static cmd_status_t cmd_reload_labels_execute(char *args, char **message);
 
 static command_info_t command_info_array[] = {
@@ -49,6 +50,7 @@ static command_info_t command_info_array[] = {
         {"reopen-logs", cmd_reopen_logs_execute, CMD_TYPE_ORTHOGONAL},       // Close and reopen log files
         {"shutdown-agent", cmd_exit_execute, CMD_TYPE_EXCLUSIVE},            // exit cleanly
         {"fatal-agent", cmd_fatal_execute, CMD_TYPE_HIGH_PRIORITY},          // exit with fatal error
+        {"reload-claiming-state", cmd_reload_claiming_state_execute, CMD_TYPE_ORTHOGONAL}, // reload claiming state
         {"reload-labels", cmd_reload_labels_execute, CMD_TYPE_ORTHOGONAL},   // reload the labels
 };
 
@@ -108,7 +110,9 @@ static cmd_status_t cmd_help_execute(char *args, char **message)
              "shutdown-agent\n"
              "    Cleanup and exit the netdata agent.\n"
              "fatal-agent\n"
-             "    Log the state and halt the netdata agent.\n",
+             "    Log the state and halt the netdata agent.\n"
+             "reload-claiming-state\n"
+             "    Reload agent claiming state from disk.\n",
              MAX_COMMAND_LENGTH - 1);
     return CMD_STATUS_SUCCESS;
 }
@@ -176,6 +180,21 @@ static cmd_status_t cmd_fatal_execute(char *args, char **message)
     return CMD_STATUS_SUCCESS;
 }
 
+static cmd_status_t cmd_reload_claiming_state_execute(char *args, char **message)
+{
+    (void)args;
+    (void)message;
+
+    info("The claiming feature is still in development and subject to change before the next release");
+    return CMD_STATUS_FAILURE;
+
+    error_log_limit_unlimited();
+    info("COMMAND: Reloading Agent Claiming configuration.");
+    load_claiming_state();
+    error_log_limit_reset();
+    return CMD_STATUS_SUCCESS;
+}
+
 static cmd_status_t cmd_reload_labels_execute(char *args, char **message)
 {
     (void)args;
@@ -184,6 +203,7 @@ static cmd_status_t cmd_reload_labels_execute(char *args, char **message)
 
     BUFFER *wb = buffer_create(10);
 
+    rrdhost_rdlock(localhost);
     netdata_rwlock_rdlock(&localhost->labels_rwlock);
     struct label *l=localhost->labels;
     while (l != NULL) {
@@ -191,6 +211,7 @@ static cmd_status_t cmd_reload_labels_execute(char *args, char **message)
         l = l->next;
     }
     netdata_rwlock_unlock(&localhost->labels_rwlock);
+    rrdhost_unlock(localhost);
 
     (*message)=strdupz(buffer_tostring(wb));
     buffer_free(wb);
@@ -507,7 +528,7 @@ static void command_thread(void *arg)
     info("Shutting down command event loop.");
     uv_close((uv_handle_t *)&async, NULL);
     uv_close((uv_handle_t*)&server_pipe, NULL);
-    uv_run(loop, UV_RUN_DEFAULT);
+    uv_run(loop, UV_RUN_DEFAULT); /* flush all libuv handles */
 
     info("Shutting down command loop complete.");
     assert(0 == uv_loop_close(loop));
@@ -521,6 +542,7 @@ error_after_pipe_bind:
 error_after_pipe_init:
     uv_close((uv_handle_t *)&async, NULL);
 error_after_async_init:
+    uv_run(loop, UV_RUN_DEFAULT); /* flush all libuv handles */
     assert(0 == uv_loop_close(loop));
 error_after_loop_init:
     freez(loop);
@@ -556,6 +578,7 @@ void commands_init(void)
     /* wait for worker thread to initialize */
     wait_for_completion(&completion);
     destroy_completion(&completion);
+    uv_thread_set_name_np(thread, "DAEMON_COMMAND");
 
     if (command_thread_error) {
         error = uv_thread_join(&thread);
@@ -567,7 +590,7 @@ void commands_init(void)
     return;
 
 after_error:
-    error("Failed to initialize command server.");
+    error("Failed to initialize command server. The netdata cli tool will be unable to send commands.");
 }
 
 void commands_exit(void)

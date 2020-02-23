@@ -66,6 +66,9 @@ slabinfo.plugin
 cgroup-network
 !cgroup-network/
 
+ebpf_process.plugin
+!ebpf_process.plugin/
+
 # protoc generated files
 *.pb.cc
 *.pb.h
@@ -116,6 +119,7 @@ daemon/anonymous-statistics.sh
 daemon/get-kubernetes-labels.sh
 
 health/notifications/alarm-notify.sh
+claim/netdata-claim.sh
 collectors/cgroups.plugin/cgroup-name.sh
 collectors/tc.plugin/tc-qos-helper.sh
 collectors/charts.d.plugin/charts.d.plugin
@@ -191,3 +195,6 @@ docs/generator/mkdocs.yml
 
 #CLion files
 netdata.cbp
+
+# External dependencies
+externaldeps/

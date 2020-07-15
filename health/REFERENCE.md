@@ -1,3 +1,11 @@
+<!--
+---
+title: "Health configuration reference"
+date: 2020-03-31
+custom_edit_url: https://github.com/netdata/netdata/edit/master/health/REFERENCE.md
+---
+-->
+
 # Health configuration reference
 
 Welcome to the health configuration reference.
@@ -129,7 +137,7 @@ If you create a template using the `disk.io` context, it will apply an alarm to 
 The alarm or template will be used only if the operating system of the host matches this list specified in `os`. The
 value is a space-separated list.
 
-The following example enables the entity on Linux, FreeBSD, and MacOS, but no other operating systems.
+The following example enables the entity on Linux, FreeBSD, and macOS, but no other operating systems.
 
 ```yaml
 os: linux freebsd macos
@@ -192,8 +200,9 @@ Everything is the same with [badges](../web/api/badges/). In short:
 
 -   `of DIMENSIONS` is optional and has to be the last parameter. Dimensions have to be separated
      by `,` or `|`. The space characters found in dimensions will be kept as-is (a few dimensions
-     have spaces in their names). This accepts Netdata simple patterns and the `match-ids` and
-     `match-names` options affect the searches for dimensions.
+     have spaces in their names). This accepts Netdata simple patterns _(with `words` separated by
+     `,` or `|` instead of spaces)_ and the `match-ids` and `match-names` options affect the searches
+     for dimensions.
 
 -   `foreach DIMENSIONS` is optional, will always be the last parameter, and uses the same `,`/`|`
      rules as the `of` parameter. Each dimension you specify in `foreach` will use the same rule
@@ -374,7 +383,7 @@ good idea to tell Netdata to not clear the notification, by using the `no-clear-
 
 #### Alarm line `host labels`
 
-Defines the list of labels present on a host. See our [host labels tutorial](../docs/tutorials/using-host-labels.md) for
+Defines the list of labels present on a host. See our [host labels guide](/docs/guides/using-host-labels.md) for
 an explanation of host labels and how to implement them.
 
 For example, let's suppose that `netdata.conf` is configured with the following labels:

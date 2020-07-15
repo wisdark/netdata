@@ -41,9 +41,11 @@ dist_healthconfig_DATA = \
     health.d/couchdb.conf \
     health.d/disks.conf \
     health.d/dnsmasq_dhcp.conf \
+    health.d/dns_query.conf \
     health.d/dockerd.conf \
     health.d/elasticsearch.conf \
     health.d/entropy.conf \
+    health.d/exporting.conf \
     health.d/fping.conf \
     health.d/ioping.conf \
     health.d/fronius.conf \
@@ -75,6 +77,7 @@ dist_healthconfig_DATA = \
     health.d/portcheck.conf \
     health.d/postgres.conf \
     health.d/processes.conf \
+    health.d/pulsar.conf \
     health.d/qos.conf \
     health.d/ram.conf \
     health.d/redis.conf \
@@ -94,8 +97,10 @@ dist_healthconfig_DATA = \
     health.d/unbound.conf \
     health.d/varnish.conf \
     health.d/vcsa.conf \
+    health.d/vernemq.conf \
     health.d/vsphere.conf \
     health.d/web_log.conf \
+    health.d/whoisquery.conf \
     health.d/wmi.conf \
     health.d/x509check.conf \
     health.d/zfs.conf \

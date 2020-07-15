@@ -1,3 +1,10 @@
+<!--
+---
+title: "Security design"
+custom_edit_url: https://github.com/netdata/netdata/edit/master/docs/netdata-security.md
+---
+-->
+
 # Security design
 
 We have given special attention to all aspects of Netdata, ensuring that everything throughout its operation is as secure as possible. Netdata has been designed with security in mind.
@@ -19,7 +26,7 @@ We have given special attention to all aspects of Netdata, ensuring that everyth
 
 Netdata collects raw data from many sources. For each source, Netdata uses a plugin that connects to the source (or reads the relative files produced by the source), receives raw data and processes them to calculate the metrics shown on Netdata dashboards.
 
-Even if Netdata plugins connect to your database server, or read your application log file to collect raw data, the product of this data collection process is always a number of **chart metadata and metric values** (summarized data for dashboard visualization). All Netdata plugins (internal to the Netdata daemon, and external ones written in any computer language), convert raw data collected into metrics, and only these metrics are stored in Netdata databases, sent to upstream Netdata servers, or archived to backend time-series databases.
+Even if Netdata plugins connect to your database server, or read your application log file to collect raw data, the product of this data collection process is always a number of **chart metadata and metric values** (summarized data for dashboard visualization). All Netdata plugins (internal to the Netdata daemon, and external ones written in any computer language), convert raw data collected into metrics, and only these metrics are stored in Netdata databases, sent to upstream Netdata servers, or archived to external time-series databases.
 
 > The **raw data** collected by Netdata, do not leave the host they are collected. **The only data Netdata exposes are chart metadata and metric values.**
 
@@ -33,7 +40,10 @@ There are a few cases however that raw source data are only exposed to processes
 
 So, Netdata **plugins**, even those running with escalated capabilities or privileges, perform a **hard coded data collection job**. They do not accept commands from Netdata. The communication is strictly **unidirectional**: from the plugin towards the Netdata daemon. The original application data collected by each plugin do not leave the process they are collected, are not saved and are not transferred to the Netdata daemon. The communication from the plugins to the Netdata daemon includes only chart metadata and processed metric values.
 
-Netdata slaves streaming metrics to upstream Netdata servers, use exactly the same protocol local plugins use. The raw data collected by the plugins of slave Netdata servers are **never leaving the host they are collected**. The only data appearing on the wire are chart metadata and metric values. This communication is also **unidirectional**: slave Netdata servers never accept commands from master Netdata servers.
+Child nodes use the same protocol when streaming metrics to their parent nodes. The raw data collected by the plugins of
+child Netdata servers are **never leaving the host they are collected**. The only data appearing on the wire are chart
+metadata and metric values. This communication is also **unidirectional**: child nodes never accept commands from
+parent Netdata servers.
 
 ## Netdata is read-only
 
@@ -74,7 +84,7 @@ You can bind Netdata to multiple IPs and ports. If you use hostnames, Netdata wi
 
 For cloud based installations, if your cloud provider does not provide such a private LAN (or if you use multiple providers), you can create a virtual management and administration LAN with tools like `tincd` or `gvpe`. These tools create a mesh VPN allowing all servers to communicate securely and privately. Your administration stations join this mesh VPN to get access to management and administration tasks on all your cloud servers.
 
-For `gvpe` we have developed a [simple provisioning tool](https://github.com/netdata/netdata-demo-site/tree/master/gvpe) you may find handy (it includes statically compiled `gvpe` binaries for Linux and FreeBSD, and also a script to compile `gvpe` on your Mac). We use this to create a management and administration LAN for all Netdata demo sites (spread all over the internet using multiple hosting providers).
+For `gvpe` we have developed a [simple provisioning tool](https://github.com/netdata/netdata-demo-site/tree/master/gvpe) you may find handy (it includes statically compiled `gvpe` binaries for Linux and FreeBSD, and also a script to compile `gvpe` on your macOS system). We use this to create a management and administration LAN for all Netdata demo sites (spread all over the internet using multiple hosting providers).
 
 ---
 
@@ -183,18 +193,21 @@ Of course, there are many more methods you could use to protect Netdata:
 
 -   If you are always under a static IP, you can use the script given above to allow direct access to your Netdata servers without authentication, from all your static IPs.
 
--   install all your Netdata in **headless data collector** mode, forwarding all metrics in real-time to a master Netdata server, which will be protected with authentication using an nginx server running locally at the master Netdata server. This requires more resources (you will need a bigger master Netdata server), but does not require any firewall changes, since all the slave Netdata servers will not be listening for incoming connections.
+-   install all your Netdata in **headless data collector** mode, forwarding all metrics in real-time to a parent
+    Netdata server, which will be protected with authentication using an nginx server running locally at the parent
+    Netdata server. This requires more resources (you will need a bigger parent Netdata server), but does not require
+    any firewall changes, since all the child Netdata servers will not be listening for incoming connections.
 
 ## Anonymous Statistics
 
 ### Registry or how to not send any information to a third party server
 
-The default configuration uses a public registry under registry.my-netdata.io (more information about the registry here: [mynetdata-menu-item](../registry/) ). Please be aware that if you use that public registry, you submit the following information to a third party server: 
+The default configuration uses a public registry under registry.my-netdata.io (more information about the registry here: [mynetdata-menu-item](/registry/README.md) ). Please be aware that if you use that public registry, you submit the following information to a third party server: 
 
 -   The url where you open the web-ui in the browser (via http request referrer)
 -   The hostnames of the Netdata servers
 
-If sending this information to the central Netdata registry violates your security policies, you can configure Netdat to [run your own registry](../registry/#run-your-own-registry).
+If sending this information to the central Netdata registry violates your security policies, you can configure Netdat to [run your own registry](/registry/README.md#run-your-own-registry).
 
 ### Opt-out of anonymous statistics
 

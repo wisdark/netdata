@@ -1,3 +1,9 @@
+<!--
+title: "Elasticsearch monitoring with Netdata"
+custom_edit_url: https://github.com/netdata/netdata/edit/master/collectors/python.d.plugin/elasticsearch/README.md
+sidebar_label: "Elasticsearch"
+-->
+
 # Elasticsearch monitoring with Netdata
 
 Monitors [Elasticsearch](https://www.elastic.co/products/elasticsearch) performance and health metrics.
@@ -16,7 +22,7 @@ It produces:
     -   Time spent on indexing, refreshing, flushing
     -   Indexing and flushing latency
 
-3.  **Memory usage and garbace collection** charts:
+3.  **Memory usage and garbage collection** charts:
 
     -   JVM heap currently in use, committed
     -   Count of garbage collections
@@ -61,7 +67,7 @@ It produces:
 ## Configuration
 
 Edit the `python.d/elasticsearch.conf` configuration file using `edit-config` from the your agent's [config
-directory](../../../docs/step-by-step/step-04.md#find-your-netdataconf-file), which is typically at `/etc/netdata`.
+directory](/docs/step-by-step/step-04.md#find-your-netdataconf-file), which is typically at `/etc/netdata`.
 
 ```bash
 cd /etc/netdata   # Replace this path with your Netdata config directory, if different, if different

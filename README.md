@@ -1,3 +1,11 @@
+<!--
+---
+title: "Netdata"
+date: 2020-05-01
+custom_edit_url: https://github.com/netdata/netdata/edit/master/README.md
+---
+-->
+
 # Netdata [![Build Status](https://travis-ci.com/netdata/netdata.svg?branch=master)](https://travis-ci.com/netdata/netdata) [![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/2231/badge)](https://bestpractices.coreinfrastructure.org/projects/2231) [![License: GPL v3+](https://img.shields.io/badge/License-GPL%20v3%2B-blue.svg)](https://www.gnu.org/licenses/gpl-3.0) [![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Freadme&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)](<>)
 
 [![Code
@@ -26,10 +34,10 @@ granularity. Run this long-term storage autonomously, or integrate Netdata with 
 Netdata is **fast** and **efficient**, designed to permanently run on all systems (**physical** and **virtual** servers,
 **containers**, **IoT** devices), without disrupting their core function.
 
-Netdata is **free, open-source software** and it currently runs on **Linux**, **FreeBSD**, and **MacOS**, along with
+Netdata is **free, open-source software** and it currently runs on **Linux**, **FreeBSD**, and **macOS**, along with
 other systems derived from them, such as **Kubernetes** and **Docker**.
 
-Netdata is not hosted by the CNCF but is the 3rd most starred open-source project in the [Cloud Native Computing
+Netdata is not hosted by the CNCF but is the fourth most starred open-source project in the [Cloud Native Computing
 Foundation (CNCF) landscape](https://landscape.cncf.io/format=card-mode&grouping=no&sort=stars).
 
 ---
@@ -64,13 +72,14 @@ Netdata!](https://img.shields.io/twitter/url/http/shields.io.svg?style=social&la
 The following animated GIF shows the top part of a typical Netdata dashboard.
 
 ![The Netdata dashboard in
-action](https://user-images.githubusercontent.com/1153921/70638670-85dd5080-1bf6-11ea-893e-94400f445574.gif)
+action](https://user-images.githubusercontent.com/1153921/80827388-b9fee100-8b98-11ea-8f60-0d7824667cd3.gif)
 
 > A typical Netdata dashboard, in 1:1 timing. Charts can be panned by dragging them, zoomed in/out with `SHIFT` + `mouse
 > wheel`, an area can be selected for zoom-in with `SHIFT` + `mouse selection`. Netdata is highly interactive,
 > **real-time**, and optimized to get the work done!
 
-Want to see Netdata live? Check out any of our [live demos](https://www.netdata.cloud/#live-demo).
+Want to try Netdata before you install? See our [live
+demo](https://london.my-netdata.io/default.html#menu_system_submenu_cpu;theme=slate;help=true).
 
 ## User base
 
@@ -94,7 +103,7 @@ We provide Docker images for the most common architectures. These are statistics
 ### Registry
 
 When you install multiple Netdata, they are integrated into **one distributed application**, via a [Netdata
-registry](registry/README.md). This is a web browser feature and it allows us to count the number of unique users and
+registry](/registry/README.md). This is a web browser feature and it allows us to count the number of unique users and
 unique Netdata servers installed. The following information comes from the global public Netdata registry we run:
 
 [![User
@@ -116,8 +125,8 @@ Today](https://registry.my-netdata.io/api/v1/badge.svg?chart=netdata.registry_se
 ![](https://registry.my-netdata.io/api/v1/badge.svg?chart=web_log_nginx.requests_per_url&options=unaligned&dimensions=kickstart&group=sum&after=-3600&label=last+hour&units=installations&value_color=orange&precision=0)
 ![](https://registry.my-netdata.io/api/v1/badge.svg?chart=web_log_nginx.requests_per_url&options=unaligned&dimensions=kickstart&group=sum&after=-86400&label=today&units=installations&precision=0)
 
-To install Netdata from source on any Linux system (physical, virtual, container, IoT, edge) and keep it up to date with
-our **nightly releases** automatically, run the following:
+To install Netdata from source on any Linux system (physical, virtual, container, IoT, edge), including all dependencies
+required to connect to Netdata Cloud, and get _automatic nightly updates_, run the following as your normal user:
 
 ```bash
 # make sure you run `bash` for your shell
@@ -128,42 +137,46 @@ bash <(curl -Ss https://my-netdata.io/kickstart.sh)
 ```
 
 Starting with v1.12, Netdata collects anonymous usage information by default and sends it to Google Analytics. Read
-about the information collected, and learn how to-opt, on our [anonymous statistics](docs/anonymous-statistics.md) page.
+about the information collected, and learn how to-opt, on our [anonymous statistics](/docs/anonymous-statistics.md) page.
 
-The usage statistics are _vital_ for us, as we use them to discover bugs and priortize new features. We thank you for
+The usage statistics are _vital_ for us, as we use them to discover bugs and prioritize new features. We thank you for
 _actively_ contributing to Netdata's future.
 
-To learn more about the pros and cons of using _nightly_ vs. _stable_ releases, see our [notice about the two options](packaging/installer/README.md#nightly-vs-stable-releases).
+To learn more about the pros and cons of using _nightly_ vs. _stable_ releases, see our [notice about the two options](/packaging/installer/README.md#nightly-vs-stable-releases).
 
 The above command will:
 
 -   Install any required packages on your system (it will ask you to confirm before doing so)
 -   Compile it, install it, and start it.
 
-More installation methods and additional options can be found at the [installation page](packaging/installer/).
+More installation methods and additional options can be found at the [installation
+page](/packaging/installer/README.md).
 
 To try Netdata in a Docker container, run this:
 
 ```sh
 docker run -d --name=netdata \
   -p 19999:19999 \
+  -v netdatalib:/var/lib/netdata \
+  -v netdatacache:/var/cache/netdata \
   -v /etc/passwd:/host/etc/passwd:ro \
   -v /etc/group:/host/etc/group:ro \
   -v /proc:/host/proc:ro \
   -v /sys:/host/sys:ro \
-  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -v /etc/os-release:/host/etc/os-release:ro \
+  --restart unless-stopped \
   --cap-add SYS_PTRACE \
   --security-opt apparmor=unconfined \
   netdata/netdata
 ```
 
-For more information about running Netdata in Docker, check the [docker installation page](packaging/docker/).
+For more information about running Netdata in Docker, check the [docker installation page](/packaging/docker/README.md).
 
 ![image](https://user-images.githubusercontent.com/2662304/48304090-fd384080-e51b-11e8-80ae-eecb03118dda.png)
 
 From Netdata v1.12 and above, anonymous usage information is collected by default and sent to Google Analytics. To read
 more about the information collected and how to opt-out, check the [anonymous statistics
-page](docs/anonymous-statistics.md).
+page](/docs/anonymous-statistics.md).
 
 ## Why Netdata
 
@@ -202,45 +215,29 @@ metrics, but also troubleshoot complex performance problems.
 
 ## News
 
-`Nov 27th, 2019` - **[Netdata v1.19.0 released!](https://github.com/netdata/netdata/releases)**
+`May 11, 2020` - **[Netdata v1.22.0 released!](https://github.com/netdata/netdata/releases)**
 
-Release v1.19.0 contains 2 new collectors, 19 bug fixes, 17 improvements, and 19 documentation updates.
+Release v1.22.0 marks the official launch of our rearchitected Netdata Cloud! This Agent release contains both backend and interface changes necessary to connect your distributed nodes to this dramatically improved experience.
 
-We completed a major rewrite of our **web log collector** to dramatically improve its flexibility and performance. The
-[new collector](https://github.com/netdata/go.d.plugin/pull/141), written entirely in Go, can parse and chart logs from
-Nginx and Apache servers, and combines numerous improvements. Netdata now supports the LTSV log format, creates charts
-for TLS and cipher usage, and is amazingly fast. In a test using SSD storage, the collector parsed the logs for 200,000
-requests in about 200ms, using 30% of a single core.
+Netdata Cloud builds on top of our open source monitoring Agent to give you real-time visibility for your entire infrastructure. Once you've connected your Agents to Cloud, you can view key metrics, insightful charts, and active alarms from all your nodes in a single web interface. When an anomaly strikes, seamlessly navigate to any node to troubleshoot and discover the root cause with the familiar Netdata dashboard.
 
-This Go-based collector also has powerful custom log parsing capabilities, which means we're one step closer to a
-generic application log parser for Netdata. We're continuing to work on this parser to support more application log
-formatting in the future.
+![Animated GIF of Netdata Cloud](https://user-images.githubusercontent.com/1153921/80828986-1ebb3b00-8b9b-11ea-957f-2c8d0d009e44.gif)
 
-We have a new tutorial on [enabling the Go web log
-collector](https://docs.netdata.cloud/docs/tutorials/collect-apache-nginx-web-logs/) and using it with Nginx and/or
-Apache access logs with minimal configuration. Thanks to [Wing924](https://github.com/Wing924) for starting the Go
-rewrite!
+**[Sign in to Cloud](https://app.netdata.cloud)** and read our [Get started with Cloud](https://learn.netdata.cloud/docs/cloud/get-started/) guide for details on updating your nodes, claiming them, and navigating the new Cloud.
 
-We introduced more **cmocka unit testing** to Netdata. In this release, we're testing how Netdata's internal web server
-processes HTTP requests—the first step to improve the quality of code throughout, reduce bugs, and make refactoring
-easier. We wanted to validate the web server's behavior but needed to build a layer of parametric testing on top of the
-CMocka test runner. Read all about our process of testing and selecting cmocka on our blog post: [Building an agile
-team's 'safety harness' with cmocka and FOSS](https://blog.netdata.cloud/posts/agile-team-cmocka-foss/).
+While Netdata Cloud offers a centralized method of monitoring your Agents, your metrics data is not stored or centralized in any way. Metrics data remains with your nodes and is only streamed to your browser through Cloud.
 
-Netdata's **Unbound collector** was also [completely rewritten in Go](https://github.com/netdata/go.d.plugin/pull/287)
-to improve how it collects and displays metrics. This new version can get dozens of metrics, including details on
-queries, cache, uptime, and even show per-thread metrics. See our
-[tutorial](https://docs.netdata.cloud/docs/tutorials/collect-unbound-metrics/) on enabling the new collector via
-Netdata's amazing auto-detection feature.
+In addition, Cloud only expands on the functionality of the wildly popular free and open source Agent. We will never make any of our open source Agent features Cloud-exclusive, and we will actively continue to develop the Agent so that we can integrate new features with Netdata Cloud.
 
-We [fixed an error](https://github.com/netdata/netdata/pull/7220) where **invalid spikes** appeared on certain charts by
-improving the incremental counter reset/wraparound detection algorithm.
+We added a new collector called `whoisquery` that helps you **monitor a domain name's expiration date**. You can track as many domains as you'd like, and set custom warning and critical thresholds for each. For more information on setup and configuration, see the [Whois domain expiry monitoring documentation](https://learn.netdata.cloud/docs/agent/collectors/go.d.plugin/modules/whoisquery/).
 
-Netdata can now send [**health alarm notifications to IRC
-channels**](https://docs.netdata.cloud/health/notifications/irc/) thanks to [Strykar](https://github.com/Strykar)!
+We added a new connector to our experimental exporting engine: **[Prometheus remote write](https://learn.netdata.cloud/docs/agent/exporting/prometheus/remote_write/)**. You can use this connector to send Netdata metrics to your choice of more than 20 external storage providers for long-term archiving and further analysis.
 
-And, Netdata can now monitor [**AM2320 sensors**](https://docs.netdata.cloud/collectors/python.d.plugin/am2320/), thanks
-to hard work from [Tom Buck](https://github.com/tommybuck).
+Our new documentation experience is now available at **[Netdata Learn](https://learn.netdata.cloud)**! We encourage you to try it out and give us feedback or ask questions in our [GitHub issues](https://github.com/netdata/netdata/issues/new/choose). Learn features documentation for both the Agent and Cloud in separate-but-connected vaults, which streamlines the experience of learning about both products.
+
+While Learn only features documentation for now, we plan on releasing more types of educational content serving the Agent's open-source community of developers, sysadmins, and DevOps folks. We'll have more to announce soon, but in the meantime, we hope you enjoy what we believe is a smoother (and prettier) docs experience.
+
+As part of the ongoing work to polish our **eBPF collector tech preview**, we've now proven the collector's performance is very good, and have vastly expanded the number of operating system versions the collector works on. Learn how to [enable it](https://docs.netdata.cloud/collectors/ebpf.plugin/) in our documentation. We've also extensively stress-tested the eBPF collector and found that it's impressively fast given the depth of metrics it collects! Read up on our benchmarking analysis [on GitHub](https://github.com/netdata/netdata/issues/8195).
 
 ---
 
@@ -258,12 +255,12 @@ This is how it works:
 
 | Function    | Description                                                                                                                                                                                                                                                    | Documentation                                       |
 | :---------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------- |
-| **Collect** | Multiple independent data collection workers are collecting metrics from their sources using the optimal protocol for each application and push the metrics to the database. Each data collection worker has lockless write access to the metrics it collects. | [`collectors`](collectors/README.md)                |
-| **Store**   | Metrics are first stored in RAM in a custom database engine that then "spills" historical metrics to disk for efficient long-term metrics storage.                                                                                                             | [`database`](database/README.md)                    |
-| **Check**   | A lockless independent watchdog is evaluating **health checks** on the collected metrics, triggers alarms, maintains a health transaction log and dispatches alarm notifications.                                                                              | [`health`](health/README.md)                        |
-| **Stream**  | A lockless independent worker is streaming metrics, in full detail and in real-time, to remote Netdata servers, as soon as they are collected.                                                                                                                 | [`streaming`](streaming/README.md)                  |
-| **Archive** | A lockless independent worker is down-sampling the metrics and pushes them to **backend** time-series databases.                                                                                                                                               | [`backends`](backends/README.md)                    |
-| **Query**   | Multiple independent workers are attached to the [internal web server](web/server/README.md), servicing API requests, including [data queries](web/api/queries/README.md).                                                                                     | [`web/api`](web/api/README.md)                      |
+| **Collect** | Multiple independent data collection workers are collecting metrics from their sources using the optimal protocol for each application and push the metrics to the database. Each data collection worker has lockless write access to the metrics it collects. | [`collectors`](/collectors/README.md)               |
+| **Store**   | Metrics are first stored in RAM in a custom database engine that then "spills" historical metrics to disk for efficient long-term metrics storage.                                                                                                             | [`database`](/database/README.md)                   |
+| **Check**   | A lockless independent watchdog is evaluating **health checks** on the collected metrics, triggers alarms, maintains a health transaction log and dispatches alarm notifications.                                                                              | [`health`](/health/README.md)                       |
+| **Stream**  | A lockless independent worker is streaming metrics, in full detail and in real-time, to remote Netdata servers, as soon as they are collected.                                                                                                                 | [`streaming`](/streaming/README.md)                 |
+| **Archive** | A lockless independent worker is down-sampling the metrics and pushes them to **backend** time-series databases.                                                                                                                                               | [`exporting`](/docs/export/README.md)               |
+| **Query**   | Multiple independent workers are attached to the [internal web server](/web/server/README.md), servicing API requests, including [data queries](/web/api/queries/README.md).                                                                                   | [`web/api`](/web/api/README.md)                     |
 
 The result is a highly efficient, low-latency system, supporting multiple readers and one writer on each metric.
 
@@ -303,17 +300,17 @@ This is what you should expect from Netdata:
 
 -   **Sophisticated alerting** - Netdata comes with hundreds of alarms **out of the box**! It supports dynamic
     thresholds, hysteresis, alarm templates, multiple role-based notification methods, and more.
--   **Notifications**: [alerta.io](health/notifications/alerta/), [amazon sns](health/notifications/awssns/),
-    [discordapp.com](health/notifications/discord/), [email](health/notifications/email/),
-    [flock.com](health/notifications/flock/), [hangouts](health/notifications/hangouts/),
-    [irc](health/notifications/irc/), [kavenegar.com](health/notifications/kavenegar/),
-    [messagebird.com](health/notifications/messagebird/), [pagerduty.com](health/notifications/pagerduty/),
-    [prowl](health/notifications/prowl/), [pushbullet.com](health/notifications/pushbullet/),
-    [pushover.net](health/notifications/pushover/), [rocket.chat](health/notifications/rocketchat/),
-    [slack.com](health/notifications/slack/), [smstools3](health/notifications/smstools3/),
-    [syslog](health/notifications/syslog/), [telegram.org](health/notifications/telegram/),
-    [twilio.com](health/notifications/twilio/), [web](health/notifications/web/) and [custom
-    notifications](health/notifications/custom/).
+-   **Notifications**: [alerta.io](/health/notifications/alerta/), [amazon sns](/health/notifications/awssns/),
+    [discordapp.com](/health/notifications/discord/), [email](/health/notifications/email/),
+    [flock.com](/health/notifications/flock/), [hangouts](/health/notifications/hangouts/),
+    [irc](/health/notifications/irc/), [kavenegar.com](/health/notifications/kavenegar/),
+    [messagebird.com](/health/notifications/messagebird/), [pagerduty.com](/health/notifications/pagerduty/),
+    [prowl](/health/notifications/prowl/), [pushbullet.com](/health/notifications/pushbullet/),
+    [pushover.net](/health/notifications/pushover/), [rocket.chat](/health/notifications/rocketchat/),
+    [slack.com](/health/notifications/slack/), [smstools3](/health/notifications/smstools3/),
+    [syslog](/health/notifications/syslog/), [telegram.org](/health/notifications/telegram/),
+    [twilio.com](/health/notifications/twilio/), [web](/health/notifications/web/) and [custom
+    notifications](/health/notifications/custom/).
 
 ### Integrations
 
@@ -333,7 +330,7 @@ This is what you should expect from Netdata:
 -   **Visual anomaly detection** - Our UI/UX emphasizes the relationships between charts so you can better detect
     anomalies visually.
 -   **Embeddable** - Charts can be embedded on your web pages, wikis and blogs. You can even use [Atlassian's Confluence
-    as a monitoring dashboard](web/gui/confluence/).
+    as a monitoring dashboard](/web/gui/confluence/README.md).
 -   **Customizable** - You can build custom dashboards using simple HTML. No JavaScript needed!
 
 ### Positive and negative values
@@ -341,7 +338,8 @@ This is what you should expect from Netdata:
 To improve clarity on charts, Netdata dashboards present **positive** values for metrics representing `read`, `input`,
 `inbound`, `received` and **negative** values for metrics representing `write`, `output`, `outbound`, `sent`.
 
-![positive-and-negative-values](https://user-images.githubusercontent.com/2662304/48309090-7c5c6180-e57a-11e8-8e03-3a7538c14223.gif)
+![Screenshot showing positive and negative
+values](https://user-images.githubusercontent.com/1153921/81870401-9d649080-952a-11ea-80e3-4a7b480252ee.gif)
 
 _Netdata charts showing the bandwidth and packets of a network interface. `received` is positive and `sent` is
 negative._
@@ -350,7 +348,8 @@ negative._
 
 Netdata charts automatically zoom vertically, to visualize the variation of each metric within the visible time-frame.
 
-![non-zero-based](https://user-images.githubusercontent.com/2662304/48309139-3d2f1000-e57c-11e8-9a44-b91758134b00.gif)
+![Animated GIF showing the auso-scaling Y
+axis](https://user-images.githubusercontent.com/1153921/80838276-8084a080-8bad-11ea-8167-8d5ab2fb1be1.gif)
 
 _A zero-based `stacked` chart, automatically switches to an auto-scaled `area` chart when a single dimension is
 selected._
@@ -360,40 +359,37 @@ selected._
 Charts on Netdata dashboards are synchronized to each other. There is no master chart. Any chart can be panned or zoomed
 at any time, and all other charts will follow.
 
-![charts-are-synchronized](https://user-images.githubusercontent.com/2662304/48309003-b4fb3b80-e578-11e8-86f6-f505c7059c15.gif)
+![Animated GIF of the standard Netdata dashboard being manipulated and synchronizing
+charts](https://user-images.githubusercontent.com/1153921/80839230-b034a800-8baf-11ea-9cb2-99c1e10f0f85.gif)
 
 _Charts are panned by dragging them with the mouse. Charts can be zoomed in/out with`SHIFT` + `mouse wheel` while the
 mouse pointer is over a chart._
-
-> The visible time-frame (pan and zoom) is propagated from Netdata server to Netdata server when navigating via the
-> [My nodes menu](registry/README.md).
 
 ### Highlighted time-frame
 
 To improve visual anomaly detection across charts, the user can highlight a time-frame (by pressing `Alt` + `mouse
 selection`) on all charts.
 
-![highlighted-timeframe](https://user-images.githubusercontent.com/2662304/48311876-f9093300-e5ae-11e8-9c74-e3e291741990.gif)
+![An animated GIF of highlighting a specific
+timeframe](https://user-images.githubusercontent.com/1153921/80839611-6ef0c800-8bb0-11ea-9e9c-f75ec9a2e54c.gif)
 
 _A highlighted time-frame can be given by pressing `Alt` + `mouse selection` on any chart. Netdata will highlight the
 same range on all charts._
-
-> Highlighted ranges are propagated from Netdata server to Netdata server, when navigating via the [My nodes
-> menu](registry/README.md).
 
 ## What Netdata monitors
 
 Netdata can collect metrics from 200+ popular services and applications, on top of dozens of system-related metrics
 jocs, such as CPU, memory, disks, filesystems, networking, and more. We call these **collectors**, and they're managed
-by [**plugins**](collectors/plugins.d/), which support a variety of programming languages, including Go and Python.
+by [**plugins**](/collectors/plugins.d/README.md), which support a variety of programming languages, including Go and
+Python.
 
 Popular collectors include **Nginx**, **Apache**, **MySQL**, **statsd**, **cgroups** (containers, Docker, Kubernetes,
 LXC, and more), **Traefik**, **web server `access.log` files**, and much more. 
 
-See the **full list of [supported collectors](collectors/COLLECTORS.md)**.
+See the **full list of [supported collectors](/collectors/COLLECTORS.md)**.
 
 Netdata's data collection is **extensible**, which means you can monitor anything you can get a metric for. You can even
-write a collector for your custom application using our [plugin API](collectors/plugins.d/README.md).
+write a collector for your custom application using our [plugin API](/collectors/plugins.d/README.md).
 
 ## Documentation
 
@@ -402,25 +398,25 @@ repository itself in Markdown (`.md`) files. You can find all our documentation 
 
 Here is a quick list of notable documents:
 
-| Directory                                   | Description                                                                                                           |
-| :------------------------------------------ | :-------------------------------------------------------------------------------------------------------------------- |
-| [`installer`](packaging/installer/)         | Instructions to install Netdata on your systems.                                                                      |
-| [`docker`](packaging/docker/)               | Instructions to install Netdata using docker.                                                                         |
-| [`daemon`](daemon/)                         | Information about the Netdata daemon and its configuration.                                                           |
-| [`collectors`](collectors/)                 | Information about data collection plugins.                                                                            |
-| [`health`](health/)                         | How Netdata's health monitoring works, how to create your own alarms and how to configure alarm notification methods. |
-| [`streaming`](streaming/)                   | How to build hierarchies of Netdata servers, by streaming metrics between them.                                       |
-| [`backends`](backends/)                     | Long term archiving of metrics to industry-standard time-series databases, like `prometheus`, `graphite`, `opentsdb`. |
-| [`web/api`](web/api/)                       | Learn how to query the Netdata API and the queries it supports.                                                       |
-| [`web/api/badges`](web/api/badges/)         | Learn how to generate badges (SVG images) from live data.                                                             |
-| [`web/gui/custom`](web/gui/custom/)         | Learn how to create custom Netdata dashboards.                                                                        |
-| [`web/gui/confluence`](web/gui/confluence/) | Learn how to create Netdata dashboards on Atlassian's Confluence.                                                     |
+| Directory                                             | Description                                                                                                           |
+| :---------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------- |
+| [`installer`](/packaging/installer/README.md)         | Instructions to install Netdata on your systems.                                                                      |
+| [`docker`](/packaging/docker/README.md)               | Instructions to install Netdata using docker.                                                                         |
+| [`daemon`](/daemon/README.md)                         | Information about the Netdata daemon and its configuration.                                                           |
+| [`collectors`](/collectors/README.md)                 | Information about data collection plugins.                                                                            |
+| [`health`](/health/README.md)                         | How Netdata's health monitoring works, how to create your own alarms and how to configure alarm notification methods. |
+| [`streaming`](/streaming/README.md)                   | How to build hierarchies of Netdata servers, by streaming metrics between them.                                       |
+| [`exporting`](/docs/export/README.md)                 | Long term archiving of metrics to industry-standard time-series databases, like `prometheus`, `graphite`, `opentsdb`. |
+| [`web/api`](/web/api/README.md)                       | Learn how to query the Netdata API and the queries it supports.                                                       |
+| [`web/api/badges`](/web/api/badges/README.md)         | Learn how to generate badges (SVG images) from live data.                                                             |
+| [`web/gui/custom`](/web/gui/custom/README.md)         | Learn how to create custom Netdata dashboards.                                                                        |
+| [`web/gui/confluence`](/web/gui/confluence/README.md) | Learn how to create Netdata dashboards on Atlassian's Confluence.                                                     |
 
 You can also check all the other directories. Most of them have plenty of documentation.
 
 ## Community
 
-We welcome [contributions](CONTRIBUTING.md). Feel free to join the team!
+We welcome [contributions](/CONTRIBUTING.md). Feel free to join the team!
 
 To report bugs or get help, use [GitHub's issues](https://github.com/netdata/netdata/issues).
 
@@ -429,15 +425,14 @@ You can also find Netdata on:
 -   [Facebook](https://www.facebook.com/linuxnetdata/)
 -   [Twitter](https://twitter.com/linuxnetdata)
 -   [StackShare](https://stackshare.io/netdata)
--   [LinkedIn](https://www.linkedin.com/company/my-netdata.io/)
 -   [Product Hunt](https://www.producthunt.com/posts/netdata-monitoring-agent/)
 -   [Repology](https://repology.org/metapackage/netdata/versions)
 
 ## License
 
-Netdata is [GPLv3+](LICENSE).
+Netdata is [GPLv3+](/LICENSE).
 
-Netdata re-distributes other open-source tools and libraries. Please check the [third party licenses](REDISTRIBUTED.md).
+Netdata re-distributes other open-source tools and libraries. Please check the [third party licenses](/REDISTRIBUTED.md).
 
 ## Is it any good?
 

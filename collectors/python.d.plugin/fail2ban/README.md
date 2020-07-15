@@ -1,3 +1,9 @@
+<!--
+title: "Fail2ban monitoring with Netdata"
+custom_edit_url: https://github.com/netdata/netdata/edit/master/collectors/python.d.plugin/fail2ban/README.md
+sidebar_label: "Fail2ban"
+-->
+
 # Fail2ban monitoring with Netdata
 
 Monitors the fail2ban log file to show all bans for all active jails.
@@ -11,7 +17,7 @@ It produces one chart with multiple lines (one line per jail)
 ## Configuration
 
 Edit the `python.d/fail2ban.conf` configuration file using `edit-config` from the your agent's [config
-directory](../../../docs/step-by-step/step-04.md#find-your-netdataconf-file), which is typically at `/etc/netdata`.
+directory](/docs/step-by-step/step-04.md#find-your-netdataconf-file), which is typically at `/etc/netdata`.
 
 ```bash
 cd /etc/netdata   # Replace this path with your Netdata config directory, if different

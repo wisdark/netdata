@@ -1,3 +1,10 @@
+<!--
+---
+title: "Netdata for IoT"
+custom_edit_url: https://github.com/netdata/netdata/edit/master/docs/netdata-for-IoT.md
+---
+-->
+
 # Netdata for IoT
 
 ![image1](https://cloud.githubusercontent.com/assets/2662304/14252446/11ae13c4-fa90-11e5-9d03-d93a3eb3317a.gif)
@@ -49,7 +56,14 @@ supported by `lm-sensors`.
 Netdata also has a bash version of the sensors plugin that can read RPi temperatures. It is disabled by default to avoid
 the conflicts with the python version.
 
-To enable it, run `sudo edit-config charts.d.conf` and uncomment this line:
+To enable it, run:
+
+```bash
+cd /etc/netdata # Replace this path with your Netdata config directory
+sudo ./edit-config charts.d.conf
+```
+
+and uncomment this line:
 
 ```sh
 sensors=force

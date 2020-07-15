@@ -1,3 +1,10 @@
+<!--
+---
+title: "Netdata distribution support matrix"
+custom_edit_url: https://github.com/netdata/netdata/edit/master/packaging/DISTRIBUTIONS.md
+---
+-->
+
 # Netdata distribution support matrix
 
 ![](https://raw.githubusercontent.com/netdata/netdata/master/web/gui/images/packaging-beta-tag.svg?sanitize=true)
@@ -41,8 +48,8 @@ have complete visibility over the range of support.
 | CentOS 6.x | Cent OS | &#10007; | &#63; | &#10007; | N/A | &#10007; | &#10004; | &#10004; | &#10004; | &#63;
 | CentOS 7.x | Cent OS | &#10004; | &#63; | &#10004; | N/A | &#10004; | &#10004; | &#10004; | &#10004; | &#63;
 | CentOS 8.x | Cent OS | &#63; | &#63; | &#63; | N/A | &#10007; | &#63; | &#63; | &#10004; | &#63;
-| OpenSuSE Leap 15.1 | Open SuSE | &#10004; | &#63; | &#10004; | N/A | &#10004; | &#10004; | &#10004; | &#10004; | &#63;
-| OpenSuSE Tumbleweed | Open SuSE | &#10004; | &#63; | &#63; | N/A | &#10007; | &#10004; | &#63; | &#10004; | &#63;
+| openSUSE Leap 15.1 | openSUSE | &#10004; | &#63; | &#10004; | N/A | &#10004; | &#10004; | &#10004; | &#10004; | &#63;
+| openSUSE Tumbleweed | openSUSE | &#10004; | &#63; | &#63; | N/A | &#10007; | &#10004; | &#63; | &#10004; | &#63;
 | SLES 11 | SLES | &#63; | &#63; | &#63; | N/A | &#10007; | &#63; | &#63; | &#10004; | &#63;
 | SLES 12 | SLES | &#63; | &#63; | &#63; | N/A | &#10007; | &#63; | &#63; | &#10004; | &#63;
 | SLES 15 | SLES | &#63; | &#63; | &#63; | N/A | &#10007; | &#63; | &#63; | &#10004; | &#63;
@@ -69,8 +76,8 @@ have complete visibility over the range of support.
 | CentOS 6.x | Cent OS | &#10007; | &#63; | &#10007; | N/A | &#10007; | &#10004; | &#10004; | &#10007; | &#63;
 | CentOS 7.x | Cent OS | &#10007; | &#63; | &#10004; | N/A | &#10007; | &#10004; | &#10004; | &#10007; | &#63;
 | CentOS 8.x | Cent OS | &#63; | &#63; | &#63; | N/A | &#10007; | &#63; | &#63; | &#10004; | &#63;
-| OpenSuSE Leap 15.1 | Open SuSE | &#10007; | &#63; | &#10004; | N/A | &#10007; | &#10004; | &#10004; | &#10007; | &#63;
-| OpenSuSE Tumbleweed | Open SuSE | &#10007; | &#63; | &#63; | N/A | &#10007; | &#10004; | &#63; | &#10007; | &#63;
+| openSUSE Leap 15.1 | openSUSE | &#10007; | &#63; | &#10004; | N/A | &#10007; | &#10004; | &#10004; | &#10007; | &#63;
+| openSUSE Tumbleweed | openSUSE | &#10007; | &#63; | &#63; | N/A | &#10007; | &#10004; | &#63; | &#10007; | &#63;
 | SLES 11 | SLES | &#63; | &#63; | &#63; | N/A | &#10007; | &#63; | &#63; | &#10007; | &#63;
 | SLES 12 | SLES | &#63; | &#63; | &#63; | N/A | &#10007; | &#63; | &#63; | &#10007; | &#63;
 | SLES 15 | SLES | &#63; | &#63; | &#63; | N/A | &#10007; | &#63; | &#63; | &#10007; | &#63;
@@ -118,7 +125,9 @@ This is the brand new database engine capability of netdata. It is a mandatory f
 
 #### Encryption Support (HTTPS)
 
-This is Netdata's TLS capability that incorporates encryption on the web server and the APIs between master and slaves. Also a mandatory facility for Netdata, but remains optional for users who are limited or not interested in tight security
+This is Netdata's TLS capability that incorporates encryption on the web server and the APIs between parent and child
+nodes. Also a mandatory facility for Netdata, but remains optional for users who are limited or not interested in tight
+security
 
 |make/make install|netdata-installer.sh|kickstart.sh|kickstart-static64.sh|Docker image|RPM packaging|DEB packaging|
 |:---------------:|:------------------:|:----------:|:-------------------:|:----------:|:-----------:|:-----------:|
@@ -241,7 +250,8 @@ This is Netdata's TLS capability that incorporates encryption on the web server 
 |:---------------:|:------------------:|:----------:|:-------------------:|:----------:|:-----------:|:-----------:|
 |Auto-detect|Auto-detect|Auto-detect|Auto-detect|NO|NO|NO|
 
--   **Flags/instructions to enable**: [Instructions for AWS Kinesis](https://docs.netdata.cloud/backends/aws_kinesis)
+-   **Flags/instructions to enable**: [Instructions for AWS
+    Kinesis](https://learn.netdata.cloud/docs/agent/backends/aws_kinesis)
 -   **Flags to disable from source**: --disable-backend-kinesis
 -   **What packages required for auto-detect?**: `AWS SDK for C++`, `libcurl`, `libssl`, `libcrypto`
 

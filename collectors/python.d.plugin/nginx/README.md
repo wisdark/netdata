@@ -1,3 +1,9 @@
+<!--
+title: "NGINX monitoring with Netdata"
+custom_edit_url: https://github.com/netdata/netdata/edit/master/collectors/python.d.plugin/nginx/README.md
+sidebar_label: "NGINX"
+-->
+
 # NGINX monitoring with Netdata
 
 Monitors one or more NGINX servers depending on configuration. Servers can be either local or remote.
@@ -33,7 +39,7 @@ It produces following charts:
 ## Configuration
 
 Edit the `python.d/nginx.conf` configuration file using `edit-config` from the your agent's [config
-directory](../../../docs/step-by-step/step-04.md#find-your-netdataconf-file), which is typically at `/etc/netdata`.
+directory](/docs/step-by-step/step-04.md#find-your-netdataconf-file), which is typically at `/etc/netdata`.
 
 ```bash
 cd /etc/netdata   # Replace this path with your Netdata config directory, if different

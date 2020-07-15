@@ -19,7 +19,7 @@ RUN pacman --noconfirm --needed -S autoconf \
                                    pkgconfig \
                                    python \
                                    libvirt \
-                                   libwebsockets
+                                   cmake
 
 ARG ACLK=no
 ARG EXTRA_CFLAGS
@@ -50,3 +50,5 @@ RUN CFLAGS="-O1 -ggdb -Wall -Wextra -Wformat-signedness -fstack-protector-all -D
 RUN ln -sf /dev/stdout /var/log/netdata/access.log
 RUN ln -sf /dev/stdout /var/log/netdata/debug.log
 RUN ln -sf /dev/stderr /var/log/netdata/error.log
+
+CMD ["/usr/sbin/netdata", "-D"]

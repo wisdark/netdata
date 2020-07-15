@@ -17,6 +17,9 @@
 %define _libexecdir /usr/libexec
 %define _libdir /usr/lib
 
+# Redefine centos_ver to standardize on a single macro
+%{?rhel:%global centos_ver %rhel}
+
 #
 # Conditional build:
 %bcond_without  systemd  # systemd
@@ -87,8 +90,12 @@ Version:	%{version}
 Release:	1%{?dist}
 License:	GPLv3+
 Group:		Applications/System
-Source0:	https://github.com/netdata/%{name}/releases/download/v%{version}/%{name}-v%{version}.tar.gz
+Source0:	https://github.com/netdata/%{name}/releases/download/%{version}/%{name}-%{version}.tar.gz
 URL:		http://my-netdata.io
+
+# Remove conflicting EPEL packages
+Obsoletes:  %{name}-conf
+Obsoletes:  %{name}-data
 
 # #####################################################################
 # Core build/install/runtime dependencies
@@ -106,6 +113,7 @@ BuildRequires: autoconf-archive
 BuildRequires: autogen
 %endif
 BuildRequires: automake
+BuildRequires: cmake
 BuildRequires: pkgconfig
 BuildRequires: curl
 BuildRequires: findutils
@@ -116,7 +124,7 @@ BuildRequires: openssl-devel
 %if 0%{?suse_version}
 BuildRequires: judy-devel
 BuildRequires: liblz4-devel
-BuildRequires: json-glib-devel
+BuildRequires: libjson-c-devel
 %else
 BuildRequires: Judy-devel
 BuildRequires: lz4-devel
@@ -134,7 +142,7 @@ Requires:      zlib
 # for libuv, Requires version >= 1
 Requires:      libuv1
 Requires:      libJudy1
-Requires:      json-glib
+Requires:      libjson-c4
 Requires:      libuuid1
 %else
 # for libuv, Requires version >= 1
@@ -229,7 +237,8 @@ happened, on your systems and applications.
 
 %prep
 %setup -q -n %{name}-%{version}
-${RPM_BUILD_DIR}/%{name}-%{version}/packaging/bundle-mosquitto.sh ${RPM_BUILD_DIR}/%{name}-%{version}
+export CFLAGS="${CFLAGS} -fPIC" && ${RPM_BUILD_DIR}/%{name}-%{version}/packaging/bundle-mosquitto.sh ${RPM_BUILD_DIR}/%{name}-%{version}
+export CFLAGS="${CFLAGS} -fPIC" && ${RPM_BUILD_DIR}/%{name}-%{version}/packaging/bundle-lws.sh ${RPM_BUILD_DIR}/%{name}-%{version}
 
 %build
 # Conf step
@@ -274,8 +283,8 @@ install -m 4750 -p apps.plugin "${RPM_BUILD_ROOT}%{_libexecdir}/%{name}/plugins.
 install -m 4750 -p perf.plugin "${RPM_BUILD_ROOT}%{_libexecdir}/%{name}/plugins.d/perf.plugin"
 
 # ###########################################################
-# Install ebpf_process.plugin
-install -m 4750 -p ebpf_process.plugin "${RPM_BUILD_ROOT}%{_libexecdir}/%{name}/plugins.d/ebpf_process.plugin"
+# Install ebpf.plugin
+install -m 4750 -p ebpf.plugin "${RPM_BUILD_ROOT}%{_libexecdir}/%{name}/plugins.d/ebpf.plugin"
 
 # ###########################################################
 # Install cups.plugin
@@ -401,6 +410,9 @@ install_go() {
 }
 install_go
 install -m 0640 -p go.d.plugin "${RPM_BUILD_ROOT}%{_libexecdir}/%{name}/plugins.d/go.d.plugin"
+
+${RPM_BUILD_DIR}/%{name}-%{version}/packaging/bundle-dashboard.sh ${RPM_BUILD_DIR}/%{name}-%{version} ${RPM_BUILD_ROOT}%{_datadir}/%{name}/web
+${RPM_BUILD_DIR}/%{name}-%{version}/packaging/bundle-ebpf.sh ${RPM_BUILD_DIR}/%{name}-%{version} ${RPM_BUILD_ROOT}%{_libexecdir}/%{name}/plugins.d
 
 %pre
 

@@ -278,6 +278,7 @@ extern void recursive_config_double_dir_load(
         , void *data
         , size_t depth
 );
+extern char *read_by_filename(char *filename, long *file_size);
 
 /* fix for alpine linux */
 #ifndef RUSAGE_THREAD
@@ -299,6 +300,7 @@ extern char *netdata_configured_host_prefix;
 #include "threads/threads.h"
 #include "buffer/buffer.h"
 #include "locks/locks.h"
+#include "circular_buffer/circular_buffer.h"
 #include "avl/avl.h"
 #include "inlined.h"
 #include "clocks/clocks.h"
@@ -320,5 +322,8 @@ extern char *netdata_configured_host_prefix;
 #include "json/json.h"
 #include "health/health.h"
 #include "string/utf8.h"
+
+// BEWARE: Outside of the C code this also exists in alarm-notify.sh
+#define DEFAULT_CLOUD_BASE_URL "https://app.netdata.cloud"
 
 #endif // NETDATA_LIB_H

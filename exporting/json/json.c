@@ -3,23 +3,6 @@
 #include "json.h"
 
 /**
- * Initialize JSON connector
- *
- * @param instance a connector data structure.
- * @return Always returns 0.
- */
-int init_json_connector(struct connector *connector)
-{
-    connector->worker = simple_connector_worker;
-
-    struct simple_connector_config *connector_specific_config = mallocz(sizeof(struct simple_connector_config));
-    connector->config.connector_specific_config = (void *)connector_specific_config;
-    connector_specific_config->default_port = 5448;
-
-    return 0;
-}
-
-/**
  * Initialize JSON connector instance
  *
  * @param instance an instance data structure.
@@ -27,6 +10,12 @@ int init_json_connector(struct connector *connector)
  */
 int init_json_instance(struct instance *instance)
 {
+    instance->worker = simple_connector_worker;
+
+    struct simple_connector_config *connector_specific_config = callocz(1, sizeof(struct simple_connector_config));
+    instance->config.connector_specific_config = (void *)connector_specific_config;
+    connector_specific_config->default_port = 5448;
+
     instance->start_batch_formatting = NULL;
     instance->start_host_formatting = format_host_labels_json_plaintext;
     instance->start_chart_formatting = NULL;
@@ -38,15 +27,20 @@ int init_json_instance(struct instance *instance)
 
     instance->end_chart_formatting = NULL;
     instance->end_host_formatting = flush_host_labels;
-    instance->end_batch_formatting = NULL;
+    instance->end_batch_formatting = simple_connector_update_buffered_bytes;
+
+    instance->send_header = NULL;
+    instance->check_response = exporting_discard_response;
 
     instance->buffer = (void *)buffer_create(0);
     if (!instance->buffer) {
         error("EXPORTING: cannot create buffer for json exporting connector instance %s", instance->config.name);
         return 1;
     }
-    uv_mutex_init(&instance->mutex);
-    uv_cond_init(&instance->cond_var);
+    if (uv_mutex_init(&instance->mutex))
+        return 1;
+    if (uv_cond_init(&instance->cond_var))
+        return 1;
 
     return 0;
 }
@@ -99,7 +93,7 @@ int format_host_labels_json_plaintext(struct instance *instance, RRDHOST *host)
  */
 int format_dimension_collected_json_plaintext(struct instance *instance, RRDDIM *rd)
 {
-    struct engine *engine = instance->connector->engine;
+    struct engine *engine = instance->engine;
     RRDSET *st = rd->rrdset;
     RRDHOST *host = st->rrdhost;
 
@@ -139,8 +133,8 @@ int format_dimension_collected_json_plaintext(struct instance *instance, RRDDIM 
 
         "\"timestamp\":%llu}\n",
 
-        engine->config.prefix,
-        engine->config.hostname,
+        instance->config.prefix,
+        (host == localhost) ? engine->config.hostname : host->hostname,
         tags_pre,
         tags,
         tags_post,
@@ -171,7 +165,7 @@ int format_dimension_collected_json_plaintext(struct instance *instance, RRDDIM 
  */
 int format_dimension_stored_json_plaintext(struct instance *instance, RRDDIM *rd)
 {
-    struct engine *engine = instance->connector->engine;
+    struct engine *engine = instance->engine;
     RRDSET *st = rd->rrdset;
     RRDHOST *host = st->rrdhost;
 
@@ -216,8 +210,8 @@ int format_dimension_stored_json_plaintext(struct instance *instance, RRDDIM *rd
 
         "\"timestamp\": %llu}\n",
 
-        engine->config.prefix,
-        engine->config.hostname,
+        instance->config.prefix,
+        (host == localhost) ? engine->config.hostname : host->hostname,
         tags_pre,
         tags,
         tags_post,

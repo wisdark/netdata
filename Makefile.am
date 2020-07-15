@@ -60,15 +60,26 @@ dist_noinst_DATA = \
     package.json \
     docs \
     packaging/version \
+    packaging/dashboard.version \
+    packaging/dashboard.checksums \
     packaging/go.d.version \
     packaging/go.d.checksums \
+    packaging/jsonc.version \
+    packaging/jsonc.checksums \
+    packaging/libwebsockets.version \
+    packaging/libwebsockets.checksums \
     packaging/mosquitto.version \
     packaging/mosquitto.checksums \
+    packaging/bundle-dashboard.sh \
+    packaging/bundle-ebpf.sh \
     packaging/bundle-mosquitto.sh \
+    packaging/check-kernel-config.sh \
+    packaging/ebpf.checksums \
+    packaging/ebpf.version \
+    packaging/bundle-lws.sh \
     packaging/installer/README.md \
     packaging/installer/UNINSTALL.md \
     packaging/installer/UPDATE.md \
-    netlify.toml \
     $(NULL)
 
 # until integrated within build
@@ -80,12 +91,7 @@ dist_noinst_SCRIPTS = \
     packaging/installer/kickstart.sh \
     packaging/installer/kickstart-static64.sh \
     packaging/installer/functions.sh \
-    netdata-installer.sh \
-    docs/generator/buildhtml.sh \
-    docs/generator/buildyaml.sh \
-    docs/generator/checklinks.sh \
-    docs/generator/requirements.txt \
-    docs/generator/runtime.txt \
+    netdata-installer.sh
     $(NULL)
 
 # -----------------------------------------------------------------------------
@@ -103,7 +109,9 @@ SUBDIRS += \
     streaming \
     web \
     claim \
+    parser \
     aclk \
+    spawn \
     $(NULL)
 
 
@@ -131,6 +139,8 @@ LIBNETDATA_FILES = \
     libnetdata/avl/avl.h \
     libnetdata/buffer/buffer.c \
     libnetdata/buffer/buffer.h \
+    libnetdata/circular_buffer/circular_buffer.c \
+    libnetdata/circular_buffer/circular_buffer.h \
     libnetdata/clocks/clocks.c \
     libnetdata/clocks/clocks.h \
     libnetdata/dictionary/dictionary.c \
@@ -257,9 +267,15 @@ PERF_PLUGIN_FILES = \
     $(LIBNETDATA_FILES) \
     $(NULL)
 
-EBPF_PROCESS_PLUGIN_FILES = \
-    collectors/ebpf_process.plugin/ebpf_process.c \
-    collectors/ebpf_process.plugin/ebpf_process.h \
+EBPF_PLUGIN_FILES = \
+    collectors/ebpf.plugin/ebpf.c \
+    collectors/ebpf.plugin/ebpf_process.c \
+    collectors/ebpf.plugin/ebpf_process.h \
+    collectors/ebpf.plugin/ebpf_socket.c \
+    collectors/ebpf.plugin/ebpf_socket.h \
+    collectors/ebpf.plugin/ebpf.h \
+    collectors/ebpf.plugin/ebpf_apps.c \
+    collectors/ebpf.plugin/ebpf_apps.h \
     $(LIBNETDATA_FILES) \
     $(NULL)
 
@@ -304,6 +320,7 @@ PROC_PLUGIN_FILES = \
     collectors/proc.plugin/sys_devices_system_node.c \
     collectors/proc.plugin/sys_fs_btrfs.c \
     collectors/proc.plugin/sys_class_power_supply.c \
+    collectors/proc.plugin/sys_class_infiniband.c \
     $(NULL)
 
 TC_PLUGIN_FILES = \
@@ -322,6 +339,8 @@ MACOS_PLUGIN_FILES = \
 PLUGINSD_PLUGIN_FILES = \
     collectors/plugins.d/plugins_d.c \
     collectors/plugins.d/plugins_d.h \
+    collectors/plugins.d/pluginsd_parser.c \
+    collectors/plugins.d/pluginsd_parser.h \
     $(NULL)
 
 RRD_PLUGIN_FILES = \
@@ -360,6 +379,19 @@ if ENABLE_DBENGINE
         database/engine/pagecache.h \
         database/engine/rrdenglocking.c \
         database/engine/rrdenglocking.h \
+        database/engine/metadata_log/metadatalog.c \
+        database/engine/metadata_log/metadatalog.h \
+        database/engine/metadata_log/metadatalogapi.c \
+        database/engine/metadata_log/metadatalogapi.h \
+        database/engine/metadata_log/logfile.h \
+        database/engine/metadata_log/logfile.c \
+        database/engine/metadata_log/metadatalogprotocol.h \
+        database/engine/metadata_log/metalogpluginsd.c \
+        database/engine/metadata_log/metalogpluginsd.h \
+        database/engine/metadata_log/compaction.c \
+        database/engine/metadata_log/compaction.h \
+        database/engine/global_uuid_map/global_uuid_map.c \
+        database/engine/global_uuid_map/global_uuid_map.h \
         $(NULL)
 endif
 
@@ -416,6 +448,8 @@ API_PLUGIN_FILES = \
 
 STREAMING_PLUGIN_FILES = \
     streaming/rrdpush.c \
+    streaming/sender.c \
+    streaming/receiver.c \
     streaming/rrdpush.h \
     $(NULL)
 
@@ -464,18 +498,45 @@ BACKENDS_PLUGIN_FILES = \
     backends/prometheus/backend_prometheus.h \
     $(NULL)
 
-CLAIM_PLUGIN_FILES = \
+CLAIM_FILES = \
     claim/claim.c \
     claim/claim.h \
     $(NULL)
 
-ACLK_PLUGIN_FILES = \
+PARSER_FILES = \
+    parser/parser.c \
+    parser/parser.h \
+    $(NULL)
+
+ACLK_FILES = \
+    aclk/aclk_common.c \
+    aclk/aclk_common.h \
+    aclk/aclk_stats.c \
+    aclk/aclk_stats.h
+    $(NULL)
+
+if ENABLE_ACLK
+ACLK_FILES += \
     aclk/agent_cloud_link.c \
     aclk/agent_cloud_link.h \
+    aclk/aclk_query.c \
+    aclk/aclk_query.h \
     aclk/mqtt.c \
     aclk/mqtt.h \
     aclk/aclk_lws_wss_client.c \
     aclk/aclk_lws_wss_client.h \
+    aclk/aclk_lws_https_client.c \
+    aclk/aclk_lws_https_client.h \
+    $(NULL)
+endif
+
+
+
+SPAWN_PLUGIN_FILES = \
+    spawn/spawn.c \
+    spawn/spawn_server.c \
+    spawn/spawn_client.c \
+    spawn/spawn.h \
     $(NULL)
 
 EXPORTING_ENGINE_FILES = \
@@ -487,12 +548,42 @@ EXPORTING_ENGINE_FILES = \
     exporting/json/json.h \
     exporting/opentsdb/opentsdb.c \
     exporting/opentsdb/opentsdb.h \
+    exporting/prometheus/prometheus.c \
+    exporting/prometheus/prometheus.h \
     exporting/read_config.c \
+    exporting/clean_connectors.c \
     exporting/init_connectors.c \
     exporting/process_data.c \
     exporting/check_filters.c \
     exporting/send_data.c \
     exporting/send_internal_metrics.c \
+    $(NULL)
+
+PROMETHEUS_REMOTE_WRITE_EXPORTING_FILES = \
+    exporting/prometheus/remote_write/remote_write.c \
+    exporting/prometheus/remote_write/remote_write.h \
+    exporting/prometheus/remote_write/remote_write_request.cc \
+    exporting/prometheus/remote_write/remote_write_request.h \
+    exporting/prometheus/remote_write/remote_write.proto \
+    $(NULL)
+
+KINESIS_EXPORTING_FILES = \
+    exporting/aws_kinesis/aws_kinesis.c \
+    exporting/aws_kinesis/aws_kinesis.h \
+    exporting/aws_kinesis/aws_kinesis_put_record.cc \
+    exporting/aws_kinesis/aws_kinesis_put_record.h \
+    $(NULL)
+
+PUBSUB_EXPORTING_FILES = \
+    exporting/pubsub/pubsub.c \
+    exporting/pubsub/pubsub.h \
+    exporting/pubsub/pubsub_publish.cc \
+    exporting/pubsub/pubsub_publish.h \
+    $(NULL)
+
+MONGODB_EXPORTING_FILES = \
+    exporting/mongodb/mongodb.c \
+    exporting/mongodb/mongodb.h \
     $(NULL)
 
 KINESIS_BACKEND_FILES = \
@@ -505,7 +596,6 @@ KINESIS_BACKEND_FILES = \
 PROMETHEUS_REMOTE_WRITE_BACKEND_FILES = \
     backends/prometheus/remote_write/remote_write.cc \
     backends/prometheus/remote_write/remote_write.h \
-    backends/prometheus/remote_write/remote_write.proto \
     $(NULL)
 
 MONGODB_BACKEND_FILES = \
@@ -536,6 +626,7 @@ NETDATA_FILES = \
     $(LIBNETDATA_FILES) \
     $(API_PLUGIN_FILES) \
     $(BACKENDS_PLUGIN_FILES) \
+    $(EXPORTING_ENGINE_FILES) \
     $(CHECKS_PLUGIN_FILES) \
     $(HEALTH_PLUGIN_FILES) \
     $(IDLEJITTER_PLUGIN_FILES) \
@@ -545,14 +636,11 @@ NETDATA_FILES = \
     $(STREAMING_PLUGIN_FILES) \
     $(STATSD_PLUGIN_FILES) \
     $(WEB_PLUGIN_FILES) \
-    $(CLAIM_PLUGIN_FILES) \
+    $(CLAIM_FILES) \
+    $(PARSER_FILES) \
+    $(ACLK_FILES) \
+    $(SPAWN_PLUGIN_FILES) \
     $(NULL)
-
-if ENABLE_ACLK
-    NETDATA_FILES += \
-        $(ACLK_PLUGIN_FILES) \
-        $(NULL)
-endif
 
 if FREEBSD
     NETDATA_FILES += \
@@ -576,12 +664,6 @@ if LINUX
 
 endif
 
-if ENABLE_EXPORTING
-    NETDATA_FILES += \
-        $(EXPORTING_ENGINE_FILES) \
-        $(NULL)
-endif
-
 NETDATA_COMMON_LIBS = \
     $(OPTIONAL_MATH_LIBS) \
     $(OPTIONAL_ZLIB_LIBS) \
@@ -596,6 +678,10 @@ NETDATA_COMMON_LIBS = \
     $(OPTIONAL_EBPF_LIBS) \
     $(NULL)
 
+if LINK_STATIC_JSONC
+    NETDATA_COMMON_LIBS += externaldeps/jsonc/libjson-c.a
+endif
+
 NETDATACLI_FILES = \
     daemon/commands.h \
     $(LIBNETDATA_FILES) \
@@ -609,6 +695,8 @@ netdata_SOURCES = $(NETDATA_FILES)
 if ENABLE_ACLK
 netdata_LDADD = \
     externaldeps/mosquitto/libmosquitto.a \
+    externaldeps/libwebsockets/libwebsockets.a \
+    $(OPTIONAL_LIBCAP_LIBS) \
     $(NETDATA_COMMON_LIBS) \
     $(NULL)
 else
@@ -661,9 +749,9 @@ if ENABLE_PLUGIN_FREEIPMI
 endif
 
 if ENABLE_PLUGIN_EBPF
-    plugins_PROGRAMS += ebpf_process.plugin
-    ebpf_process_plugin_SOURCES = $(EBPF_PROCESS_PLUGIN_FILES)
-    ebpf_process_plugin_LDADD = \
+    plugins_PROGRAMS += ebpf.plugin
+    ebpf_plugin_SOURCES = $(EBPF_PLUGIN_FILES)
+    ebpf_plugin_LDADD = \
         $(NETDATA_COMMON_LIBS) \
         $(NULL)
 endif
@@ -712,27 +800,32 @@ if ENABLE_PLUGIN_SLABINFO
 endif
 
 if ENABLE_BACKEND_KINESIS
-    netdata_SOURCES += $(KINESIS_BACKEND_FILES)
+    netdata_SOURCES += $(KINESIS_BACKEND_FILES) $(KINESIS_EXPORTING_FILES)
     netdata_LDADD += $(OPTIONAL_KINESIS_LIBS)
 endif
 
+if ENABLE_EXPORTING_PUBSUB
+    netdata_SOURCES += $(PUBSUB_EXPORTING_FILES)
+    netdata_LDADD += $(OPTIONAL_PUBSUB_LIBS)
+endif
+
 if ENABLE_BACKEND_PROMETHEUS_REMOTE_WRITE
-    netdata_SOURCES += $(PROMETHEUS_REMOTE_WRITE_BACKEND_FILES)
+    netdata_SOURCES += $(PROMETHEUS_REMOTE_WRITE_BACKEND_FILES) $(PROMETHEUS_REMOTE_WRITE_EXPORTING_FILES)
     netdata_LDADD += $(OPTIONAL_PROMETHEUS_REMOTE_WRITE_LIBS)
     BUILT_SOURCES = \
-        backends/prometheus/remote_write/remote_write.pb.cc \
-        backends/prometheus/remote_write/remote_write.pb.h \
+        exporting/prometheus/remote_write/remote_write.pb.cc \
+        exporting/prometheus/remote_write/remote_write.pb.h \
         $(NULL)
     nodist_netdata_SOURCES = $(BUILT_SOURCES)
 
-backends/prometheus/remote_write/remote_write.pb.cc \
-backends/prometheus/remote_write/remote_write.pb.h: backends/prometheus/remote_write/remote_write.proto
+exporting/prometheus/remote_write/remote_write.pb.cc \
+exporting/prometheus/remote_write/remote_write.pb.h: exporting/prometheus/remote_write/remote_write.proto
 	$(PROTOC) --proto_path=$(srcdir) --cpp_out=$(builddir) $^
 
 endif
 
 if ENABLE_BACKEND_MONGODB
-    netdata_SOURCES += $(MONGODB_BACKEND_FILES)
+    netdata_SOURCES += $(MONGODB_BACKEND_FILES) $(MONGODB_EXPORTING_FILES)
     netdata_LDADD += $(OPTIONAL_MONGOC_LIBS)
 endif
 
@@ -830,7 +923,6 @@ if ENABLE_UNITTESTS
         -Wl,--wrap=rrdset_is_exportable \
         -Wl,--wrap=exporting_calculate_value_from_stored_data \
         -Wl,--wrap=prepare_buffers \
-        -Wl,--wrap=notify_workers \
         -Wl,--wrap=send_internal_metrics \
         -Wl,--wrap=now_realtime_sec \
         -Wl,--wrap=uv_thread_set_name_np \
@@ -844,7 +936,55 @@ if ENABLE_UNITTESTS
         -Wl,--wrap=recv \
         -Wl,--wrap=send \
         -Wl,--wrap=connect_to_one_of \
+        -Wl,--wrap=create_main_rusage_chart \
+        -Wl,--wrap=send_main_rusage \
         $(TEST_LDFLAGS) \
         $(NULL)
     exporting_tests_exporting_engine_testdriver_LDADD = $(NETDATA_COMMON_LIBS) $(TEST_LIBS)
+if ENABLE_BACKEND_PROMETHEUS_REMOTE_WRITE
+    exporting_tests_exporting_engine_testdriver_SOURCES += $(PROMETHEUS_REMOTE_WRITE_EXPORTING_FILES)
+    exporting_tests_exporting_engine_testdriver_LDADD += $(OPTIONAL_PROMETHEUS_REMOTE_WRITE_LIBS)
+    exporting_tests_exporting_engine_testdriver_LDFLAGS += \
+        -Wl,--wrap=init_write_request \
+        -Wl,--wrap=add_host_info \
+        -Wl,--wrap=add_label \
+        -Wl,--wrap=add_metric \
+        $(NULL)
+    nodist_exporting_tests_exporting_engine_testdriver_SOURCES = $(BUILT_SOURCES)
+endif
+if ENABLE_BACKEND_KINESIS
+    exporting_tests_exporting_engine_testdriver_SOURCES += $(KINESIS_EXPORTING_FILES)
+    exporting_tests_exporting_engine_testdriver_LDADD += $(OPTIONAL_KINESIS_LIBS)
+    exporting_tests_exporting_engine_testdriver_LDFLAGS += \
+        -Wl,--wrap=aws_sdk_init \
+        -Wl,--wrap=kinesis_init \
+        -Wl,--wrap=kinesis_put_record \
+        -Wl,--wrap=kinesis_get_result \
+        $(NULL)
+endif
+if ENABLE_EXPORTING_PUBSUB
+    exporting_tests_exporting_engine_testdriver_SOURCES += $(PUBSUB_EXPORTING_FILES)
+    exporting_tests_exporting_engine_testdriver_LDADD += $(OPTIONAL_PUBSUB_LIBS)
+    exporting_tests_exporting_engine_testdriver_LDFLAGS += \
+        -Wl,--wrap=pubsub_init \
+        -Wl,--wrap=pubsub_add_message \
+        -Wl,--wrap=pubsub_publish \
+        -Wl,--wrap=pubsub_get_result \
+        $(NULL)
+endif
+if ENABLE_BACKEND_MONGODB
+    exporting_tests_exporting_engine_testdriver_SOURCES += $(MONGODB_EXPORTING_FILES)
+    exporting_tests_exporting_engine_testdriver_LDADD += $(OPTIONAL_MONGOC_LIBS)
+    exporting_tests_exporting_engine_testdriver_LDFLAGS += \
+        -Wl,--wrap=mongoc_init \
+        -Wl,--wrap=mongoc_uri_new_with_error \
+        -Wl,--wrap=mongoc_uri_get_option_as_int32 \
+        -Wl,--wrap=mongoc_uri_set_option_as_int32 \
+        -Wl,--wrap=mongoc_client_new_from_uri \
+        -Wl,--wrap=mongoc_client_set_appname \
+        -Wl,--wrap=mongoc_client_get_collection \
+        -Wl,--wrap=mongoc_uri_destroy \
+        -Wl,--wrap=mongoc_collection_insert_many \
+        $(NULL)
+endif
 endif

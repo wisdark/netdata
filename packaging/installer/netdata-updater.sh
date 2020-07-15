@@ -14,10 +14,16 @@
 #  - NETDATA_TARBALL_CHECKSUM
 #  - NETDATA_PREFIX / NETDATA_LIB_DIR (After 1.16.1 we will only depend on lib dir)
 #
+# Optional environment options:
+#
+#  - NETDATA_TARBALL_BASEURL (set the base url for downloading the dist tarball)
+#
 # Copyright: SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Author: Paweł Krupa <paulfantom@gmail.com>
 # Author: Pavlos Emm. Katsoulakis <paul@netdata.cloud>
+
+set -e
 
 info() {
   echo >&3 "$(date) : INFO: " "${@}"
@@ -42,12 +48,18 @@ safe_sha256sum() {
 # this is what we will do if it fails (head-less only)
 fatal() {
   error "FAILED TO UPDATE NETDATA : ${1}"
+  exit 1
+}
 
+cleanup() {
   if [ -n "${logfile}" ]; then
     cat >&2 "${logfile}"
     rm "${logfile}"
   fi
-  exit 1
+
+  if [ -n "$tmpdir" ] && [ -d "$tmpdir" ]; then
+    rm -rf "$tmpdir"
+  fi
 }
 
 create_tmp_directory() {
@@ -73,7 +85,7 @@ download() {
   fi
 }
 
-function parse_version() {
+parse_version() {
   r="${1}"
   if echo "${r}" | grep -q '^v.*'; then
     # shellcheck disable=SC2001
@@ -96,17 +108,13 @@ function parse_version() {
 }
 
 get_latest_version() {
-  shasums="${1}"
-
-  tarball="$(grep -o 'netdata-v.*\.tar\.gz' "${shasums}")"
-  if [ -n "${tarball}" ]; then
-    # shellcheck disable=SC2001
-    # XXX: Need to use regex group substitution here.
-    version="$(echo "${tarball}" | sed -e 's/^netdata-\(.*\)\.tar.gz/\1/')"
-    parse_version "${version}"
+  local latest
+  if [ "${RELEASE_CHANNEL}" == "stable" ]; then
+    latest="$(download "https://api.github.com/repos/netdata/netdata/releases/latest" /dev/stdout | grep tag_name | cut -d'"' -f4)"
   else
-    echo "000000000000"
+    latest="$(download "$NETDATA_TARBALL_BASEURL/latest-version.txt" /dev/stdout)"
   fi
+  parse_version "$latest"
 }
 
 set_tarball_urls() {
@@ -119,13 +127,12 @@ set_tarball_urls() {
   if [ "$1" = "stable" ]; then
     local latest
     # Simple version
-    # latest="$(curl -sSL https://api.github.com/repos/netdata/netdata/releases/latest | grep tag_name | cut -d'"' -f4)"
     latest="$(download "https://api.github.com/repos/netdata/netdata/releases/latest" /dev/stdout | grep tag_name | cut -d'"' -f4)"
     export NETDATA_TARBALL_URL="https://github.com/netdata/netdata/releases/download/$latest/netdata-$latest.${extension}"
     export NETDATA_TARBALL_CHECKSUM_URL="https://github.com/netdata/netdata/releases/download/$latest/sha256sums.txt"
   else
-    export NETDATA_TARBALL_URL="https://storage.googleapis.com/netdata-nightlies/netdata-latest.${extension}"
-    export NETDATA_TARBALL_CHECKSUM_URL="https://storage.googleapis.com/netdata-nightlies/sha256sums.txt"
+    export NETDATA_TARBALL_URL="$NETDATA_TARBALL_BASEURL/netdata-latest.${extension}"
+    export NETDATA_TARBALL_CHECKSUM_URL="$NETDATA_TARBALL_BASEURL/sha256sums.txt"
   fi
 }
 
@@ -139,7 +146,7 @@ update() {
   download "${NETDATA_TARBALL_CHECKSUM_URL}" "${tmpdir}/sha256sum.txt" >&3 2>&3
 
   current_version="$(command -v netdata > /dev/null && parse_version "$(netdata -v | cut -f 2 -d ' ')")"
-  latest_version="$(get_latest_version "${tmpdir}/sha256sum.txt")"
+  latest_version="$(get_latest_version)"
 
   # If we can't get the current version for some reason assume `0`
   current_version="${current_version:-0}"
@@ -181,8 +188,12 @@ update() {
       do_not_start="--dont-start-it"
     fi
 
+    if [ -n "${NETDATA_SELECTED_DASHBOARD}" ]; then
+      env="NETDATA_SELECTED_DASHBOARD=${NETDATA_SELECTED_DASHBOARD}"
+    fi
+
     info "Re-installing netdata..."
-    eval "./netdata-installer.sh ${REINSTALL_OPTIONS} --dont-wait ${do_not_start}" >&3 2>&3 || fatal "FAILED TO COMPILE/INSTALL NETDATA"
+    eval "${env} ./netdata-installer.sh ${REINSTALL_OPTIONS} --dont-wait ${do_not_start}" >&3 2>&3 || fatal "FAILED TO COMPILE/INSTALL NETDATA"
 
     # We no longer store checksum info here. but leave this so that we clean up all environment files upon next update.
     sed -i '/NETDATA_TARBALL/d' "${ENVIRONMENT_FILE}"
@@ -197,6 +208,28 @@ update() {
   return 0
 }
 
+logfile=
+tmpdir=
+
+trap cleanup EXIT
+
+while [ -n "${1}" ]; do
+  if [ "${1}" = "--not-running-from-cron" ]; then
+    NETDATA_NOT_RUNNING_FROM_CRON=1
+    shift 1
+  else
+    break
+  fi
+done
+
+# Random sleep to aileviate stampede effect of Agents upgrading
+# and disconnecting/reconnecting at the same time (or near to).
+# But only we're not a controlling terminal (tty)
+# Randomly sleep between 1s and 60m
+if [ ! -t 1 ] && [ -z "${NETDATA_NOT_RUNNING_FROM_CRON}" ]; then
+  sleep $(((RANDOM % 3600) + 1))s
+fi
+
 # Usually stored in /etc/netdata/.environment
 : "${ENVIRONMENT_FILE:=THIS_SHOULD_BE_REPLACED_BY_INSTALLER_SCRIPT}"
 
@@ -209,11 +242,13 @@ export NETDATA_LIB_DIR="${NETDATA_LIB_DIR:-${NETDATA_PREFIX}/var/lib/netdata}"
 # Source the tarbal checksum, if not already available from environment (for existing installations with the old logic)
 [[ -z "${NETDATA_TARBALL_CHECKSUM}" ]] && [[ -f ${NETDATA_LIB_DIR}/netdata.tarball.checksum ]] && NETDATA_TARBALL_CHECKSUM="$(cat "${NETDATA_LIB_DIR}/netdata.tarball.checksum")"
 
+# Netdata Tarball Base URL (defaults to our Google Storage Bucket)
+[ -z "$NETDATA_TARBALL_BASEURL" ] && NETDATA_TARBALL_BASEURL=https://storage.googleapis.com/netdata-nightlies
+
 if [ "${INSTALL_UID}" != "$(id -u)" ]; then
   fatal "You are running this script as user with uid $(id -u). We recommend to run this script as root (user with uid 0)"
 fi
 
-logfile=
 if [ -t 2 ]; then
   # we are running on a terminal
   # open fd 3 and send it to stderr
@@ -242,7 +277,7 @@ if [ "${IS_NETDATA_STATIC_BINARY}" == "yes" ]; then
   fi
 
   # Do not pass any options other than the accept, for now
-  if sh "${TMPDIR}/netdata-latest.gz.run" --accept "${REINSTALL_OPTIONS}"; then
+  if sh "${TMPDIR}/netdata-latest.gz.run" --accept -- "${REINSTALL_OPTIONS}"; then
     rm -r "${TMPDIR}"
   else
     echo >&2 "NOTE: did not remove: ${TMPDIR}"

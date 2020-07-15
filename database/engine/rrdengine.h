@@ -17,6 +17,7 @@
 #include "rrdenginelib.h"
 #include "datafile.h"
 #include "journalfile.h"
+#include "metadata_log/metadatalog.h"
 #include "rrdengineapi.h"
 #include "pagecache.h"
 #include "rrdenglocking.h"
@@ -50,6 +51,7 @@ enum rrdeng_opcode {
     RRDENG_FLUSH_PAGES,
     RRDENG_SHUTDOWN,
     RRDENG_INVALIDATE_OLDEST_MEMORY_PAGE,
+    RRDENG_QUIESCE,
 
     RRDENG_MAX_OPCODE
 };
@@ -169,7 +171,13 @@ extern rrdeng_stats_t rrdeng_reserved_file_descriptors;
 extern rrdeng_stats_t global_pg_cache_over_half_dirty_events;
 extern rrdeng_stats_t global_flushing_pressure_page_deletions; /* number of deleted pages */
 
+#define NO_QUIESCE  (0) /* initial state when all operations function normally */
+#define SET_QUIESCE (1) /* set it before shutting down the instance, quiesce long running operations */
+#define QUIESCED    (2) /* is set after all threads have finished running */
+
 struct rrdengine_instance {
+    RRDHOST *host;
+    struct metalog_instance *metalog_ctx;
     struct rrdengine_worker_config worker_config;
     struct completion rrdengine_completion;
     struct page_cache pg_cache;
@@ -183,6 +191,9 @@ struct rrdengine_instance {
     unsigned last_fileno; /* newest index of datafile and journalfile */
     unsigned long max_cache_pages;
     unsigned long cache_pages_low_watermark;
+    unsigned long metric_API_max_producers;
+
+    uint8_t quiesce; /* set to SET_QUIESCE before shutdown of the engine */
 
     struct rrdengine_statistics stats;
 };

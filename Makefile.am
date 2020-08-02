@@ -59,6 +59,7 @@ dist_noinst_DATA = \
     netdata.spec \
     package.json \
     docs \
+    libnetdata/ebpf/libbpf.c.diff \
     packaging/version \
     packaging/dashboard.version \
     packaging/dashboard.checksums \
@@ -72,8 +73,11 @@ dist_noinst_DATA = \
     packaging/mosquitto.checksums \
     packaging/bundle-dashboard.sh \
     packaging/bundle-ebpf.sh \
+    packaging/bundle-libbpf.sh \
     packaging/bundle-mosquitto.sh \
     packaging/check-kernel-config.sh \
+    packaging/libbpf.checksums \
+    packaging/libbpf.version \
     packaging/ebpf.checksums \
     packaging/ebpf.version \
     packaging/bundle-lws.sh \
@@ -125,6 +129,7 @@ AM_CFLAGS = \
     $(OPTIONAL_IPMIMONITORING_CFLAGS) \
     $(OPTIONAL_CUPS_CFLAGS) \
     $(OPTIONAL_XENSTAT_CFLAGS) \
+    $(OPTIONAL_BPF_CFLAGS) \
     $(NULL)
 
 sbin_PROGRAMS =
@@ -145,8 +150,6 @@ LIBNETDATA_FILES = \
     libnetdata/clocks/clocks.h \
     libnetdata/dictionary/dictionary.c \
     libnetdata/dictionary/dictionary.h \
-    libnetdata/ebpf/ebpf.c \
-    libnetdata/ebpf/ebpf.h \
     libnetdata/eval/eval.c \
     libnetdata/eval/eval.h \
     libnetdata/inlined.h \
@@ -185,6 +188,13 @@ LIBNETDATA_FILES = \
     libnetdata/health/health.h \
     libnetdata/string/utf8.h \
     $(NULL)
+
+if ENABLE_PLUGIN_EBPF
+    LIBNETDATA_FILES += \
+        libnetdata/ebpf/ebpf.c \
+        libnetdata/ebpf/ebpf.h \
+        $(NULL)
+endif
 
 APPS_PLUGIN_FILES = \
     collectors/apps.plugin/apps_plugin.c \
@@ -666,6 +676,7 @@ endif
 
 NETDATA_COMMON_LIBS = \
     $(OPTIONAL_MATH_LIBS) \
+    $(OPTIONAL_BPF_LIBS) \
     $(OPTIONAL_ZLIB_LIBS) \
     $(OPTIONAL_SSL_LIBS) \
     $(OPTIONAL_UUID_LIBS) \
@@ -675,7 +686,6 @@ NETDATA_COMMON_LIBS = \
     $(OPTIONAL_JUDY_LIBS) \
     $(OPTIONAL_SSL_LIBS) \
     $(OPTIONAL_JSONC_LIBS) \
-    $(OPTIONAL_EBPF_LIBS) \
     $(NULL)
 
 if LINK_STATIC_JSONC

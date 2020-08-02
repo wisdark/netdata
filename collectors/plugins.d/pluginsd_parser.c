@@ -274,6 +274,10 @@ PARSER_RC pluginsd_end(char **words, void *user, PLUGINSD_ACTION  *plugins_actio
 PARSER_RC pluginsd_chart(char **words, void *user, PLUGINSD_ACTION  *plugins_action)
 {
     RRDHOST *host = ((PARSER_USER_OBJECT *) user)->host;
+    if (unlikely(!host)) {
+        debug(D_PLUGINSD, "Ignoring chart belonging to missing or ignored host.");
+        return PARSER_RC_OK;
+    }
 
     char *type = words[1];
     char *name = words[2];
@@ -371,6 +375,10 @@ PARSER_RC pluginsd_dimension(char **words, void *user, PLUGINSD_ACTION  *plugins
 
     RRDSET *st = ((PARSER_USER_OBJECT *) user)->st;
     RRDHOST *host = ((PARSER_USER_OBJECT *) user)->host;
+    if (unlikely(!host)) {
+        debug(D_PLUGINSD, "Ignoring dimension belonging to missing or ignored host.");
+        return PARSER_RC_OK;
+    }
 
     if (unlikely(!id)) {
         error(
@@ -622,6 +630,33 @@ PARSER_RC pluginsd_tombstone(char **words, void *user, PLUGINSD_ACTION *plugins_
     debug(D_PLUGINSD, "Parsed uuid=%s", uuid_str);
     if (plugins_action->tombstone_action) {
         return plugins_action->tombstone_action(user, &uuid);
+    }
+
+    return PARSER_RC_OK;
+}
+
+PARSER_RC metalog_pluginsd_host(char **words, void *user, PLUGINSD_ACTION  *plugins_action)
+{
+    char *machine_guid = words[1];
+    char *hostname = words[2];
+    char *registry_hostname = words[3];
+    char *update_every_s = words[4];
+    char *os = words[5];
+    char *timezone = words[6];
+    char *tags = words[7];
+
+    int update_every = 1;
+    if (likely(update_every_s && *update_every_s))
+        update_every = str2i(update_every_s);
+    if (unlikely(!update_every))
+        update_every = 1;
+
+    debug(D_PLUGINSD, "HOST PARSED: guid=%s, hostname=%s, reg_host=%s, update=%d, os=%s, timezone=%s, tags=%s",
+         machine_guid, hostname, registry_hostname, update_every, os, timezone, tags);
+
+    if (plugins_action->host_action) {
+        return plugins_action->host_action(
+            user, machine_guid, hostname, registry_hostname, update_every, os, timezone, tags);
     }
 
     return PARSER_RC_OK;

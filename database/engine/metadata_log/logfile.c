@@ -330,6 +330,7 @@ int create_metadata_logfile(struct metadata_logfile *metalogfile)
     if (unlikely(ret)) {
         fatal("posix_memalign:%s", strerror(ret));
     }
+    memset(superblock, 0, sizeof(*superblock));
     (void) strncpy(superblock->magic_number, RRDENG_METALOG_MAGIC, RRDENG_MAGIC_SZ);
     superblock->version = RRDENG_METALOG_VER;
 
@@ -675,6 +676,7 @@ static int scan_metalog_files(struct metalog_instance *ctx)
         failed_to_load = matched_files;
         goto after_failed_to_parse;
     }
+    parser_add_keyword(parser, PLUGINSD_KEYWORD_HOST, metalog_pluginsd_host);
     parser_add_keyword(parser, PLUGINSD_KEYWORD_GUID, pluginsd_guid);
     parser_add_keyword(parser, PLUGINSD_KEYWORD_CONTEXT, pluginsd_context);
     parser_add_keyword(parser, PLUGINSD_KEYWORD_TOMBSTONE, pluginsd_tombstone);
@@ -683,6 +685,8 @@ static int scan_metalog_files(struct metalog_instance *ctx)
     parser->plugins_action->guid_action      = &metalog_pluginsd_guid_action;
     parser->plugins_action->context_action   = &metalog_pluginsd_context_action;
     parser->plugins_action->tombstone_action = &metalog_pluginsd_tombstone_action;
+    parser->plugins_action->host_action      = &metalog_pluginsd_host_action;
+
 
     metalog_parser_object.parser = parser;
     ctx->metalog_parser_object = &metalog_parser_object;

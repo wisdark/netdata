@@ -50,6 +50,12 @@ netdataDashboard.menu = {
         info: 'Performance metrics for network interfaces.'
     },
 
+    'wireless': {
+        title: 'Wireless Interfaces',
+        icon: '<i class="fas fa-wifi"></i>',
+        info: 'Performance metrics for wireless interfaces.'
+    },
+
     'ip': {
         title: 'Networking Stack',
         icon: '<i class="fas fa-cloud"></i>',
@@ -564,6 +570,19 @@ netdataDashboard.menu = {
         icon: '<i class="fas fa-comments"></i>',
         info: 'Summary, namespaces and topics performance data for the <b><a href="http://pulsar.apache.org/">Apache Pulsar</a></b> pub-sub messaging system.'
     },
+
+    'anomalies': {
+        title: 'Anomalies',
+        icon: '<i class="fas fa-flask"></i>',
+        info: 'Anomaly scores relating to key system metrics. A high anomaly probability indicates strange behaviour and may trigger an anomaly prediction from the trained models. Read the <a href="https://github.com/netdata/netdata/tree/master/collectors/python.d.plugin/anomalies" target="_blank">anomalies collector docs</a> for more details.'
+    },
+
+    'alarms': {
+        title: 'Alarms',
+        icon: '<i class="fas fa-bell"></i>',
+        info: 'Charts showing alarm status over time. More details <a href="https://github.com/netdata/netdata/blob/master/collectors/python.d.plugin/alarms/README.md" target="_blank">here</a>.'
+    },
+
 };
 
 
@@ -754,7 +773,7 @@ netdataDashboard.context = {
     },
 
     'system.load': {
-        info: 'Current system load, i.e. the number of processes using CPU or waiting for system resources (usually CPU and disk). The 3 metrics refer to 1, 5 and 15 minute averages. The system calculates this once every 5 seconds. For more information check <a href="https://en.wikipedia.org/wiki/Load_(computing)" target="_blank">this wikipedia article</a>',
+        info: 'Current system load, i.e. the number of processes using CPU or waiting for system resources (usually CPU and disk). The 3 metrics refer to 1, 5 and 15 minute averages. The system calculates this once every 5 seconds. For more information check <a href="https://en.wikipedia.org/wiki/Load_(computing)" target="_blank">this wikipedia article</a>.',
         height: 0.7
     },
 
@@ -1086,67 +1105,70 @@ netdataDashboard.context = {
     },
 
     'apps.file_open': {
-        height: 2.0
+        info: 'Calls to the internal function <code>do_sys_open</code>, which is the common function called from' +
+            ' <a href="https://www.man7.org/linux/man-pages/man2/open.2.html" target="_blank">open(2)</a> ' +
+            ' and <a href="https://www.man7.org/linux/man-pages/man2/openat.2.html" target="_blank">openat(2)</a>. '
     },
 
     'apps.file_open_error': {
-        height: 2.0
+        info: 'Failed calls to the internal function <code>do_sys_open</code>.'
     },
 
     'apps.file_closed': {
-        height: 2.0
+        info: 'Calls to the internal function <code>__close_fd</code>, which is called from' +
+            ' <a href="https://www.man7.org/linux/man-pages/man2/close.2.html" target="_blank">close(2)</a>. '
     },
 
     'apps.file_close_error': {
-        height: 2.0
+        info: 'Failed calls to the internal function <code>__close_fd</code>.'
     },
 
     'apps.file_deleted': {
-        height: 2.0
+        info: 'Calls to the function <code>vfs_unlink</code>. This chart does not show all events that remove files from the filesystem, because filesystems can create their own functions to remove files.'
     },
 
     'apps.vfs_write_call': {
-        height: 2.0
+        info: 'Successful calls to the function <code>vfs_write</code>. This chart may not show all filesystem events if it uses other functions to store data on disk.'
     },
 
     'apps.vfs_write_error': {
-        height: 2.0
+        info: 'Failed calls to the function <code>vfs_write</code>. This chart may not show all filesystem events if it uses other functions to store data on disk.'
     },
 
     'apps.vfs_read_call': {
-        height: 2.0
+        info: 'Successful calls to the function <code>vfs_read</code>. This chart may not show all filesystem events if it uses other functions to store data on disk.'
     },
 
     'apps.vfs_read_error': {
-        height: 2.0
+        info: 'Failed calls to the function <code>vfs_read</code>. This chart may not show all filesystem events if it uses other functions to store data on disk.'
     },
 
     'apps.vfs_write_bytes': {
-        height: 2.0
+        info: 'Total of bytes successfully written using the function <code>vfs_write</code>.'
     },
 
     'apps.vfs_read_bytes': {
-        height: 2.0
+        info: 'Total of bytes successfully read using the function <code>vfs_read</code>.'
     },
 
     'apps.process_create': {
-        height: 2.0
+        info: 'Calls to the function <code>do_fork</code> to create a new task, which is the common name used to define process and tasks inside the kernel. Netdata identifies the process by counting the number of calls to <code>sys_clone</code> that do not have the flag <code>CLONE_THREAD</code> set.'
     },
 
     'apps.thread_create': {
-        height: 2.0
+        info: 'Calls to the function <code>do_fork</code> to create a new task, which is the common name used to define process and tasks inside the kernel. Netdata identifies the threads by counting the number of calls to <code>sys_clone</code> that have the flag <code>CLONE_THREAD</code> set.'
     },
 
     'apps.task_close': {
-        height: 2.0
+        info: 'Calls to the functions responsible for closing (<code>do_exit</code>) and releasing (<code>release_task</code>) tasks.'
     },
 
     'apps.bandwidth_sent': {
-        height: 2.0
+        info: 'Bytes sent by functions <code>tcp_sendmsg</code> and <code>udp_sendmsg</code>.'
     },
 
     'apps.bandwidth_recv': {
-        height: 2.0
+        info: 'Bytes received by functions <code>tcp_cleanup_rbuf</code> and <code>udp_recvmsg</code>.'
     },
 
     // ------------------------------------------------------------------------
@@ -2265,6 +2287,106 @@ netdataDashboard.context = {
             '<code>TIMEOUT</code>, when the response was not completed due to a connection timeout.'
     },
 
+     // ------------------------------------------------------------------------
+    // go web_log
+
+    'web_log.type_requests': {
+        info: 'Web server responses by type. <code>success</code> includes <b>1xx</b>, <b>2xx</b>, <b>304</b> and <b>401</b>, <code>error</code> includes <b>5xx</b>, <code>redirect</code> includes <b>3xx</b> except <b>304</b>, <code>bad</code> includes <b>4xx</b> except <b>401</b>, <code>other</code> are all the other responses.',
+        mainheads: [
+            function (os, id) {
+                void (os);
+                return '<div data-netdata="' + id + '"'
+                    + ' data-dimensions="success"'
+                    + ' data-chart-library="gauge"'
+                    + ' data-title="Successful"'
+                    + ' data-units="requests/s"'
+                    + ' data-gauge-adjust="width"'
+                    + ' data-width="12%"'
+                    + ' data-before="0"'
+                    + ' data-after="-CHART_DURATION"'
+                    + ' data-points="CHART_DURATION"'
+                    + ' data-common-max="' + id + '"'
+                    + ' data-colors="' + NETDATA.colors[0] + '"'
+                    + ' data-decimal-digits="0"'
+                    + ' role="application"></div>';
+            },
+
+            function (os, id) {
+                void (os);
+                return '<div data-netdata="' + id + '"'
+                    + ' data-dimensions="redirect"'
+                    + ' data-chart-library="gauge"'
+                    + ' data-title="Redirects"'
+                    + ' data-units="requests/s"'
+                    + ' data-gauge-adjust="width"'
+                    + ' data-width="12%"'
+                    + ' data-before="0"'
+                    + ' data-after="-CHART_DURATION"'
+                    + ' data-points="CHART_DURATION"'
+                    + ' data-common-max="' + id + '"'
+                    + ' data-colors="' + NETDATA.colors[2] + '"'
+                    + ' data-decimal-digits="0"'
+                    + ' role="application"></div>';
+            },
+
+            function (os, id) {
+                void (os);
+                return '<div data-netdata="' + id + '"'
+                    + ' data-dimensions="bad"'
+                    + ' data-chart-library="gauge"'
+                    + ' data-title="Bad Requests"'
+                    + ' data-units="requests/s"'
+                    + ' data-gauge-adjust="width"'
+                    + ' data-width="12%"'
+                    + ' data-before="0"'
+                    + ' data-after="-CHART_DURATION"'
+                    + ' data-points="CHART_DURATION"'
+                    + ' data-common-max="' + id + '"'
+                    + ' data-colors="' + NETDATA.colors[3] + '"'
+                    + ' data-decimal-digits="0"'
+                    + ' role="application"></div>';
+            },
+
+            function (os, id) {
+                void (os);
+                return '<div data-netdata="' + id + '"'
+                    + ' data-dimensions="error"'
+                    + ' data-chart-library="gauge"'
+                    + ' data-title="Server Errors"'
+                    + ' data-units="requests/s"'
+                    + ' data-gauge-adjust="width"'
+                    + ' data-width="12%"'
+                    + ' data-before="0"'
+                    + ' data-after="-CHART_DURATION"'
+                    + ' data-points="CHART_DURATION"'
+                    + ' data-common-max="' + id + '"'
+                    + ' data-colors="' + NETDATA.colors[1] + '"'
+                    + ' data-decimal-digits="0"'
+                    + ' role="application"></div>';
+            }
+        ]
+    },
+
+    'web_log.request_processing_time': {
+        mainheads: [
+            function (os, id) {
+                void (os);
+                return '<div data-netdata="' + id + '"'
+                    + ' data-dimensions="avg"'
+                    + ' data-chart-library="gauge"'
+                    + ' data-title="Average Response Time"'
+                    + ' data-units="milliseconds"'
+                    + ' data-gauge-adjust="width"'
+                    + ' data-width="12%"'
+                    + ' data-before="0"'
+                    + ' data-after="-CHART_DURATION"'
+                    + ' data-points="CHART_DURATION"'
+                    + ' data-colors="' + NETDATA.colors[4] + '"'
+                    + ' data-decimal-digits="2"'
+                    + ' role="application"></div>';
+            }
+        ]
+    },
     // ------------------------------------------------------------------------
     // Fronius Solar Power
 
@@ -2436,6 +2558,16 @@ netdataDashboard.context = {
 
     'rabbitmq.disk_space': {
         info: 'Total amount of disk space consumed by the message store(s).  See <code><a href="https://www.rabbitmq.com/production-checklist.html#resource-limits-disk-space" target=_"blank">Disk Space Limits</a></code> for further details.',
+        colors: NETDATA.colors[3]
+    },
+
+    'rabbitmq.queue_messages': {
+        info: 'Total amount of messages and their states in this queue.',
+        colors: NETDATA.colors[3]
+    },
+
+    'rabbitmq.queue_messages_stats': {
+        info: 'Overall messaging rates including acknowledgements, delieveries, redeliveries, and publishes.',
         colors: NETDATA.colors[3]
     },
 
@@ -3173,7 +3305,7 @@ netdataDashboard.context = {
 
     'ebpf.io_bytes': {
         title : 'VFS bytes written',
-        info: 'Total of bytes read or written with success using the functions  <code>vfs_read</code> and <code>vfs_write</code>.'
+        info: 'Total of bytes read or written with success using the functions <code>vfs_read</code> and <code>vfs_write</code>.'
     },
 
     'ebpf.io_error': {
@@ -3286,7 +3418,7 @@ netdataDashboard.context = {
                 return '<div data-netdata="' + id + '"'
                     + ' data-dimensions="queue_message_in"'
                     + ' data-chart-library="easypiechart"'
-                    + ' data-title="MQTT Recieve Rate"'
+                    + ' data-title="MQTT Receive Rate"'
                     + ' data-units="messages/s"'
                     + ' data-gauge-adjust="width"'
                     + ' data-width="14%"'
@@ -3537,5 +3669,89 @@ netdataDashboard.context = {
                     + ' role="application"></div>';
             },
         ],
+    },
+
+    // ------------------------------------------------------------------------
+    // Nvidia-smi
+
+    'nvidia_smi.fan_speed': {
+        heads: [
+            function (os, id) {
+                void (os);
+                return '<div data-netdata="' + id + '"'
+                    + ' data-dimensions="speed"'
+                    + ' data-chart-library="easypiechart"'
+                    + ' data-title="Fan Speed"'
+                    + ' data-units="percentage"'
+                    + ' data-gauge-adjust="width"'
+                    + ' data-width="12%"'
+                    + ' data-before="0"'
+                    + ' data-after="-CHART_DURATION"'
+                    + ' data-points="CHART_DURATION"'
+                    + ' data-colors="' + NETDATA.colors[4] + '"'
+                    + ' data-decimal-digits="2"'
+                    + ' role="application"></div>';
+            }
+        ]
+    },
+    'nvidia_smi.temperature': {
+        heads: [
+            function (os, id) {
+                void (os);
+                return '<div data-netdata="' + id + '"'
+                    + ' data-dimensions="temp"'
+                    + ' data-chart-library="easypiechart"'
+                    + ' data-title="Temperature"'
+                    + ' data-units="celsius"'
+                    + ' data-gauge-adjust="width"'
+                    + ' data-width="12%"'
+                    + ' data-before="0"'
+                    + ' data-after="-CHART_DURATION"'
+                    + ' data-points="CHART_DURATION"'
+                    + ' data-colors="' + NETDATA.colors[3] + '"'
+                    + ' data-decimal-digits="2"'
+                    + ' role="application"></div>';
+            }
+        ]
+    },
+    'nvidia_smi.memory_allocated': {
+        heads: [
+            function (os, id) {
+                void (os);
+                return '<div data-netdata="' + id + '"'
+                    + ' data-dimensions="used"'
+                    + ' data-chart-library="easypiechart"'
+                    + ' data-title="Used Memory"'
+                    + ' data-units="MiB"'
+                    + ' data-gauge-adjust="width"'
+                    + ' data-width="12%"'
+                    + ' data-before="0"'
+                    + ' data-after="-CHART_DURATION"'
+                    + ' data-points="CHART_DURATION"'
+                    + ' data-colors="' + NETDATA.colors[4] + '"'
+                    + ' data-decimal-digits="2"'
+                    + ' role="application"></div>';
+            }
+        ]
+    },
+    'nvidia_smi.power': {
+        heads: [
+            function (os, id) {
+                void (os);
+                return '<div data-netdata="' + id + '"'
+                    + ' data-dimensions="power"'
+                    + ' data-chart-library="easypiechart"'
+                    + ' data-title="Power Utilization"'
+                    + ' data-units="watts"'
+                    + ' data-gauge-adjust="width"'
+                    + ' data-width="12%"'
+                    + ' data-before="0"'
+                    + ' data-after="-CHART_DURATION"'
+                    + ' data-points="CHART_DURATION"'
+                    + ' data-colors="' + NETDATA.colors[2] + '"'
+                    + ' data-decimal-digits="2"'
+                    + ' role="application"></div>';
+            }
+        ]
     },
 };

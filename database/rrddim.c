@@ -3,6 +3,32 @@
 #define NETDATA_RRD_INTERNALS
 #include "rrd.h"
 
+static inline void calc_link_to_rrddim(RRDDIM *rd)
+{
+    RRDHOST *host = rd->rrdset->rrdhost;
+    RRDSET  *st = rd->rrdset;
+    if (host->alarms_with_foreach || host->alarms_template_with_foreach) {
+        int count = 0;
+        int hostlocked;
+        for (count = 0; count < 5; count++) {
+            hostlocked = netdata_rwlock_trywrlock(&host->rrdhost_rwlock);
+            if (!hostlocked) {
+                rrdcalc_link_to_rrddim(rd, st, host);
+                rrdhost_unlock(host);
+                break;
+            } else if (hostlocked != EBUSY) {
+                error("Cannot lock host to create an alarm for the dimension.");
+            }
+            sleep_usec(USEC_PER_MS * 200);
+        }
+
+        if (count == 5) {
+            error(
+                "Failed to create an alarm for dimension %s of chart %s 5 times. Skipping alarm.", rd->name, st->name);
+        }
+    }
+}
+
 // ----------------------------------------------------------------------------
 // RRDDIM index
 
@@ -145,11 +171,11 @@ static void rrddim_query_finalize(struct rrddim_query_handle *handle) {
 }
 
 static time_t rrddim_query_latest_time(RRDDIM *rd) {
-    return rrdset_last_entry_t(rd->rrdset);
+    return rrdset_last_entry_t_nolock(rd->rrdset);
 }
 
 static time_t rrddim_query_oldest_time(RRDDIM *rd) {
-    return rrdset_first_entry_t(rd->rrdset);
+    return rrdset_first_entry_t_nolock(rd->rrdset);
 }
 
 
@@ -190,8 +216,8 @@ void rrdcalc_link_to_rrddim(RRDDIM *rd, RRDSET *st, RRDHOST *host) {
 }
 
 RRDDIM *rrddim_add_custom(RRDSET *st, const char *id, const char *name, collected_number multiplier,
-                          collected_number divisor, RRD_ALGORITHM algorithm, RRD_MEMORY_MODE memory_mode,
-                          int is_archived, uuid_t *dim_uuid) {
+                          collected_number divisor, RRD_ALGORITHM algorithm, RRD_MEMORY_MODE memory_mode)
+{
     RRDHOST *host = st->rrdhost;
     rrdset_wrlock(st);
 
@@ -206,18 +232,23 @@ RRDDIM *rrddim_add_custom(RRDSET *st, const char *id, const char *name, collecte
         rc += rrddim_set_algorithm(st, rd, algorithm);
         rc += rrddim_set_multiplier(st, rd, multiplier);
         rc += rrddim_set_divisor(st, rd, divisor);
-        if (!is_archived && rrddim_flag_check(rd, RRDDIM_FLAG_ARCHIVED)) {
+        if (rrddim_flag_check(rd, RRDDIM_FLAG_ARCHIVED)) {
+#ifdef ENABLE_DBENGINE
+            store_active_dimension(rd->state->metric_uuid);
+#endif
             rd->state->collect_ops.init(rd);
             rrddim_flag_clear(rd, RRDDIM_FLAG_ARCHIVED);
             rrddimvar_create(rd, RRDVAR_TYPE_CALCULATED, NULL, NULL, &rd->last_stored_value, RRDVAR_OPTION_DEFAULT);
             rrddimvar_create(rd, RRDVAR_TYPE_COLLECTED, NULL, "_raw", &rd->last_collected_value, RRDVAR_OPTION_DEFAULT);
             rrddimvar_create(rd, RRDVAR_TYPE_TIME_T, NULL, "_last_collected_t", &rd->last_collected_time.tv_sec, RRDVAR_OPTION_DEFAULT);
+            calc_link_to_rrddim(rd);
         }
         // DBENGINE available and activated?
 #ifdef ENABLE_DBENGINE
-        if (likely(!is_archived && rd->rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE) && unlikely(rc)) {
+        if (likely(rd->rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE) && unlikely(rc)) {
             debug(D_METADATALOG, "DIMENSION [%s] metadata updated", rd->id);
-            metalog_commit_update_dimension(rd);
+            (void)sql_store_dimension(rd->state->metric_uuid, rd->rrdset->chart_uuid, rd->id, rd->name, rd->multiplier, rd->divisor,
+                                      rd->algorithm);
         }
 #endif
         rrdset_unlock(st);
@@ -364,7 +395,9 @@ RRDDIM *rrddim_add_custom(RRDSET *st, const char *id, const char *name, collecte
     rd->state = mallocz(sizeof(*rd->state));
     if(memory_mode == RRD_MEMORY_MODE_DBENGINE) {
 #ifdef ENABLE_DBENGINE
+        uuid_t *dim_uuid = find_dimension_uuid(st, rd);
         rrdeng_metric_init(rd, dim_uuid);
+        store_active_dimension(rd->state->metric_uuid);
         rd->state->collect_ops.init = rrdeng_store_metric_init;
         rd->state->collect_ops.store_metric = rrdeng_store_metric_next;
         rd->state->collect_ops.finalize = rrdeng_store_metric_finalize;
@@ -386,10 +419,7 @@ RRDDIM *rrddim_add_custom(RRDSET *st, const char *id, const char *name, collecte
         rd->state->query_ops.latest_time    = rrddim_query_latest_time;
         rd->state->query_ops.oldest_time    = rrddim_query_oldest_time;
     }
-    if (is_archived)
-        rrddim_flag_set(rd, RRDDIM_FLAG_ARCHIVED);
-    else
-        rd->state->collect_ops.init(rd); // only initialize if a collector created this dimension
+    rd->state->collect_ops.init(rd);
     // append this dimension
     if(!st->dimensions)
         st->dimensions = rd;
@@ -416,7 +446,7 @@ RRDDIM *rrddim_add_custom(RRDSET *st, const char *id, const char *name, collecte
         td->next = rd;
     }
 
-    if(host->health_enabled && !is_archived) {
+    if(host->health_enabled) {
         rrddimvar_create(rd, RRDVAR_TYPE_CALCULATED, NULL, NULL, &rd->last_stored_value, RRDVAR_OPTION_DEFAULT);
         rrddimvar_create(rd, RRDVAR_TYPE_COLLECTED, NULL, "_raw", &rd->last_collected_value, RRDVAR_OPTION_DEFAULT);
         rrddimvar_create(rd, RRDVAR_TYPE_TIME_T, NULL, "_last_collected_t", &rd->last_collected_time.tv_sec, RRDVAR_OPTION_DEFAULT);
@@ -425,36 +455,13 @@ RRDDIM *rrddim_add_custom(RRDSET *st, const char *id, const char *name, collecte
     if(unlikely(rrddim_index_add(st, rd) != rd))
         error("RRDDIM: INTERNAL ERROR: attempt to index duplicate dimension '%s' on chart '%s'", rd->id, st->id);
 
-    if (host->alarms_with_foreach || host->alarms_template_with_foreach) {
-        int count = 0;
-        int hostlocked;
-        for (count = 0 ; count < 5 ; count++) {
-            hostlocked = netdata_rwlock_trywrlock(&host->rrdhost_rwlock);
-            if (!hostlocked) {
-                rrdcalc_link_to_rrddim(rd, st, host);
-                rrdhost_unlock(host);
-                break;
-            } else if (hostlocked != EBUSY) {
-                error("Cannot lock host to create an alarm for the dimension.");
-            }
-            usleep(200000);
-        }
+    calc_link_to_rrddim(rd);
 
-        if (count == 5) {
-            error("Failed to create an alarm for dimension %s of chart %s 5 times. Skipping alarm."
-            , rd->name, st->name);
-        }
-    }
     rrdset_unlock(st);
 #ifdef ENABLE_ACLK
     if (netdata_cloud_setting)
         aclk_update_chart(host, st->id, ACLK_CMD_CHART);
 #endif
-#ifdef ENABLE_DBENGINE
-    metalog_upd_objcount(st->rrdhost, 1);
-    metalog_commit_update_dimension(rd);
-#endif
-
     return(rd);
 }
 
@@ -473,11 +480,10 @@ void rrddim_free_custom(RRDSET *st, RRDDIM *rd, int db_rotated)
         if (can_delete_metric && rd->rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE) {
 #ifdef ENABLE_DBENGINE
             /* This metric has no data and no references */
-            metalog_commit_delete_dimension(rd);
+            delete_dimension_uuid(rd->state->metric_uuid);
 #endif
         }
     }
-    freez(rd->state);
 
     if(rd == st->dimensions)
         st->dimensions = rd->next;
@@ -508,6 +514,7 @@ void rrddim_free_custom(RRDSET *st, RRDDIM *rd, int db_rotated)
             debug(D_RRD_CALLS, "Unmapping dimension '%s'.", rd->name);
             freez((void *)rd->id);
             freez(rd->cache_filename);
+            freez(rd->state);
             munmap(rd, rd->memsize);
             break;
 
@@ -517,15 +524,18 @@ void rrddim_free_custom(RRDSET *st, RRDDIM *rd, int db_rotated)
             debug(D_RRD_CALLS, "Removing dimension '%s'.", rd->name);
             freez((void *)rd->id);
             freez(rd->cache_filename);
+#ifdef ENABLE_DBENGINE
+            if (rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE) {
+                freez(rd->state->metric_uuid);
+            }
+#endif
+            freez(rd->state);
             freez(rd);
             break;
     }
 #ifdef ENABLE_ACLK
     if ((netdata_cloud_setting) && (db_rotated || RRD_MEMORY_MODE_DBENGINE != rrd_memory_mode))
         aclk_update_chart(st->rrdhost, st->id, ACLK_CMD_CHART);
-#endif
-#ifdef ENABLE_DBENGINE
-    metalog_upd_objcount(st->rrdhost, -1);
 #endif
 }
 
@@ -583,10 +593,6 @@ inline void rrddim_is_obsolete(RRDSET *st, RRDDIM *rd) {
     if (netdata_cloud_setting)
         aclk_update_chart(st->rrdhost, st->id, ACLK_CMD_CHART);
 #endif
-#ifdef ENABLE_DBENGINE
-    metalog_commit_update_dimension(rd);
-#endif
-
 }
 
 inline void rrddim_isnot_obsolete(RRDSET *st __maybe_unused, RRDDIM *rd) {
@@ -596,9 +602,6 @@ inline void rrddim_isnot_obsolete(RRDSET *st __maybe_unused, RRDDIM *rd) {
 #ifdef ENABLE_ACLK
     if (netdata_cloud_setting)
         aclk_update_chart(st->rrdhost, st->id, ACLK_CMD_CHART);
-#endif
-#ifdef ENABLE_DBENGINE
-    metalog_commit_update_dimension(rd);
 #endif
 }
 

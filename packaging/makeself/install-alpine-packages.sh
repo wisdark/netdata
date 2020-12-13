@@ -24,14 +24,15 @@ apk add --no-cache -U \
   libtool \
   pkgconfig \
   util-linux-dev \
-  openssl-dev \
   gnutls-dev \
   zlib-dev \
+  zlib-static \
   libmnl-dev \
   libnetfilter_acct-dev \
   libuv-dev \
+  libuv-static \
   lz4-dev \
-  openssl-dev \
+  lz4-static \
   snappy-dev \
   protobuf-dev \
   binutils \
@@ -48,13 +49,3 @@ mkdir build
 cd build || exit 1
 cmake -DCMAKE_BUILD_SHARED_LIBS=true -DCMAKE_INSTALL_PREFIX:PATH=/usr -DCMAKE_INSTALL_LIBDIR=lib ../
 make && make install
-
-# Judy doesnt seem to be available on the repositories, download manually and install it
-export JUDY_VER="1.0.5"
-wget -O /judy.tar.gz http://downloads.sourceforge.net/project/judy/judy/Judy-${JUDY_VER}/Judy-${JUDY_VER}.tar.gz
-tar -C / -xf /judy.tar.gz
-rm /judy.tar.gz
-cd /judy-${JUDY_VER} || exit 1
-CFLAGS="-O2 -s" CXXFLAGS="-O2 -s" ./configure
-make
-make install

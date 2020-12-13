@@ -51,9 +51,9 @@ the database engine to use. The higher those values, the more metrics Netdata wi
 512, respectively, the database engine should store about four day's worth of data on a system collecting 2,000 metrics
 every second.
 
-[**See our database engine calculator**](https://learn.netdata.cloud/docs/agent/database/calculator) to help you
-correctly set `dbengine disk space` based on your needs. The calculator gives an accurate estimate based on how many
-child nodes you have, how many metrics your Agent collects, and more.
+[**See our database engine calculator**](/docs/store/change-metrics-storage.md) to help you correctly set `dbengine disk
+space` based on your needs. The calculator gives an accurate estimate based on how many child nodes you have, how many
+metrics your Agent collects, and more.
 
 ```conf
 [global]
@@ -116,9 +116,10 @@ use netdata
 db.createCollection("netdata_metrics")
 ```
 
-Next, Netdata needs to be reinstalled in order to detect that the required libraries to make this exporting connection
-exist. Since you most likely installed Netdata using the one-line installer script, all you have to do is run that
-script again. Don't worry—any configuration changes you made along the way will be retained!
+Next, Netdata needs to be [reinstalled](/packaging/installer/REINSTALL.md) in order to detect that the required
+libraries to make this exporting connection exist. Since you most likely installed Netdata using the one-line installer
+script, all you have to do is run that script again. Don't worry—any configuration changes you made along the way will
+be retained!
 
 ```bash
 bash <(curl -Ss https://my-netdata.io/kickstart.sh)

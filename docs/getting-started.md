@@ -67,9 +67,9 @@ configuration keeps RAM usage low while allowing for long-term, on-disk metrics 
 You can tweak this custom _database engine_ to store a much larger dataset than your system's available RAM,
 particularly if you allow Netdata to use slightly more RAM and disk space than the default configuration.
 
-Read our guide on [changing how long Netdata stores metrics](/docs/guides/longer-metrics-storage.md) to learn more
-and use our [database engine calculator](https://learn.netdata.cloud/docs/agent/database/calculator) to figure
-out the exact settings you'll need to store historical metrics right in the Agent's database.
+Read our guide on [changing how long Netdata stores metrics](/docs/store/change-metrics-storage.md) to learn more and
+use our the embedded database engine to figure out the exact settings you'll need to store historical metrics right in
+the Agent's database.
 
 **What's next?**:
 
@@ -157,7 +157,7 @@ changes based on your particular Nginx setup.
 
 -   Look at the [full list of data collection modules](/collectors/COLLECTORS.md)
     to configure your sources for auto-detection and monitoring.
--   Improve the [performance](/docs/Performance.md) of Netdata on low-memory systems.
+-   Improve the [performance](/docs/guides/configure/performance.md) of Netdata on low-memory systems.
 -   Configure `systemd` to expose [systemd services
     utilization](/collectors/cgroups.plugin/README.md#monitoring-systemd-services) metrics automatically.
 -   [Reconfigure individual charts](/daemon/config/README.md#per-chart-configuration) in `netdata.conf`.

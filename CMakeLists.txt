@@ -237,27 +237,51 @@ pkg_check_modules(CURL libcurl)
 # ${CURL_CFLAGS_OTHER}
 # ${CURL_INCLUDE_DIRS}
 
+# -----------------------------------------------------------------------------
+# Detect libaws-c-common
+
+find_library(HAVE_AWS_CHECKSUMS aws-checksums)
+# later we use:
+# ${HAVE_AWS_CHECKSUMS}
+
+# -----------------------------------------------------------------------------
+# Detect libaws-c-common
+
+find_library(HAVE_AWS_COMMON aws-c-common)
+# later we use:
+# ${HAVE_AWS_COMMON}
+
+# -----------------------------------------------------------------------------
+# Detect libaws-c-common
+
+find_library(HAVE_AWS_EVENT_STREAM aws-c-event-stream)
+# later we use:
+# ${HAVE_AWS_EVENT_STREAM}
 
 # -----------------------------------------------------------------------------
 # Detect libaws-cpp-sdk-core
 
-find_library(HAVE_AWS aws-cpp-sdk-core)
+pkg_check_modules(AWS_CORE aws-cpp-sdk-core)
 # later we use:
-# ${HAVE_AWS}
+# ${AWS_CORE_LIBRARIES}
+# ${AWS_CORE_CFLAGS_OTHER}
+# ${AWS_CORE_INCLUDE_DIRS}
 
 # -----------------------------------------------------------------------------
 # Detect libaws-cpp-sdk-kinesis
 
-find_library(HAVE_KINESIS aws-cpp-sdk-kinesis)
+pkg_check_modules(KINESIS aws-cpp-sdk-kinesis)
 # later we use:
-# ${HAVE_KINESIS}
+# ${KINESIS_LIBRARIES}
+# ${KINESIS_CFLAGS_OTHER}
+# ${KINESIS_INCLUDE_DIRS}
 
 # -----------------------------------------------------------------------------
 # Detect libgrpc
 
 pkg_check_modules(GRPC grpc)
 # later we use:
-# ${GRPCF_LIBRARIES}
+# ${GRPC_LIBRARIES}
 # ${GRPC_CFLAGS_OTHER}
 # ${GRPC_INCLUDE_DIRS}
 
@@ -477,6 +501,7 @@ set(PROC_PLUGIN_FILES
         collectors/proc.plugin/proc_meminfo.c
         collectors/proc.plugin/proc_pagetypeinfo.c
         collectors/proc.plugin/proc_net_dev.c
+        collectors/proc.plugin/proc_net_wireless.c
         collectors/proc.plugin/proc_net_ip_vs_stats.c
         collectors/proc.plugin/proc_net_netstat.c
         collectors/proc.plugin/proc_net_rpc_nfs.c
@@ -572,6 +597,10 @@ set(RRD_PLUGIN_FILES
         database/rrdsetvar.h
         database/rrdvar.c
         database/rrdvar.h
+        database/sqlite/sqlite_functions.c
+        database/sqlite/sqlite_functions.h
+        database/sqlite/sqlite3.c
+        database/sqlite/sqlite3.h
         database/engine/rrdengine.c
         database/engine/rrdengine.h
         database/engine/rrddiskprotocol.h
@@ -587,7 +616,6 @@ set(RRD_PLUGIN_FILES
         database/engine/pagecache.h
         database/engine/rrdenglocking.c
         database/engine/rrdenglocking.h
-        database/engine/metadata_log/metadatalog.c
         database/engine/metadata_log/metadatalog.h
         database/engine/metadata_log/metadatalogapi.c
         database/engine/metadata_log/metadatalogapi.h
@@ -598,8 +626,6 @@ set(RRD_PLUGIN_FILES
         database/engine/metadata_log/metalogpluginsd.h
         database/engine/metadata_log/compaction.c
         database/engine/metadata_log/compaction.h
-        database/engine/global_uuid_map/global_uuid_map.c
-        database/engine/global_uuid_map/global_uuid_map.h
         )
 
 set(WEB_PLUGIN_FILES
@@ -703,6 +729,8 @@ set(ACLK_PLUGIN_FILES
         aclk/mqtt.h
         aclk/aclk_stats.c
         aclk/aclk_stats.h
+        aclk/aclk_rx_msgs.c
+        aclk/aclk_rx_msgs.h
         )
 
 set(SPAWN_PLUGIN_FILES
@@ -781,6 +809,8 @@ set(MONGODB_BACKEND_FILES
         )
 
 set(DAEMON_FILES
+        daemon/buildinfo.c
+        daemon/buildinfo.h
         daemon/common.c
         daemon/common.h
         daemon/daemon.c
@@ -840,7 +870,8 @@ add_definitions(
 # -----------------------------------------------------------------------------
 # kinesis backend
 
-IF(HAVE_KINESIS AND HAVE_AWS AND CRYPTO_LIBRARIES AND SSL_LIBRARIES AND CURL_LIBRARIES)
+IF(KINESIS_LIBRARIES AND AWS_CORE_LIBRARIES AND HAVE_AWS_EVENT_STREAM AND HAVE_AWS_COMMON AND HAVE_AWS_CHECKSUMS AND
+   CRYPTO_LIBRARIES AND SSL_LIBRARIES AND CURL_LIBRARIES)
     SET(ENABLE_BACKEND_KINESIS True)
 ELSE()
     SET(ENABLE_BACKEND_KINESIS False)
@@ -849,8 +880,10 @@ ENDIF()
 IF(ENABLE_BACKEND_KINESIS)
     message(STATUS "kinesis backend: enabled")
     list(APPEND NETDATA_FILES ${KINESIS_BACKEND_FILES} ${KINESIS_EXPORTING_FILES})
-    list(APPEND NETDATA_COMMON_LIBRARIES aws-cpp-sdk-kinesis aws-cpp-sdk-core ${CRYPTO_LIBRARIES} ${SSL_LIBRARIES} ${CURL_LIBRARIES})
-    list(APPEND NETDATA_COMMON_INCLUDE_DIRS ${CRYPTO_INCLUDE_DIRS} ${SSL_INCLUDE_DIRS} ${CURL_INCLUDE_DIRS})
+    list(APPEND NETDATA_COMMON_LIBRARIES ${KINESIS_LIBRARIES} ${AWS_CORE_LIBRARIES}
+                                         ${CRYPTO_LIBRARIES} ${SSL_LIBRARIES} ${CURL_LIBRARIES})
+    list(APPEND NETDATA_COMMON_INCLUDE_DIRS ${KINESIS_INCLUDE_DIRS} ${AWS_CORE_INCLUDE_DIRS}
+                                            ${CRYPTO_INCLUDE_DIRS} ${SSL_INCLUDE_DIRS} ${CURL_INCLUDE_DIRS})
     list(APPEND NETDATA_COMMON_CFLAGS ${CRYPTO_CFLAGS_OTHER} ${SSL_CFLAGS_OTHER} ${CURL_CFLAGS_OTHER})
 ELSE()
     message(STATUS "kinesis backend: disabled (requires AWS SDK for C++)")
@@ -1238,6 +1271,7 @@ endif()
         -Wl,--wrap=connect_to_one_of
         -Wl,--wrap=create_main_rusage_chart
         -Wl,--wrap=send_main_rusage
+        -Wl,--wrap=simple_connector_end_batch
         ${PROMETHEUS_REMOTE_WRITE_LINK_OPTIONS}
         ${KINESIS_LINK_OPTIONS}
         ${PUBSUB_LINK_OPTIONS}
@@ -1260,6 +1294,7 @@ endif()
         -Wl,--wrap=web_client_api_request_v1
         -Wl,--wrap=rrdhost_find_by_guid
         -Wl,--wrap=rrdset_find_byname
+        -Wl,--wrap=sql_create_host_by_uuid
         -Wl,--wrap=rrdset_find
         -Wl,--wrap=rrdpush_receiver_thread_spawn
         -Wl,--wrap=debug_int
@@ -1284,6 +1319,7 @@ endif()
         -Wl,--wrap=web_client_api_request_v1
         -Wl,--wrap=rrdhost_find_by_guid
         -Wl,--wrap=rrdset_find_byname
+        -Wl,--wrap=sql_create_host_by_uuid
         -Wl,--wrap=rrdset_find
         -Wl,--wrap=rrdpush_receiver_thread_spawn
         -Wl,--wrap=debug_int

@@ -4,9 +4,11 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <dlfcn.h>
+#include <sys/utsname.h>
 
 #include "../libnetdata.h"
 
+/*
 static int clean_kprobe_event(FILE *out, char *filename, char *father_pid, netdata_ebpf_events_t *ptr)
 {
     int fd = open(filename, O_WRONLY | O_APPEND, 0);
@@ -55,13 +57,14 @@ int clean_kprobe_events(FILE *out, int pid, netdata_ebpf_events_t *ptr)
 
     return 0;
 }
+*/
 
 //----------------------------------------------------------------------------------------------------------------------
 
 int get_kernel_version(char *out, int size)
 {
     char major[16], minor[16], patch[16];
-    char ver[256];
+    char ver[VERSION_STRING_LEN];
     char *version = ver;
 
     out[0] = '\0';
@@ -107,14 +110,14 @@ int get_kernel_version(char *out, int size)
 
 int get_redhat_release()
 {
-    char buffer[256];
+    char buffer[VERSION_STRING_LEN + 1];
     int major, minor;
     FILE *fp = fopen("/etc/redhat-release", "r");
 
     if (fp) {
         major = 0;
         minor = -1;
-        size_t length = fread(buffer, sizeof(char), 255, fp);
+        size_t length = fread(buffer, sizeof(char), VERSION_STRING_LEN, fp);
         if (length > 4) {
             buffer[length] = '\0';
             char *end = strchr(buffer, '.');
@@ -146,8 +149,81 @@ int get_redhat_release()
     }
 }
 
+/**
+ * Check if the kernel is in a list of rejected ones
+ *
+ * @return Returns 1 if the kernel is rejected, 0 otherwise.
+ */
+static int kernel_is_rejected()
+{
+    // Get kernel version from system
+    char version_string[VERSION_STRING_LEN + 1];
+    int version_string_len = 0;
+
+    if (read_file("/proc/version_signature", version_string, VERSION_STRING_LEN)) {
+        if (read_file("/proc/version", version_string, VERSION_STRING_LEN)) {
+            struct utsname uname_buf;
+            if (!uname(&uname_buf)) {
+                info("Cannot check kernel version");
+                return 0;
+            }
+            version_string_len =
+                snprintfz(version_string, VERSION_STRING_LEN, "%s %s", uname_buf.release, uname_buf.version);
+        }
+    }
+
+    if (!version_string_len)
+        version_string_len = strlen(version_string);
+
+    // Open a file with a list of rejected kernels
+    char *config_dir = getenv("NETDATA_USER_CONFIG_DIR");
+    if (config_dir == NULL) {
+        config_dir = CONFIG_DIR;
+    }
+
+    char filename[FILENAME_MAX + 1];
+    snprintfz(filename, FILENAME_MAX, "%s/%s", config_dir, EBPF_KERNEL_REJECT_LIST_FILE);
+    FILE *kernel_reject_list = fopen(filename, "r");
+
+    if (!kernel_reject_list) {
+        config_dir = getenv("NETDATA_STOCK_CONFIG_DIR");
+        if (config_dir == NULL) {
+            config_dir = LIBCONFIG_DIR;
+        }
+
+        snprintfz(filename, FILENAME_MAX, "%s/%s", config_dir, EBPF_KERNEL_REJECT_LIST_FILE);
+        kernel_reject_list = fopen(filename, "r");
+
+        if (!kernel_reject_list)
+            return 0;
+    }
+
+    // Find if the kernel is in the reject list
+    char *reject_string = NULL;
+    size_t buf_len = 0;
+    ssize_t reject_string_len;
+    while ((reject_string_len = getline(&reject_string, &buf_len, kernel_reject_list) - 1) > 0) {
+        if (version_string_len >= reject_string_len) {
+            if (!strncmp(version_string, reject_string, reject_string_len)) {
+                info("A buggy kernel is detected");
+                fclose(kernel_reject_list);
+                freez(reject_string);
+                return 1;
+            }
+        }
+    }
+
+    fclose(kernel_reject_list);
+    freez(reject_string);
+
+    return 0;
+}
+
 static int has_ebpf_kernel_version(int version)
 {
+    if (kernel_is_rejected())
+        return 0;
+
     // Kernel 4.11.0 or RH > 7.5
     return (version >= NETDATA_MINIMUM_EBPF_KERNEL || get_redhat_release() >= NETDATA_MINIMUM_RH_VERSION);
 }
@@ -206,40 +282,40 @@ static int select_file(char *name, const char *program, size_t length, int mode,
     return ret;
 }
 
-int ebpf_load_program(char *plugins_dir, int event_id, int mode, char *kernel_string, const char *name, int *map_fd)
+struct bpf_link **ebpf_load_program(char *plugins_dir, ebpf_module_t *em, char *kernel_string, struct bpf_object **obj, int *map_fd)
 {
-    UNUSED(event_id);
-
     char lpath[4096];
     char lname[128];
-    struct bpf_object *obj;
     int prog_fd;
 
-    int test = select_file(lname, name, (size_t)127, mode, kernel_string);
+    int test = select_file(lname, em->thread_name, (size_t)127, em->mode, kernel_string);
     if (test < 0 || test > 127)
-        return -1;
+        return NULL;
 
     snprintf(lpath, 4096, "%s/%s", plugins_dir, lname);
-    if (bpf_prog_load(lpath, BPF_PROG_TYPE_KPROBE, &obj, &prog_fd)) {
+    if (bpf_prog_load(lpath, BPF_PROG_TYPE_KPROBE, obj, &prog_fd)) {
         info("Cannot load program: %s", lpath);
-        return -1;
+        return NULL;
     } else {
-        info("The eBPF program %s was loaded with success.", name);
+        info("The eBPF program %s was loaded with success.", em->thread_name);
     }
 
     struct bpf_map *map;
     size_t i = 0;
-    bpf_map__for_each(map, obj)
+    bpf_map__for_each(map, *obj)
     {
         map_fd[i] = bpf_map__fd(map);
         i++;
     }
 
     struct bpf_program *prog;
-    bpf_object__for_each_program(prog, obj)
+    struct bpf_link **links = callocz(NETDATA_MAX_PROBES , sizeof(struct bpf_link *));
+    i = 0;
+    bpf_object__for_each_program(prog, *obj)
     {
-        bpf_program__attach(prog);
+        links[i] = bpf_program__attach(prog);
+        i++;
     }
 
-    return 0;
+    return links;
 }

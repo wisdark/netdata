@@ -26,7 +26,7 @@ int init_pubsub_instance(struct instance *instance)
     instance->end_host_formatting = flush_host_labels;
     instance->end_batch_formatting = NULL;
 
-    instance->send_header = NULL;
+    instance->prepare_header = NULL;
     instance->check_response = NULL;
 
     instance->buffer = (void *)buffer_create(0);
@@ -103,7 +103,10 @@ void pubsub_connector_worker(void *instance_p)
         char error_message[ERROR_LINE_MAX + 1] = "";
 
         uv_mutex_lock(&instance->mutex);
-        uv_cond_wait(&instance->cond_var, &instance->mutex);
+        while (!instance->data_is_ready)
+            uv_cond_wait(&instance->cond_var, &instance->mutex);
+        instance->data_is_ready = 0;
+
 
         if (unlikely(instance->engine->exit)) {
             uv_mutex_unlock(&instance->mutex);

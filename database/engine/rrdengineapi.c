@@ -54,9 +54,11 @@ void rrdeng_metric_init(RRDDIM *rd, uuid_t *dim_uuid)
     struct page_cache *pg_cache;
     struct rrdengine_instance *ctx;
     uuid_t legacy_uuid;
+    uuid_t multihost_legacy_uuid;
     Pvoid_t *PValue;
     struct pg_cache_page_index *page_index = NULL;
-    int replace_instead_of_generate = 0;
+    int is_multihost_child = 0;
+    RRDHOST *host = rd->rrdset->rrdhost;
 
     ctx = get_rrdeng_ctx_from_host(rd->rrdset->rrdhost);
     if (unlikely(!ctx)) {
@@ -66,7 +68,9 @@ void rrdeng_metric_init(RRDDIM *rd, uuid_t *dim_uuid)
     pg_cache = &ctx->pg_cache;
 
     rrdeng_generate_legacy_uuid(rd->id, rd->rrdset->id, &legacy_uuid);
-    rd->state->metric_uuid = callocz(1, sizeof(uuid_t));
+    rd->state->metric_uuid = dim_uuid;
+    if (host != localhost && host->rrdeng_ctx == &multidb_ctx)
+        is_multihost_child = 1;
 
     uv_rwlock_rdlock(&pg_cache->metrics_index.lock);
     PValue = JudyHSGet(pg_cache->metrics_index.JudyHS_array, &legacy_uuid, sizeof(uuid_t));
@@ -74,25 +78,12 @@ void rrdeng_metric_init(RRDDIM *rd, uuid_t *dim_uuid)
         page_index = *PValue;
     }
     uv_rwlock_rdunlock(&pg_cache->metrics_index.lock);
-    if (NULL == PValue) {
-        /* First time we see the legacy UUID, drop legacy support, normal path */
+    if (is_multihost_child || NULL == PValue) {
+        /* First time we see the legacy UUID or metric belongs to child host in multi-host DB.
+         * Drop legacy support, normal path */
 
-        if (NULL != dim_uuid) {
-            replace_instead_of_generate = 1;
-            uuid_copy(*rd->state->metric_uuid, *dim_uuid);
-        }
-        if (unlikely(find_or_generate_guid(rd, rd->state->metric_uuid, GUID_TYPE_DIMENSION,
-                                           replace_instead_of_generate))) {
-            errno = 0;
-            error("FAILED to reuse GUID for %s", rd->id);
-            if (unlikely(find_or_generate_guid(rd, rd->state->metric_uuid, GUID_TYPE_DIMENSION, 0))) {
-                errno = 0;
-                error("FAILED to generate GUID for %s", rd->id);
-                freez(rd->state->metric_uuid);
-                rd->state->metric_uuid = NULL;
-                fatal_assert(0);
-            }
-        }
+        if (unlikely(!rd->state->metric_uuid))
+            rd->state->metric_uuid = create_dimension_uuid(rd->rrdset, rd);
 
         uv_rwlock_rdlock(&pg_cache->metrics_index.lock);
         PValue = JudyHSGet(pg_cache->metrics_index.JudyHS_array, rd->state->metric_uuid, sizeof(uuid_t));
@@ -112,19 +103,20 @@ void rrdeng_metric_init(RRDDIM *rd, uuid_t *dim_uuid)
     } else {
         /* There are legacy UUIDs in the database, implement backward compatibility */
 
-
         rrdeng_convert_legacy_uuid_to_multihost(rd->rrdset->rrdhost->machine_guid, &legacy_uuid,
-                                                rd->state->metric_uuid);
-        if (dim_uuid && uuid_compare(*rd->state->metric_uuid, *dim_uuid)) {
-            error("Mismatch of metadata log DIMENSION GUID with dbengine metric GUID.");
-        }
-        if (unlikely(find_or_generate_guid(rd, rd->state->metric_uuid, GUID_TYPE_DIMENSION, 1))) {
-            errno = 0;
-            error("FAILED to generate GUID for %s", rd->id);
-            freez(rd->state->metric_uuid);
-            rd->state->metric_uuid = NULL;
-            fatal_assert(0);
-        }
+                                                &multihost_legacy_uuid);
+
+        if (unlikely(!rd->state->metric_uuid))
+            rd->state->metric_uuid = mallocz(sizeof(uuid_t));
+
+        int need_to_store = (dim_uuid == NULL || uuid_compare(*rd->state->metric_uuid, multihost_legacy_uuid));
+
+        uuid_copy(*rd->state->metric_uuid, multihost_legacy_uuid);
+
+        if (unlikely(need_to_store))
+            (void)sql_store_dimension(rd->state->metric_uuid, rd->rrdset->chart_uuid, rd->id, rd->name, rd->multiplier, rd->divisor,
+                rd->algorithm);
+
     }
     rd->state->rrdeng_uuid = &page_index->id;
     rd->state->page_index = page_index;
@@ -187,7 +179,7 @@ void rrdeng_store_metric_flush_current_page(RRDDIM *rd)
         return;
     }
     if (likely(descr->page_length)) {
-        int ret, page_is_empty;
+        int page_is_empty;
 
         rrd_stat_atomic_add(&ctx->stats.metric_API_producers, -1);
 
@@ -204,14 +196,18 @@ void rrdeng_store_metric_flush_current_page(RRDDIM *rd)
             pg_cache_punch_hole(ctx, descr, 1, 0, NULL);
             handle->prev_descr = NULL;
         } else {
+            /*
+             * Disable pinning for now as it leads to deadlocks. When a collector stops collecting the extra pinned page
+             * eventually gets rotated but it cannot be destroyed due to the extra reference.
+             */
             /* added 1 extra reference to keep 2 dirty pages pinned per metric, expected refcnt = 2 */
-            rrdeng_page_descr_mutex_lock(ctx, descr);
+/*          rrdeng_page_descr_mutex_lock(ctx, descr);
             ret = pg_cache_try_get_unsafe(descr, 0);
             rrdeng_page_descr_mutex_unlock(ctx, descr);
-            fatal_assert(1 == ret);
+            fatal_assert(1 == ret);*/
 
             rrdeng_commit_page(ctx, descr, handle->page_correlation_id);
-            handle->prev_descr = descr;
+            /* handle->prev_descr = descr;*/
         }
     } else {
         freez(descr->pg_cache_descr->page);
@@ -368,7 +364,7 @@ static inline uint32_t *pginfo_to_points(struct rrdeng_page_info *page_info)
  * @return number of regions with different data collection intervals.
  */
 unsigned rrdeng_variable_step_boundaries(RRDSET *st, time_t start_time, time_t end_time,
-                                         struct rrdeng_region_info **region_info_arrayp, unsigned *max_intervalp)
+                                         struct rrdeng_region_info **region_info_arrayp, unsigned *max_intervalp, struct context_param *context_param_list)
 {
     struct pg_cache_page_index *page_index;
     struct rrdengine_instance *ctx;
@@ -388,8 +384,9 @@ unsigned rrdeng_variable_step_boundaries(RRDSET *st, time_t start_time, time_t e
     *region_info_arrayp = NULL;
     page_info_array = NULL;
 
+    RRDDIM *temp_rd = context_param_list ? context_param_list->rd : NULL;
     rrdset_rdlock(st);
-    for(rd_iter = st->dimensions, rd = NULL, min_time = (usec_t)-1 ; rd_iter ; rd_iter = rd_iter->next) {
+    for(rd_iter = temp_rd?temp_rd:st->dimensions, rd = NULL, min_time = (usec_t)-1 ; rd_iter ; rd_iter = rd_iter->next) {
         /*
          * Choose oldest dimension as reference. This is not equivalent to the union of all dimensions
          * but it is a best effort approximation with a bias towards older metrics in a chart. It
@@ -972,7 +969,7 @@ int rrdeng_exit(struct rrdengine_instance *ctx)
     fatal_assert(0 == uv_thread_join(&ctx->worker_config.thread));
 
     finalize_rrd_files(ctx);
-    metalog_exit(ctx->metalog_ctx);
+    //metalog_exit(ctx->metalog_ctx);
     free_page_cache(ctx);
 
     if (ctx != &multidb_ctx) {
@@ -998,6 +995,6 @@ void rrdeng_prepare_exit(struct rrdengine_instance *ctx)
     wait_for_completion(&ctx->rrdengine_completion);
     destroy_completion(&ctx->rrdengine_completion);
 
-    metalog_prepare_exit(ctx->metalog_ctx);
+    //metalog_prepare_exit(ctx->metalog_ctx);
 }
 

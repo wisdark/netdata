@@ -8,7 +8,7 @@
 // /api/v1/allmetrics?format=prometheus and /api/v1/allmetrics?format=prometheus_all_hosts
 
 /**
- * Check if a chart can be sent to an external databese
+ * Check if a chart can be sent to Prometheus
  *
  * @param instance an instance data structure.
  * @param st a chart.
@@ -364,7 +364,7 @@ static int print_host_variables(RRDVAR *rv, void *data)
                 opts->labels,
                 label_post,
                 value,
-                ((rv->last_updated) ? rv->last_updated : opts->now) * 1000ULL);
+                opts->now * 1000ULL);
         else
             buffer_sprintf(
                 opts->wb,

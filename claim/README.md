@@ -1,10 +1,7 @@
 <!--
----
 title: "Agent claiming"
 description: "Agent claiming allows a Netdata Agent, running on a distributed node, to securely connect to Netdata Cloud. A Space's administrator creates a claiming token, which is used to add an Agent to their Space via the Agent-Cloud link."
-date: 2020-04-30
 custom_edit_url: https://github.com/netdata/netdata/edit/master/claim/README.md
----
 -->
 
 # Agent claiming
@@ -135,6 +132,11 @@ with the name of your container if different.
 docker logs netdata 2>&1 | grep -E --line-buffered 'ACLK|claim|cloud'
 ```
 
+### Claim a Kubernetes cluster's parent Netdata pod
+
+Read our [Kubernetes installation](/packaging/installer/methods/kubernetes.md#claim-a-kubernetes-clusters-parent-pod)
+for details on claiming a parent Netdata pod.
+
 ### Claim through a proxy
 
 A Space's administrator can claim a node through a SOCKS5 or HTTP(S) proxy.
@@ -188,6 +190,17 @@ might be having with the ACLK or claiming process.
 ```
 
 Use these keys and the information below to troubleshoot the ACLK.
+
+#### bash: netdata-claim.sh: command not found
+
+If you run the claiming script and see a `command not found` error, you either installed Netdata in a non-standard
+location or are using an unsupported package. If you installed Netdata in a non-standard path using the `--install`
+option, you need to update your `$PATH` or run `netdata-claim.sh` using the full path. For example, if you installed
+Netdata to `/opt/netdata`, use `/opt/netdata/bin/netdata-claim.sh` to run the claiming script.
+
+If you are using an unsupported package, such as a third-party `.deb`/`.rpm` package provided by your distribution,
+please remove that package and reinstall using our [recommended kickstart
+script](/docs/get/README.md#install-the-netdata-agent).
 
 #### Claiming on older distributions (Ubuntu 14.04, Debian 8, CentOS 6)
 
@@ -291,7 +304,7 @@ This node no longer has access to the credentials it was claimed with and cannot
 You will still be able to see this node in your War Rooms in an **unreachable** state.
 
 If you want to reclaim this node into a different Space, you need to create a new identity by adding `-id=$(uuidgen)` to
-the claiming script parameters. For example, using the default claiming script:
+the claiming script parameters. Make sure that you have the `uuidgen-runtime` packagen installed, as it is used to run the command `uuidgen`. For example, using the default claiming script:
 
 ```bash
 sudo netdata-claim.sh -token=TOKEN -rooms=ROOM1,ROOM2 -url=https://app.netdata.cloud -id=$(uuidgen)

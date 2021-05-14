@@ -7,7 +7,7 @@ custom_edit_url: https://github.com/netdata/netdata/edit/master/health/notificat
 
 # Send notifications to StackPulse
 
-[StackPulse](https://stackpulse.com/) is a software-as-a-service platform for site reliablility engineering.
+[StackPulse](https://stackpulse.com/) is a software-as-a-service platform for site reliability engineering.
 It helps SREs, DevOps Engineers and Software Developers reduce toil and alert fatigue while improving reliability of 
 software services by managing, analyzing and automating incident response activities.
 
@@ -18,7 +18,7 @@ Sending Netdata alarm notifications to StackPulse allows you to create smart aut
 -   Performing triage actions and analyzing their results
 -   Orchestrating incident management and notification flows
 -   Performing automatic and semi-automatic remediation actions
--   Analzying incident data and remediation patterns to improve reliability of your services
+-   Analyzing incident data and remediation patterns to improve reliability of your services
 
 To send the notification you need:
 
@@ -39,8 +39,9 @@ SEND_STACKPULSE="YES"
 STACKPULSE_WEBHOOK="https://hooks.stackpulse.io/v1/webhooks/YOUR_UNIQUE_ID"
 ```
 
-4.  Now [restart Netdata](/docs/getting-started.md#start-stop-and-restart-netdata). When your node creates an alarm, you
-    can see the associated notification on your StackPulse Administration Portal 
+4.  Now restart Netdata using `sudo systemctl restart netdata`, or the [appropriate
+    method](/docs/configure/start-stop-restart.md) for your system. When your node creates an alarm, you can see the
+    associated notification on your StackPulse Administration Portal 
 
 ## React to alarms with playbooks
 

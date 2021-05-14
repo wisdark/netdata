@@ -2,7 +2,11 @@
 
 #include "claim.h"
 #include "../registry/registry_internals.h"
-#include "../aclk/aclk_common.h"
+#ifndef ACLK_NG
+#include "../aclk/legacy/aclk_common.h"
+#else
+#include "../aclk/aclk.h"
+#endif
 
 char *claiming_pending_arguments = NULL;
 
@@ -160,6 +164,10 @@ void load_claiming_state(void)
         claimed_id = NULL;
     }
     localhost->aclk_state.claimed_id = claimed_id;
+
+    invalidate_node_instances(&localhost->host_uuid, claimed_id ? &uuid : NULL);
+    store_claim_id(&localhost->host_uuid, claimed_id ? &uuid : NULL);
+
     rrdhost_aclk_state_unlock(localhost);
     if (!claimed_id) {
         info("Unable to load '%s', setting state to AGENT_UNCLAIMED", filename);

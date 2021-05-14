@@ -1,9 +1,7 @@
 <!--
----
 title: "Get started guide"
 date: 2020-05-04
 custom_edit_url: https://github.com/netdata/netdata/edit/master/docs/getting-started.md
----
 -->
 
 # Get started guide
@@ -193,46 +191,32 @@ Find the `SEND_EMAIL="YES"` line and change it to `SEND_EMAIL="NO"`.
 ## Monitor multiple systems with Netdata Cloud
 
 If you have the Agent installed on multiple nodes, you can use Netdata Cloud in two ways: Monitor the health and
-performance of an entire infrastructure via the Cloud web interface, or use the Visited Nodes menu that's built into
-every dashboard.
+performance of an entire infrastructure via the Netdata Cloud web application, or use the Visited Nodes menu that's
+built into every dashboard.
 
-For example, a small infrastructure monitored via Netdata Cloud:
-
-![Animated GIF of Netdata
-Cloud](https://user-images.githubusercontent.com/1153921/80828986-1ebb3b00-8b9b-11ea-957f-2c8d0d009e44.gif)
-
-And the process of using the Visited nodes menu to move between Agent dashboards running on various systems, both local
-and remote:
-
-![Switching between dashboards with Visited
-nodes](https://user-images.githubusercontent.com/1153921/80831018-e158ac80-8b9e-11ea-882e-1d82cdc028cd.gif)
+![The War Room
+Overview](https://user-images.githubusercontent.com/1153921/102651377-b1f4b100-4129-11eb-8e60-d2995d258c16.png)
 
 You can use these features together or separately&mdash;the decision is up to you and the needs of your infrastructure.
 
 **What's next?**:
 
--   Read about the [Agent-Cloud integration]().
--   Get an overview of Cloud's features by reading [Cloud documentation](https://learn.netdata.cloud/docs/cloud/).
--   Follow the 5-minute [get started with Cloud](https://learn.netdata.cloud/docs/cloud/get-started/) guide to finish
-    onboarding and claim your first nodes.
--   Better understand how agents connect securely to the Cloud with [claiming](/claim/README.md) and [Agent-Cloud
-    link](/aclk/README.md) documentation.
+-   Sign up for [Netdata Cloud](https://app.netdata.cloud).
+-   Read the [infrastructure monitoring quickstart](/docs/quickstart/infrastructure.md).
+-   Better understand how the Netdata Agent connects securely to Netdata Cloud with [claiming](/claim/README.md) and
+    [Agent-Cloud link](/aclk/README.md) documentation.
 
 ## Start, stop, and restart Netdata
 
 When you install Netdata, it's configured to start at boot, and stop and restart/shutdown. You shouldn't need to start
 or stop Netdata manually, but you will probably need to restart Netdata at some point.
 
--   To **start** Netdata, open a terminal and run `service netdata start`.
--   To **stop** Netdata, run `service netdata stop`.
--   To **restart** Netdata, run `service netdata restart`.
+-   To **start** Netdata, open a terminal and run `sudo systemctl start netdata`.
+-   To **stop** Netdata, run `sudo systemctl stop netdata`.
+-   To **restart** Netdata, run `sudo systemctl restart netdata`.
 
-The `service` command is a wrapper script that tries to use your system's preferred method of starting or stopping
-Netdata based on your system. But, if either of those commands fails, try using the equivalent commands for `systemd`
-and `init.d`:
-
--   **systemd**: `systemctl start netdata`, `systemctl stop netdata`, `systemctl restart netdata`
--   **init.d**: `/etc/init.d/netdata start`, `/etc/init.d/netdata stop`, `/etc/init.d/netdata restart`
+See our doc on [starting, stopping, and restarting](/docs/configure/start-stop-restart.md) the Netdata Agent for
+details.
 
 ## What's next?
 

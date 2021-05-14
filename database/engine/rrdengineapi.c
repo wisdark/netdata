@@ -32,7 +32,7 @@ void rrdeng_generate_legacy_uuid(const char *dim_id, char *chart_id, uuid_t *ret
     memcpy(ret_uuid, hash_value, sizeof(uuid_t));
 }
 
-/* Transform legacy UUID to be unique across hosts deterministacally */
+/* Transform legacy UUID to be unique across hosts deterministically */
 void rrdeng_convert_legacy_uuid_to_multihost(char machine_guid[GUID_LEN + 1], uuid_t *legacy_uuid, uuid_t *ret_uuid)
 {
     EVP_MD_CTX *evpctx;
@@ -120,7 +120,6 @@ void rrdeng_metric_init(RRDDIM *rd, uuid_t *dim_uuid)
     }
     rd->state->rrdeng_uuid = &page_index->id;
     rd->state->page_index = page_index;
-    rd->state->compaction_id = 0;
 }
 
 /*
@@ -360,7 +359,7 @@ static inline uint32_t *pginfo_to_points(struct rrdeng_page_info *page_info)
  *         reference dimension that that have different data collection intervals and overlap with the time range
  *         [start_time,end_time]. The caller must free (*region_info_arrayp) with freez(). If region_info_arrayp is set
  *         to NULL nothing was allocated.
- * @param max_intervalp is derefenced and set to be the largest data collection interval of all regions.
+ * @param max_intervalp is dereferenced and set to be the largest data collection interval of all regions.
  * @return number of regions with different data collection intervals.
  */
 unsigned rrdeng_variable_step_boundaries(RRDSET *st, time_t start_time, time_t end_time,
@@ -690,6 +689,36 @@ time_t rrdeng_metric_oldest_time(RRDDIM *rd)
     page_index = rd->state->page_index;
 
     return page_index->oldest_time / USEC_PER_SEC;
+}
+
+int rrdeng_metric_latest_time_by_uuid(uuid_t *dim_uuid, time_t *first_entry_t, time_t *last_entry_t)
+{
+    struct page_cache *pg_cache;
+    struct rrdengine_instance *ctx;
+    Pvoid_t *PValue;
+    struct pg_cache_page_index *page_index = NULL;
+
+    ctx = get_rrdeng_ctx_from_host(localhost);
+    if (unlikely(!ctx)) {
+        error("Failed to fetch multidb context");
+        return 1;
+    }
+    pg_cache = &ctx->pg_cache;
+
+    uv_rwlock_rdlock(&pg_cache->metrics_index.lock);
+    PValue = JudyHSGet(pg_cache->metrics_index.JudyHS_array, dim_uuid, sizeof(uuid_t));
+    if (likely(NULL != PValue)) {
+        page_index = *PValue;
+    }
+    uv_rwlock_rdunlock(&pg_cache->metrics_index.lock);
+
+    if (likely(page_index)) {
+        *first_entry_t = page_index->oldest_time / USEC_PER_SEC;
+        *last_entry_t = page_index->latest_time / USEC_PER_SEC;
+        return 0;
+    }
+
+    return 1;
 }
 
 /* Also gets a reference for the page */

@@ -15,7 +15,7 @@ and performance of your infrastructure.
 One of these layers is the _process_. Every time a Linux system runs a program, it creates an independent process that
 executes the program's instructions in parallel with anything else happening on the system. Linux systems track the
 state and resource utilization of processes using the [`/proc` filesystem](https://en.wikipedia.org/wiki/Procfs), and
-Netdata is designed to hook into those metrics to create meaningul visualizations out of the box.
+Netdata is designed to hook into those metrics to create meaningful visualizations out of the box.
 
 While there are a lot of existing command-line tools for tracking processes on Linux systems, such as `ps` or `top`,
 only Netdata provides dozens of real-time charts, at both per-second and event frequency, without you having to write
@@ -34,8 +34,8 @@ With Netdata's process monitoring, you can:
 
 ## Prerequisites
 
--   One or more Linux nodes running the [Netdata Agent](/docs/get/README.md). If you need more time to understand
-    Netdata before following this guide, see the [infrastructure](/docs/quickstart/infrastructure.md) or
+-   One or more Linux nodes running [Netdata](/docs/get-started.mdx). If you need more time to understand Netdata before
+    following this guide, see the [infrastructure](/docs/quickstart/infrastructure.md) or
     [single-node](/docs/quickstart/single-node.md) monitoring quickstarts.
 -   A general understanding of how to [configure the Netdata Agent](/docs/configure/nodes.md) using `edit-config`.
 -   A Netdata Cloud account. [Sign up](https://app.netdata.cloud) if you don't have one already.
@@ -86,7 +86,7 @@ Linux systems:
     -   Pipes open (`apps.pipes`)
 -   Swap memory
     -   Swap memory used (`apps.swap`)
-    -   Major page faults (i.e. swap activiy, `apps.major_faults`)
+    -   Major page faults (i.e. swap activity, `apps.major_faults`)
 -   Network
     -   Sockets open (`apps.sockets`)
 -   eBPF file
@@ -132,7 +132,7 @@ sudo ./edit-config apps_groups.conf
 
 Inside the file are lists of process names, oftentimes using wildcards (`*`), that the Netdata Agent looks for and
 groups together. For example, the Netdata Agent looks for processes starting with `mysqld`, `mariad`, `postgres`, and
-others, and groups them into `sql`. That makes sense, since all these procesess are for SQL databases.
+others, and groups them into `sql`. That makes sense, since all these processes are for SQL databases.
 
 ```conf
 sql: mysqld* mariad* postgres* postmaster* oracle_* ora_* sqlservr
@@ -169,8 +169,9 @@ postgres: postgres*
 sql: mariad* postmaster* oracle_* ora_* sqlservr
 ```
 
-Restart Netdata with `service netdata restart`, or the appropriate method for your system, to start collecting
-utilization metrics from your application. Time to [visualize your process metrics](#visualize-process-metrics).
+Restart Netdata with `sudo systemctl restart netdata`, or the [appropriate
+method](/docs/configure/start-stop-restart.md) for your system, to start collecting utilization metrics from your
+application. Time to [visualize your process metrics](#visualize-process-metrics).
 
 ### Custom applications
 
@@ -194,8 +195,9 @@ custom-app: custom-app
 ...
 ```
 
-Restart Netdata with `service netdata restart`, or the appropriate method for your system, to start collecting
-utilization metrics from your application.
+Restart Netdata with `sudo systemctl restart netdata`, or the [appropriate
+method](/docs/configure/start-stop-restart.md) for your system, to start collecting utilization metrics from your
+application.
 
 ## Visualize process metrics
 
@@ -247,7 +249,7 @@ metrics](https://user-images.githubusercontent.com/1153921/101411810-d08fb800-38
 
 ### Using Netdata's eBPF collector (`ebpf.plugin`)
 
-Netdata's eBPF collector puts its charts in two places. Of most imporance to process monitoring are the **ebpf file**,
+Netdata's eBPF collector puts its charts in two places. Of most importance to process monitoring are the **ebpf file**,
 **ebpf syscall**, **ebpf process**, and **ebpf net** sub-sections under **Applications**, shown in the above screenshot.
 
 For example, running the above workload shows the entire "story" how MySQL interacts with the Linux kernel to open
@@ -274,7 +276,7 @@ piece of data needed to discover the root cause of an incident. See our [collect
 setup](/docs/collect/enable-configure.md) doc for details.
 
 [Create new dashboards](/docs/visualize/create-dashboards.md) in Netdata Cloud using charts from `apps.plugin`,
-`ebpf.plugin`, and application-specific collectors to build targeted dashboards for monitoring key procesess across your
+`ebpf.plugin`, and application-specific collectors to build targeted dashboards for monitoring key processes across your
 infrastructure.
 
 Try running [Metric Correlations](https://learn.netdata.cloud/docs/cloud/insights/metric-correlations) on a node that's

@@ -1,9 +1,7 @@
 <!--
----
 title: "Daemon configuration"
-date: 2020-03-31
+description: "The Netdata Agent's daemon is installed preconfigured to collect thousands of metrics every second, but is highly configurable for real-world workloads."
 custom_edit_url: https://github.com/netdata/netdata/edit/master/daemon/config/README.md
----
 -->
 
 # Daemon configuration
@@ -30,10 +28,11 @@ The configuration file is a `name = value` dictionary. Netdata will not complain
 
 ## Applying changes
 
-After `netdata.conf` has been modified, Netdata needs to be restarted for changes to apply:
+After `netdata.conf` has been modified, Netdata needs to be [restarted](/docs/configure/start-stop-restart.md) for
+changes to apply:
 
 ```bash
-sudo service netdata restart
+sudo systemctl restart netdata
 ```
 
 If the above does not work, try the following:
@@ -51,7 +50,7 @@ Please note that your data history will be lost if you have modified `history` p
 | setting|default|info|||
 |:-----:|:-----:|:---|---|---|
 | process scheduling policy|`keep`|See [Netdata process scheduling policy](/daemon/README.md#netdata-process-scheduling-policy)|||
-| OOM score|`1000`|See [OOM score](../#oom-score)|||
+| OOM score|`1000`|See [OOM score](/daemon/README.md#oom-score)|||
 | glibc malloc arena max for plugins|`1`|See [Virtual memory](/daemon/README.md#virtual-memory).|||
 | glibc malloc arena max for Netdata|`1`|See [Virtual memory](/daemon/README.md#virtual-memory).|||
 | hostname|auto-detected|The hostname of the computer running Netdata.|||
@@ -67,7 +66,8 @@ Please note that your data history will be lost if you have modified `history` p
 | plugins directory|`"/usr/libexec/netdata/plugins.d" "/etc/netdata/custom-plugins.d"`|The directory plugin programs are kept. This setting supports multiple directories, space separated. If any directory path contains spaces, enclose it in single or double quotes.|||
 | memory mode         | `dbengine` | `dbengine`: The default for long-term metrics storage with efficient RAM and disk usage. Can be extended with `page cache size` and `dbengine disk space`. <br />`save`: Netdata will save its round robin database on exit and load it on startup. <br />`map`: Cache files will be updated in real-time. Not ideal for systems with high load or slow disks (check `man mmap`). <br />`ram`: The round-robin database will be temporary and it will be lost when Netdata exits. <br />`none`: Disables the database at this host, and disables health monitoring entirely, as that requires a database of metrics. |
 | page cache size     | 32         | Determines the amount of RAM in MiB that is dedicated to caching Netdata metric values. |||
-| dbengine disk space | 256        | Determines the amount of disk space in MiB that is dedicated to storing Netdata metric values and all related metadata describing them |||
+| dbengine disk space | 256        | Determines the amount of disk space in MiB that is dedicated to storing Netdata metric values and all related metadata describing them. |||
+| dbengine multihost disk space | 256        | Same functionality as `dbengine disk space`, but includes support for storing metrics streamed to a parent node by its children. Can be used in single-node environments as well. |||
 | host access prefix||This is used in docker environments where /proc, /sys, etc have to be accessed via another path. You may also have to set SYS_PTRACE capability on the docker for this work. Check [issue 43](https://github.com/netdata/netdata/issues/43).|
 | memory deduplication (ksm)|`yes`|When set to `yes`, Netdata will offer its in-memory round robin database to kernel same page merging (KSM) for deduplication. For more information check [Memory Deduplication - Kernel Same Page Merging - KSM](/database/README.md#ksm)|||
 | TZ environment variable|`:/etc/localtime`|Where to find the timezone|||
@@ -101,7 +101,7 @@ Additionally, there will be the following options:
 |:-----:|:-----:|:---|
 | PATH environment variable|`auto-detected`||
 | PYTHONPATH environment variable||Used to set a custom python path|
-| enable running new plugins|`yes`|When set to `yes`, Netdata will enable detected plugins, even if they are not configured explicitly. Setting this to `no` will only enable plugins explicitly configirued in this file with a `yes`|
+| enable running new plugins|`yes`|When set to `yes`, Netdata will enable detected plugins, even if they are not configured explicitly. Setting this to `no` will only enable plugins explicitly configured in this file with a `yes`|
 | check for new plugins every|60|The time in seconds to check for new plugins in the plugins directory. This allows having other applications dynamically creating plugins for Netdata.|
 | checks|`no`|This is a debugging plugin for the internal latency|
 
@@ -191,7 +191,7 @@ that is information about lines that begin with `dim`, which affect a chart's di
 You may notice some settings that begin with `dim` beneath the ones defined in the table above. These settings determine
 which dimensions appear on the given chart and how Netdata calculates them.
 
-Each dimension setting has the following structure: `dim [DIMENSION ID] [OPTION] = [VALUE]`. The available options are `name`, `algorithm`, `multipler`, and `divisor`.
+Each dimension setting has the following structure: `dim [DIMENSION ID] [OPTION] = [VALUE]`. The available options are `name`, `algorithm`, `multiplier`, and `divisor`.
 
 | Setting      | Function                                                                                                                                                                                                                                                      |
 | :----------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

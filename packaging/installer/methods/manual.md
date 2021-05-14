@@ -1,8 +1,7 @@
 <!--
----
 title: "Install Netdata on Linux from a Git checkout"
+description: "Use the Netdata Agent source code from GitHub, plus helper scripts to set up your system, to install Netdata without packages or binaries."
 custom_edit_url: https://github.com/netdata/netdata/edit/master/packaging/installer/methods/manual.md
----
 -->
 
 # Install Netdata on Linux from a Git checkout
@@ -33,7 +32,7 @@ and other operating systems and is regularly tested. You can find this tool [her
 
 -   **Debian** Linux and its derivatives (including **Ubuntu**, **Mint**)
 
--   **Redhat Enterprise Linux** and its derivatives (including **Fedora**, **CentOS**, **Amazon Machine Image**)
+-   **Red Hat Enterprise Linux** and its derivatives (including **Fedora**, **CentOS**, **Amazon Machine Image**)
     -   Please note that for RHEL/CentOS you need
         [EPEL](http://www.tecmint.com/how-to-enable-epel-repository-for-rhel-centos-6-5/).
         In addition, RHEL/CentOS version 6 also need
@@ -148,7 +147,7 @@ And install the minimum required dependencies.
 ### CentOS / RHEL 8.x
 
 For CentOS / RHEL 8.x a lot of development packages have moved out into their
-own separate repositories. Some other dependeicies are either missing completely
+own separate repositories. Some other dependencies are either missing completely
 or have to be sourced by 3rd-parties.
 
 CentOS 8.x:
@@ -179,15 +178,13 @@ yum install autoconf automake curl gcc git cmake libuuid-devel openssl-devel lib
 yum install -y http://mirror.centos.org/centos/8/PowerTools/x86_64/os/Packages/Judy-devel-1.0.5-18.module_el8.1.0+217+4d875839.x86_64.rpm
 ```
 
----
-
-### Install Netdata
+## Install Netdata
 
 Do this to install and run Netdata:
 
 ```sh
 # download it - the directory 'netdata' will be created
-git clone https://github.com/netdata/netdata.git --depth=100
+git clone https://github.com/netdata/netdata.git --depth=100 --recursive
 cd netdata
 
 # run script with root privileges to build, install, start Netdata
@@ -202,11 +199,31 @@ cd netdata
 
 -   If your server does not have access to the internet and you have manually put the installation directory on your server, you will need to pass the option `--disable-go` to the installer. The option will prevent the installer from attempting to download and install `go.d.plugin`. 
 
-Once the installer completes, the file `/etc/netdata/netdata.conf` will be created (if you changed the installation directory, the configuration will appear in that directory too).
+## Optional parameters to alter your installation
 
-You can edit this file to set options. One common option to tweak is `history`, which controls the size of the memory database Netdata will use. By default is `3600` seconds (an hour of data at the charts) which makes Netdata use about 10-15MB of RAM (depending on the number of charts detected on your system). Check **\[[Memory Requirements]]**.
+`netdata-installer.sh` accepts a few parameters to customize your installation:
 
-To apply the changes you made, you have to restart Netdata.
+-   `--dont-wait`: Enable automated installs by not prompting for permission to install any required packages.
+-   `--dont-start-it`: Prevent the installer from starting Netdata automatically.
+-   `--stable-channel`: Automatically update only on the release of new major versions.
+-   `--nightly-channel`: Automatically update on every new nightly build.
+-   `--disable-telemetry`: Opt-out of [anonymous statistics](/docs/anonymous-statistics.md) we use to make
+    Netdata better.
+-   `--no-updates`: Prevent automatic updates of any kind.
+-   `--reinstall`: If an existing install is detected, reinstall instead of trying to update it. Note that this
+    cannot be used to change installation types.
+-   `--local-files`: Used for [offline installations](offline.md). Pass four file paths: the Netdata
+    tarball, the checksum file, the go.d plugin tarball, and the go.d plugin config tarball, to force kickstart run the
+    process using those files. This option conflicts with the `--stable-channel` option. If you set this _and_
+    `--stable-channel`, Netdata will use the local files.
+
+### Claim node to Netdata Cloud during installation
+
+Unlike the [`kickstart.sh`](/packaging/installer/methods/kickstart.md) or
+[`kickstart-static64.sh`](/packaging/installer/methods/kickstart-64.md) methods, the `netdata-installer.sh` script does
+not allow you to automatically [claim](/claim/README.md) your node to Netdata Cloud immediately after installation.
+
+See the [claiming](/claim/README.md) doc for details on claiming a node with a manual installation of Netdata.
 
 ### 'nonrepresentable section on output' errors
 
@@ -218,8 +235,13 @@ In most cases, you can do this by running `CC=gcc ./netdata-installer.sh`.
 
 ## What's next?
 
-When you finish installing Netdata, be sure to visit our [step-by-step guide](/docs/guides/step-by-step/step-00.md) for
-a fully-guided tour into Netdata's capabilities and how to configure it according to your needs. 
+When you're finished with installation, check out our [single-node](/docs/quickstart/single-node.md) or
+[infrastructure](/docs/quickstart/infrastructure.md) monitoring quickstart guides based on your use case.
 
-Or, if you're a monitoring and system administration pro, skip ahead to our [getting started
-guide](/docs/getting-started.md) for a quick overview.
+Or, skip straight to [configuring the Netdata Agent](/docs/configure/nodes.md).
+
+Read through Netdata's [documentation](https://learn.netdata.cloud/docs), which is structured based on actions and
+solutions, to enable features like health monitoring, alarm notifications, long-term metrics storage, exporting to
+external databases, and more.
+
+[![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Fpackaging%2Finstaller%2Fmethods%2Fmanual&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)](<>)

@@ -31,7 +31,7 @@ directly using a keyboard, mouse, and monitor.
 Netdata helps you monitor and troubleshoot all kinds of devices and the applications they run, including IoT devices
 like the Raspberry Pi and applications like Pi-hole.
 
-After a two-minute installation and with zero configuration, you'll be able to seeall of Pi-hole's metrics, including
+After a two-minute installation and with zero configuration, you'll be able to see all of Pi-hole's metrics, including
 the volume of queries, connected clients, DNS queries per type, top clients, top blocked domains, and more.
 
 With Netdata installed, you can also monitor system metrics and any other applications you might be running. By default,
@@ -83,9 +83,9 @@ As far as configuring Netdata to monitor Pi-hole metrics, there's nothing you ac
 collector](https://learn.netdata.cloud/docs/agent/collectors/go.d.plugin/modules/pihole) will autodetect the new service
 running on your Raspberry Pi and immediately start collecting metrics every second.
 
-Restart Netdata with `sudo service netdata restart` to start Netdata, which will then recognize that Pi-hole is running
-and start a per-second collection job. When you refresh your Netdata dashboard or load it up again in a new tab, you'll
-see a new entry in the menu for **Pi-hole** metrics.
+Restart Netdata with `sudo systemctl restart netdata`, which will then recognize that Pi-hole is running and start a
+per-second collection job. When you refresh your Netdata dashboard or load it up again in a new tab, you'll see a new
+entry in the menu for **Pi-hole** metrics.
 
 ## Use Netdata to explore and monitor your Raspberry Pi and Pi-hole
 
@@ -107,7 +107,7 @@ walkthrough of all its features. For a more expedited tour, see the [get started
 You need to manually enable Netdata's built-in [temperature sensor
 collector](https://learn.netdata.cloud/docs/agent/collectors/charts.d.plugin/sensors) to start collecting metrics.
 
-> Netdata uses a few plugins to manage its [collectors](/collectors/REFERENCE.md), each using a different lanaguge: Go,
+> Netdata uses a few plugins to manage its [collectors](/collectors/REFERENCE.md), each using a different language: Go,
 > Python, Node.js, and Bash. While our Go collectors are undergoing the most active development, we still support the
 > other languages. In this case, you need to enable a temperature sensor collector that's written in Bash.
 
@@ -119,7 +119,7 @@ cd /etc/netdata
 sudo ./edit-config charts.d.conf
 ```
 
-Uncomment the `sensors=force` line and save the file. Restart Netdata with `sudo service netdata restart` to enable
+Uncomment the `sensors=force` line and save the file. Restart Netdata with `sudo systemctl restart netdata` to enable
 Raspberry Pi temperature sensor monitoring.
 
 ### Storing historical metrics on your Raspberry Pi

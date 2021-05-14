@@ -1,8 +1,6 @@
 <!--
----
 title: "Collectors quickstart"
 custom_edit_url: https://github.com/netdata/netdata/edit/master/collectors/QUICKSTART.md
----
 -->
 
 # Collectors quickstart
@@ -106,8 +104,8 @@ parameters as a reference, to configure the collector.
 Most collectors are enabled and will auto-detect their app/service without manual configuration. However, you need to
 restart Netdata to trigger the auto-detection process.
 
-To restart Netdata on most systems, use `service netdata restart`. For other systems, see the [other restart
-methods](/docs/getting-started.md#start-stop-and-restart-netdata).
+To restart Netdata on most systems, use `sudo systemctl restart netdata`, or the [appropriate
+method](/docs/configure/start-stop-restart.md) for your system.
 
 Open Netdata's dashboard in your browser, or refresh the page if you already have it open. You should now see a new
 entry in the menu and new interactive charts!
@@ -123,3 +121,5 @@ popular collectors.
 Finally, learn more advanced collector features, such as disabling plugins or developing a custom collector, in our
 [internal plugin API](/collectors/REFERENCE.md#internal-plugins-api) or our [external plugin
 docs](/collectors/plugins.d/README.md).
+
+[![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Fcollectors%2FQUICKSTART&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)]()

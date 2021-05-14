@@ -10,7 +10,7 @@ When Netdata starts, and with zero configuration, it auto-detects thousands of d
 per-second metrics.
 
 Netdata can immediately collect metrics from these endpoints thanks to 300+ **collectors**, which all come pre-installed
-when you [install the Netdata Agent](/docs/get/README.md#install-the-netdata-agent).
+when you [install Netdata](/docs/get-started.mdx).
 
 Every collector has two primary jobs:
 
@@ -55,7 +55,7 @@ terms related to collecting metrics.
 
 -   **Modules** are a type of collector.
 -   **Orchestrators** are external plugins that run and manage one or more modules. They run as independent processes.
-    The Go orchestator is in active development.
+    The Go orchestrator is in active development.
     -   [go.d.plugin](https://learn.netdata.cloud/docs/agent/collectors/go.d.plugin/): An orchestrator for data
         collection modules written in `go`.
     -   [python.d.plugin](/collectors/python.d.plugin/README.md): An orchestrator for data collection modules written in

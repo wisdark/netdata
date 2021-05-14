@@ -57,8 +57,9 @@ dev: custom-app
 ...
 ```
 
-Restart Netdata with `sudo service netdata restart` or the appropriate method for your system to begin seeing metrics
-for this particular group+process. You can also add additional processes to the same group.
+Restart Netdata with `sudo systemctl restart netdata`, or the [appropriate
+method](/docs/configure/start-stop-restart.md) for your system, to begin seeing metrics for this particular
+group+process. You can also add additional processes to the same group.
 
 You can set up `apps_groups.conf` to more show more precise eBPF metrics for any application or service running on your
 system, even if it's a standard package like Redis, Apache, or any other [application/service Netdata collects
@@ -90,7 +91,7 @@ Let's turn on the `return` mode for more granularity when debugging Firefox's be
 
 ```bash
 cd /etc/netdata   # Replace this path with your Netdata config directory
-sudo ./edit-config ebpf.conf
+sudo ./edit-config ebpf.d.conf
 ```
 
 Replace `entry` with `return`:
@@ -105,7 +106,8 @@ Replace `entry` with `return`:
     network viewer = yes
 ```
 
-Restart Netdata with `sudo service netdata restart` or the appropriate method for your system.
+Restart Netdata with `sudo systemctl restart netdata`, or the [appropriate
+method](/docs/configure/start-stop-restart.md) for your system.
 
 ## Get familiar with per-application eBPF metrics and charts
 
@@ -120,7 +122,7 @@ calls to open/close files, call functions like `do_fork`, IO activity on the VFS
 See the [eBPF collector documentation](/collectors/ebpf.plugin/README.md#integration-with-appsplugin) for the full list
 of per-application charts.
 
-Let's show some examples of how you can first identify normal eBPF patterns, then use that knowledge to idenfity
+Let's show some examples of how you can first identify normal eBPF patterns, then use that knowledge to identify
 anomalies in a few simulated scenarios.
 
 For example, the following screenshot shows the number of open files, failures to open files, and closed files on a
@@ -252,7 +254,7 @@ Debugging and troubleshooting an application takes a special combination of prac
 Netdata's eBPF metrics to back you up, you can rest assured that you see every minute detail of how your application
 interacts with the Linux kernel.
 
-If you're still trying to wrap your head aroud what we offer, be sure to read up on our accompanying documentation and
+If you're still trying to wrap your head around what we offer, be sure to read up on our accompanying documentation and
 other resources on eBPF monitoring with Netdata:
 
 -   [eBPF collector](/collectors/ebpf.plugin/README.md)

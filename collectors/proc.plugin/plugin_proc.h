@@ -51,6 +51,7 @@ extern int do_proc_uptime(int update_every, usec_t dt);
 extern int do_proc_sys_devices_system_edac_mc(int update_every, usec_t dt);
 extern int do_proc_sys_devices_system_node(int update_every, usec_t dt);
 extern int do_proc_spl_kstat_zfs_arcstats(int update_every, usec_t dt);
+extern int do_proc_spl_kstat_zfs_pool_state(int update_every, usec_t dt);
 extern int do_sys_fs_btrfs(int update_every, usec_t dt);
 extern int do_proc_net_sockstat(int update_every, usec_t dt);
 extern int do_proc_net_sockstat6(int update_every, usec_t dt);
@@ -65,7 +66,8 @@ extern int get_numa_node_count(void);
 extern unsigned long long tcpext_TCPSynRetrans;
 
 // netdev renames
-extern void netdev_rename_device_add(const char *host_device, const char *container_device, const char *container_name);
+extern void netdev_rename_device_add(
+    const char *host_device, const char *container_device, const char *container_name, struct label *labels);
 extern void netdev_rename_device_del(const char *host_device);
 
 #include "proc_self_mountinfo.h"

@@ -2,12 +2,6 @@
 
 #include "health.h"
 
-struct health_cmdapi_thread_status {
-    int status;
-    ;
-    struct rusage rusage;
-};
-
 unsigned int default_health_enabled = 1;
 char *silencers_filename;
 
@@ -85,7 +79,7 @@ inline char *health_stock_config_dir(void) {
  *
  * Function used to initialize the silencer structure.
  */
-void health_silencers_init(void) {
+static void health_silencers_init(void) {
     FILE *fd = fopen(silencers_filename, "r");
     if (fd) {
         fseek(fd, 0 , SEEK_END);
@@ -141,7 +135,7 @@ void health_init(void) {
  *
  * @param host the structure of the host that the function will reload the configuration.
  */
-void health_reload_host(RRDHOST *host) {
+static void health_reload_host(RRDHOST *host) {
     if(unlikely(!host->health_enabled))
         return;
 
@@ -529,7 +523,7 @@ static inline int rrdcalc_isrunnable(RRDCALC *rc, time_t now, time_t *next_run) 
     return 1;
 }
 
-static inline int check_if_resumed_from_suspention(void) {
+static inline int check_if_resumed_from_suspension(void) {
     static usec_t last_realtime = 0, last_monotonic = 0;
     usec_t realtime = now_realtime_usec(), monotonic = now_monotonic_usec();
     int ret = 0;
@@ -555,7 +549,7 @@ static void health_main_cleanup(void *ptr) {
     static_thread->enabled = NETDATA_MAIN_THREAD_EXITED;
 }
 
-SILENCE_TYPE check_silenced(RRDCALC *rc, char* host, SILENCERS *silencers) {
+static SILENCE_TYPE check_silenced(RRDCALC *rc, char* host, SILENCERS *silencers) {
     SILENCER *s;
     debug(D_HEALTH, "Checking if alarm was silenced via the command API. Alarm info name:%s context:%s chart:%s host:%s family:%s",
             rc->name, (rc->rrdset)?rc->rrdset->context:"", rc->chart, host, (rc->rrdset)?rc->rrdset->family:"");
@@ -597,7 +591,7 @@ SILENCE_TYPE check_silenced(RRDCALC *rc, char* host, SILENCERS *silencers) {
  *
  * @return It returns 1 case rrdcalc_flags is DISABLED or 0 otherwise
  */
-int update_disabled_silenced(RRDHOST *host, RRDCALC *rc) {
+static int update_disabled_silenced(RRDHOST *host, RRDCALC *rc) {
     uint32_t rrdcalc_flags_old = rc->rrdcalc_flags;
     // Clear the flags
     rc->rrdcalc_flags &= ~(RRDCALC_FLAG_DISABLED | RRDCALC_FLAG_SILENCED);
@@ -655,7 +649,7 @@ void *health_main(void *ptr) {
         time_t next_run = now + min_run_every;
         RRDCALC *rc;
 
-        if (unlikely(check_if_resumed_from_suspention())) {
+        if (unlikely(check_if_resumed_from_suspension())) {
             apply_hibernation_delay = 1;
 
             info("Postponing alarm checks for %ld seconds, because it seems that the system was just resumed from suspension.",
@@ -936,7 +930,7 @@ void *health_main(void *ptr) {
                         if(likely(!rrdcalc_isrepeating(rc))) {
                             ALARM_ENTRY *ae = health_create_alarm_entry(
                                     host, rc->id, rc->next_event_id++, now, rc->name, rc->rrdset->id,
-                                    rc->rrdset->family, rc->exec, rc->recipient, now - rc->last_status_change,
+                                    rc->rrdset->family, rc->classification, rc->component, rc->type, rc->exec, rc->recipient, now - rc->last_status_change,
                                     rc->old_value, rc->value, rc->status, status, rc->source, rc->units, rc->info,
                                     rc->delay_last,
                                     (
@@ -972,19 +966,21 @@ void *health_main(void *ptr) {
                         } else if(unlikely(rc->status == RRDCALC_STATUS_CLEAR)) {
                             if(!(rc->rrdcalc_flags & RRDCALC_FLAG_RUN_ONCE)) {
                                 if(rc->old_status == RRDCALC_STATUS_CRITICAL) {
-                                    repeat_every = rc->crit_repeat_every;
+                                    repeat_every = 1;
                                 } else if (rc->old_status == RRDCALC_STATUS_WARNING) {
-                                    repeat_every = rc->warn_repeat_every;
+                                    repeat_every = 1;
                                 }
                             }
                         }
+                    } else {
+                        continue;
                     }
 
                     if(unlikely(repeat_every > 0 && (rc->last_repeat + repeat_every) <= now)) {
                         rc->last_repeat = now;
                         ALARM_ENTRY *ae = health_create_alarm_entry(
                                 host, rc->id, rc->next_event_id++, now, rc->name, rc->rrdset->id,
-                                rc->rrdset->family, rc->exec, rc->recipient, now - rc->last_status_change,
+                                rc->rrdset->family, rc->classification, rc->component, rc->type, rc->exec, rc->recipient, now - rc->last_status_change,
                                 rc->old_value, rc->value, rc->old_status, rc->status, rc->source, rc->units, rc->info,
                                 rc->delay_last,
                                 (

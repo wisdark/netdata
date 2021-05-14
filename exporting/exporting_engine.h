@@ -67,6 +67,7 @@ struct instance_config {
     const char *name;
     const char *destination;
     const char *prefix;
+    const char *hostname;
 
     int update_every;
     int buffer_on_failures;
@@ -75,6 +76,8 @@ struct instance_config {
     EXPORTING_OPTIONS options;
     SIMPLE_PATTERN *charts_pattern;
     SIMPLE_PATTERN *hosts_pattern;
+
+    int initialized;
 
     void *connector_specific_config;
 };
@@ -95,8 +98,12 @@ struct simple_connector_buffer {
     struct simple_connector_buffer *next;
 };
 
+#define CONNECTED_TO_MAX 1024
+
 struct simple_connector_data {
     void *connector_specific_data;
+
+    char connected_to[CONNECTED_TO_MAX];
 
     size_t total_buffered_metrics;
 

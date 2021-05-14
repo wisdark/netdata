@@ -26,35 +26,38 @@ issues](https://github.com/netdata/netdata/issues). Use the search bar to look f
 collector—we may be looking for contributions from users such as yourself! If you don't see the collector there, make a
 [feature request](https://community.netdata.cloud/c/feature-requests/7/none) on our community forums.
 
--   [Service and application collectors](#service-and-application-collectors)
-    -   [APM (application performance monitoring)](#apm-application-performance-monitoring)
-    -   [Containers and VMs](#containers-and-vms)
-    -   [Data stores](#data-stores)
-    -   [Distributed computing](#distributed-computing)
-    -   [Email](#email)
-    -   [Kubernetes](#kubernetes)
-    -   [Logs](#logs)
-    -   [Messaging](#messaging)
-    -   [Network](#network)
-    -   [Provisioning](#provisioning)
-    -   [Remote devices](#remote-devices)
-    -   [Search](#search)
-    -   [Storage](#storage)
-    -   [Web](#web)
--   [System collectors](#system-collectors)
-    -   [Applications](#applications)
-    -   [Disks and filesystems](#disks-and-filesystems)
-    -   [eBPF (extended Berkely Backet Filter)](#ebpf)
-    -   [Hardware](#hardware)
-    -   [Memory](#memory)
-    -   [Networks](#networks)
-    -   [Processes](#processes)
-    -   [Resources](#resources)
-    -   [Users](#users)
--   [Netdata collectors](#netdata-collectors)
--   [Orchestrators](#orchestrators)
--   [Third-party collectors](#third-party-collectors)
--   [Etc](#etc)
+- [Supported collectors list](#supported-collectors-list)
+  - [Service and application collectors](#service-and-application-collectors)
+    - [Generic](#generic)
+    - [APM (application performance monitoring)](#apm-application-performance-monitoring)
+    - [Containers and VMs](#containers-and-vms)
+    - [Data stores](#data-stores)
+    - [Distributed computing](#distributed-computing)
+    - [Email](#email)
+    - [Kubernetes](#kubernetes)
+    - [Logs](#logs)
+    - [Messaging](#messaging)
+    - [Network](#network)
+    - [Provisioning](#provisioning)
+    - [Remote devices](#remote-devices)
+    - [Search](#search)
+    - [Storage](#storage)
+    - [Web](#web)
+  - [System collectors](#system-collectors)
+    - [Applications](#applications)
+    - [Disks and filesystems](#disks-and-filesystems)
+    - [eBPF](#ebpf)
+    - [Hardware](#hardware)
+    - [Memory](#memory)
+    - [Networks](#networks)
+    - [Operating systems](#operating-systems)
+    - [Processes](#processes)
+    - [Resources](#resources)
+    - [Users](#users)
+  - [Netdata collectors](#netdata-collectors)
+  - [Orchestrators](#orchestrators)
+  - [Third-party collectors](#third-party-collectors)
+  - [Etc](#etc)
 
 ## Service and application collectors
 
@@ -64,8 +67,7 @@ configure any of these collectors according to your setup and infrastructure.
 ### Generic
 
 -   [Prometheus endpoints](https://learn.netdata.cloud/docs/agent/collectors/go.d.plugin/modules/prometheus): Gathers
-    metrics from one or more Prometheus endpoints that use the OpenMetrics exposition format. Autodetects more than 600
-    endpoints.
+    metrics from any number of Prometheus endpoints, with support to autodetect more than 600 services and applications.
 
 ### APM (application performance monitoring)
 
@@ -111,6 +113,8 @@ configure any of these collectors according to your setup and infrastructure.
     database components using `_status/vars` endpoint.
 -   [Consul](https://learn.netdata.cloud/docs/agent/collectors/go.d.plugin/modules/consul/): Capture service and unbound
     checks status (passing, warning, critical, maintenance). 
+-   [Couchbase](https://learn.netdata.cloud/docs/agent/collectors/go.d.plugin/modules/couchbase/): Gather per-bucket
+    metrics from any number of instances of the distributed JSON document database.
 -   [CouchDB](/collectors/python.d.plugin/couchdb/README.md): Monitor database health and performance metrics
     (reads/writes, HTTP traffic, replication status, etc).
 -   [MongoDB](/collectors/python.d.plugin/mongodb/README.md): Collect memory-caching system performance metrics and
@@ -118,11 +122,15 @@ configure any of these collectors according to your setup and infrastructure.
 -   [MySQL](https://learn.netdata.cloud/docs/agent/collectors/go.d.plugin/modules/mysql/): Collect database global,
     replication and per user statistics.
 -   [OracleDB](/collectors/python.d.plugin/oracledb/README.md): Monitor database performance and health metrics.
+-   [Pika](https://learn.netdata.cloud/docs/agent/collectors/go.d.plugin/modules/pika/): Gather metric, such as clients,
+    memory usage, queries, and more from the Redis interface-compatible database.
 -   [Postgres](/collectors/python.d.plugin/postgres/README.md): Collect database health and performance metrics. 
 -   [ProxySQL](/collectors/python.d.plugin/proxysql/README.md): Monitor database backend and frontend performance
     metrics.
--   [Redis](/collectors/python.d.plugin/redis/): Monitor database status by reading the server's response to the `INFO`
-    command.
+-   [Redis (Go)](https://learn.netdata.cloud/docs/agent/collectors/go.d.plugin/modules/redis/): Monitor status from any
+    number of database instances by reading the server's response to the `INFO ALL` command.
+-   [Redis (Python)](/collectors/python.d.plugin/redis/): Monitor database status by reading the server's response to
+    the `INFO` command.
 -   [RethinkDB](/collectors/python.d.plugin/rethinkdbs/README.md): Collect database server and cluster statistics.
 -   [Riak KV](/collectors/python.d.plugin/riakkv/README.md): Collect database stats from the `/stats` endpoint.
 -   [Zookeeper](https://learn.netdata.cloud/docs/agent/collectors/go.d.plugin/modules/zookeeper/): Monitor application
@@ -217,7 +225,7 @@ configure any of these collectors according to your setup and infrastructure.
 -   [ISC DHCP (Go)](https://learn.netdata.cloud/docs/agent/collectors/go.d.plugin/modules/isc_dhcpd): Reads a
     `dhcpd.leases` file and collects metrics on total active leases, pool active leases, and pool utilization.
 -   [ISC DHCP (Python)](/collectors/python.d.plugin/isc_dhcpd/README.md): Reads `dhcpd.leases` file and reports DHCP
-    pools utiliation and leases statistics (total number, leases per pool).
+    pools utilization and leases statistics (total number, leases per pool).
 -   [OpenLDAP](/collectors/python.d.plugin/openldap/README.md): Provides statistics information from the OpenLDAP
     (`slapd`) server.
 -   [NSD](/collectors/python.d.plugin/nsd/README.md): Monitor nameserver performance metrics using the `nsd-control`
@@ -254,8 +262,10 @@ configure any of these collectors according to your setup and infrastructure.
 -   [Access point](/collectors/charts.d.plugin/ap/README.md): Monitor client, traffic and signal metrics using the `aw`
     tool.
 -   [APC UPS](/collectors/charts.d.plugin/apcupsd/README.md): Capture status information using the `apcaccess` tool.
--   [Energi Core](/collectors/python.d.plugin/energid/README.md): Monitor blockchain, memory, network, and unspent
-    transactions statistics.
+-   [Energi Core (Go)](https://learn.netdata.cloud/docs/agent/collectors/go.d.plugin/modules/energid): Monitor
+    blockchain indexes, memory usage, network usage, and transactions of wallet instances.
+-   [Energi Core (Python)](/collectors/python.d.plugin/energid/README.md): Monitor blockchain, memory, network, and
+    unspent transactions statistics.
 -   [Fronius Symo](/collectors/node.d.plugin/fronius/): Collect power, consumption, autonomy, energy, and inverter
     statistics.
 -   [UPS/PDU](/collectors/charts.d.plugin/nut/README.md): Read the status of UPS/PDU devices using the `upsc` tool.
@@ -308,6 +318,9 @@ configure any of these collectors according to your setup and infrastructure.
     metrics via `ngx_http_stub_status_module`.
 -   [Nginx Plus](/collectors/python.d.plugin/nginx_plus/README.md): Collect global and per-server zone, upstream, and
     cache metrics.
+-   [Nginx VTS](https://learn.netdata.cloud/docs/agent/collectors/go.d.plugin/modules/nginxvts/): Gathers metrics from
+    any Nginx deployment with the _virtual host traffic status module_ enabled, including metrics on uptime, memory
+    usage, and cache, and more.
 -   [PHP-FPM (Go)](https://learn.netdata.cloud/docs/agent/collectors/go.d.plugin/modules/phpfpm/): Collect application
     summary and processes health metrics by scraping the status page (`/status?full`).
 -   [PHP-FPM (Python)](/collectors/python.d.plugin/phpfpm/README.md): Collect application summary and processes health
@@ -352,10 +365,11 @@ The Netdata Agent can collect these system- and hardware-level metrics using a v
 -   [BCACHE](/collectors/proc.plugin/README.md): Monitor BCACHE statistics with the the `proc.plugin` collector.
 -   [Block devices](/collectors/proc.plugin/README.md): Gather metrics about the health and performance of block
     devices using the the `proc.plugin` collector.
--   [Btrfs](/collectors/proc.plugin/README.md): Montiors Btrfs filesystems with the the `proc.plugin` collector.
+-   [Btrfs](/collectors/proc.plugin/README.md): Monitors Btrfs filesystems with the the `proc.plugin` collector.
 -   [Device mapper](/collectors/proc.plugin/README.md): Gather metrics about the Linux device mapper with the proc
     collector.
 -   [Disk space](/collectors/diskspace.plugin/README.md): Collect disk space usage metrics on Linux mount points.
+-   [Clock synchronization](/collectors/timex.plugin/README.md): Collect the system clock synchronization status on Linux.
 -   [Files and directories](https://learn.netdata.cloud/docs/agent/collectors/go.d.plugin/modules/filecheck): Gather
     metrics about the existence, modification time, and size of files or directories.
 -   [ioping.plugin](/collectors/ioping.plugin/README.md): Measure disk read/write latency.
@@ -440,7 +454,7 @@ The Netdata Agent can collect these system- and hardware-level metrics using a v
 -   [systemd](/collectors/cgroups.plugin/README.md): Monitor the CPU and memory usage of systemd services using the
     `cgroups.plugin` collector.
 -   [systemd unit states](https://learn.netdata.cloud/docs/agent/collectors/go.d.plugin/modules/systemdunits): See the 
-    state (active, inactive, activating, deactiviating, failed) of various systemd unit types.
+    state (active, inactive, activating, deactivating, failed) of various systemd unit types.
 -   [System processes](/collectors/proc.plugin/README.md): Collect metrics on system load and total processes running
     using `/proc/loadavg` and the `proc.plugin` collector.
 -   [Uptime](/collectors/proc.plugin/README.md): Monitor the uptime of a system using the `proc.plugin` collector.
@@ -479,8 +493,8 @@ The Netdata Agent can collect these system- and hardware-level metrics using a v
 These collectors are recursive in nature, in that they monitor some function of the Netdata Agent itself. Some
 collectors are described only in code and associated charts in Netdata dashboards.
 
--   [ACLK (code only)](https://github.com/netdata/netdata/blob/master/aclk/aclk_stats.c): View whether a Netdata Agent
-    is connected to Netdata Cloud via the [ACLK](/aclk/README.md), the volume of queries, process times, and more.
+-   [ACLK (code only)](https://github.com/netdata/netdata/blob/master/aclk/legacy/aclk_stats.c): View whether a Netdata
+    Agent is connected to Netdata Cloud via the [ACLK](/aclk/README.md), the volume of queries, process times, and more.
 -   [Alarms](https://learn.netdata.cloud/docs/agent/collectors/python.d.plugin/alarms): This collector creates an
     <strong>Alarms</strong> menu with one line plot showing the alarm states of a Netdata Agent over time.
 -   [Anomalies](https://learn.netdata.cloud/docs/agent/collectors/python.d.plugin/anomalies): This collector uses the
@@ -506,16 +520,17 @@ the `go.d.plugin`.
 
 ## Third-party collectors
 
-These collectors are developed and maintined by third parties and, unlike the other collectors, are not installed by
+These collectors are developed and maintained by third parties and, unlike the other collectors, are not installed by
 default. To use a third-party collector, visit their GitHub/documentation page and follow their installation procedures.
 
--   [CyberPower UPS](https://github.com/HawtDogFlvrWtr/netdata_cyberpwrups_plugin): Polls Cyberpower UPS data using
+-   [CyberPower UPS](https://github.com/HawtDogFlvrWtr/netdata_cyberpwrups_plugin): Polls CyberPower UPS data using
     PowerPanel® Personal Linux.
 -   [Logged-in users](https://github.com/veksh/netdata-numsessions): Collect the number of currently logged-on users.
+-   [nextcloud](https://github.com/arnowelzel/netdata-nextcloud): Monitor Nextcloud servers.
 -   [nim-netdata-plugin](https://github.com/FedericoCeratto/nim-netdata-plugin): A helper to create native Netdata
     plugins using Nim.
 -   [Nvidia GPUs](https://github.com/coraxx/netdata_nv_plugin): Monitor Nvidia GPUs.
--   [Teamspeak 3](https://github.com/coraxx/netdata_ts3_plugin): Plls active users and bandwidth from TeamSpeak 3
+-   [Teamspeak 3](https://github.com/coraxx/netdata_ts3_plugin): Pulls active users and bandwidth from TeamSpeak 3
     servers.
 -   [SSH](https://github.com/Yaser-Amiri/netdata-ssh-module): Monitor failed authentication requests of an SSH server.
 

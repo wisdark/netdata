@@ -1,13 +1,78 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "aclk_rx_msgs.h"
 
-#include "aclk_common.h"
 #include "aclk_stats.h"
-#include "aclk_query.h"
+#include "aclk_query_queue.h"
 
-#ifndef UUID_STR_LEN
-#define UUID_STR_LEN 37
-#endif
+#define ACLK_V2_PAYLOAD_SEPARATOR "\x0D\x0A\x0D\x0A"
+#define ACLK_CLOUD_REQ_V2_PREFIX "GET /api/v1/"
+
+struct aclk_request {
+    char *type_id;
+    char *msg_id;
+    char *callback_topic;
+    char *payload;
+    int version;
+    int min_version;
+    int max_version;
+};
+
+int cloud_to_agent_parse(JSON_ENTRY *e)
+{
+    struct aclk_request *data = e->callback_data;
+
+    switch (e->type) {
+        case JSON_OBJECT:
+        case JSON_ARRAY:
+            break;
+        case JSON_STRING:
+            if (!strcmp(e->name, "msg-id")) {
+                data->msg_id = strdupz(e->data.string);
+                break;
+            }
+            if (!strcmp(e->name, "type")) {
+                data->type_id = strdupz(e->data.string);
+                break;
+            }
+            if (!strcmp(e->name, "callback-topic")) {
+                data->callback_topic = strdupz(e->data.string);
+                break;
+            }
+            if (!strcmp(e->name, "payload")) {
+                if (likely(e->data.string)) {
+                    size_t len = strlen(e->data.string);
+                    data->payload = mallocz(len+1);
+                    if (!url_decode_r(data->payload, e->data.string, len + 1))
+                        strcpy(data->payload, e->data.string);
+                }
+                break;
+            }
+            break;
+        case JSON_NUMBER:
+            if (!strcmp(e->name, "version")) {
+                data->version = e->data.number;
+                break;
+            }
+            if (!strcmp(e->name, "min-version")) {
+                data->min_version = e->data.number;
+                break;
+            }
+            if (!strcmp(e->name, "max-version")) {
+                data->max_version = e->data.number;
+                break;
+            }
+
+            break;
+
+        case JSON_BOOLEAN:
+            break;
+
+        case JSON_NULL:
+            break;
+    }
+    return 0;
+}
 
 static inline int aclk_extract_v2_data(char *payload, char **data)
 {
@@ -19,118 +84,42 @@ static inline int aclk_extract_v2_data(char *payload, char **data)
     return 0;
 }
 
-#define ACLK_GET_REQ "GET "
-#define ACLK_CHILD_REQ "/host/"
-#define ACLK_CLOUD_REQ_V2_PREFIX "/api/v1/"
-#define STRNCMP_CONSTANT_PREFIX(str, const_pref) strncmp(str, const_pref, strlen(const_pref))
-static inline int aclk_v2_payload_get_query(struct aclk_cloud_req_v2 *cloud_req, struct aclk_request *req)
+static inline int aclk_v2_payload_get_query(const char *payload, char **query_url)
 {
-    const char *start, *end, *ptr;
-    char uuid_str[UUID_STR_LEN];
-    uuid_t uuid;
+    const char *start, *end;
 
-    errno = 0;
-
-    if(STRNCMP_CONSTANT_PREFIX(cloud_req->data, ACLK_GET_REQ)) {
-        error("Only accepting GET HTTP requests from CLOUD");
-        return 1;
-    }
-    start = ptr = cloud_req->data + strlen(ACLK_GET_REQ);
-
-    if(!STRNCMP_CONSTANT_PREFIX(ptr, ACLK_CHILD_REQ)) {
-        ptr += strlen(ACLK_CHILD_REQ);
-        if(strlen(ptr) < UUID_STR_LEN) {
-            error("the child id in URL too short \"%s\"", start);
-            return 1;
-        }
-
-        strncpyz(uuid_str, ptr, UUID_STR_LEN - 1);
-
-        for(int i = 0; i < UUID_STR_LEN && uuid_str[i]; i++)
-            uuid_str[i] = tolower(uuid_str[i]);
-
-        if(ptr[0] && uuid_parse(uuid_str, uuid)) {
-            error("Got Child query (/host/XXX/...) host id \"%s\" doesn't look like valid GUID", uuid_str);
-            return 1;
-        }
-        ptr += UUID_STR_LEN - 1;
-
-        cloud_req->host = rrdhost_find_by_guid(uuid_str, 0);
-        if(!cloud_req->host) {
-            error("Cannot find host with GUID \"%s\"", uuid_str);
-            return 1;
-        }
-    }
-
-    if(STRNCMP_CONSTANT_PREFIX(ptr, ACLK_CLOUD_REQ_V2_PREFIX)) {
+    if(strncmp(payload, ACLK_CLOUD_REQ_V2_PREFIX, strlen(ACLK_CLOUD_REQ_V2_PREFIX))) {
+        errno = 0;
         error("Only accepting requests that start with \"%s\" from CLOUD.", ACLK_CLOUD_REQ_V2_PREFIX);
         return 1;
     }
+    start = payload + 4;
 
-    if(!(end = strstr(ptr, " HTTP/1.1\x0D\x0A"))) {
+    if(!(end = strstr(payload, " HTTP/1.1\x0D\x0A"))) {
         errno = 0;
         error("Doesn't look like HTTP GET request.");
         return 1;
     }
 
-    req->payload = mallocz((end - start) + 1);
-    strncpyz(req->payload, start, end - start);
+    *query_url = mallocz((end - start) + 1);
+    strncpyz(*query_url, start, end - start);
 
     return 0;
 }
 
-#define HTTP_CHECK_AGENT_INITIALIZED() rrdhost_aclk_state_lock(localhost);\
-    if (unlikely(localhost->aclk_state.state == ACLK_HOST_INITIALIZING)) {\
+#define HTTP_CHECK_AGENT_INITIALIZED() ACLK_SHARED_STATE_LOCK;\
+    if (unlikely(aclk_shared_state.agent_state == AGENT_INITIALIZING)) {\
         debug(D_ACLK, "Ignoring \"http\" cloud request; agent not in stable state");\
-        rrdhost_aclk_state_unlock(localhost);\
+        ACLK_SHARED_STATE_UNLOCK;\
         return 1;\
     }\
-    rrdhost_aclk_state_unlock(localhost);
-
-/*
- * Parse the incoming payload and queue a command if valid
- */
-static int aclk_handle_cloud_request_v1(struct aclk_request *cloud_to_agent, char *raw_payload)
-{
-    UNUSED(raw_payload);
-    HTTP_CHECK_AGENT_INITIALIZED();
-
-    errno = 0;
-    if (unlikely(cloud_to_agent->version != 1)) {
-        error(
-            "Received \"http\" message from Cloud with version %d, but ACLK version %d is used",
-            cloud_to_agent->version,
-            aclk_shared_state.version_neg);
-        return 1;
-    }
-
-    if (unlikely(!cloud_to_agent->payload)) {
-        error("payload missing");
-        return 1;
-    }
-    
-    if (unlikely(!cloud_to_agent->callback_topic)) {
-        error("callback_topic missing");
-        return 1;
-    }
-    
-    if (unlikely(!cloud_to_agent->msg_id)) {
-        error("msg_id missing");
-        return 1;
-    }
-
-    if (unlikely(aclk_queue_query(cloud_to_agent->callback_topic, NULL, cloud_to_agent->msg_id, cloud_to_agent->payload, 0, 0, ACLK_CMD_CLOUD)))
-        debug(D_ACLK, "ACLK failed to queue incoming \"http\" message");
-
-    return 0;
-}
+    ACLK_SHARED_STATE_UNLOCK;
 
 static int aclk_handle_cloud_request_v2(struct aclk_request *cloud_to_agent, char *raw_payload)
 {
     HTTP_CHECK_AGENT_INITIALIZED();
 
-    struct aclk_cloud_req_v2 *cloud_req;
-    char *data;
+    aclk_query_t query;
 
     errno = 0;
     if (cloud_to_agent->version < ACLK_V_COMPRESSION) {
@@ -141,117 +130,39 @@ static int aclk_handle_cloud_request_v2(struct aclk_request *cloud_to_agent, cha
         return 1;
     }
 
-    if (unlikely(aclk_extract_v2_data(raw_payload, &data))) {
+    query = aclk_query_new(HTTP_API_V2);
+
+    if (unlikely(aclk_extract_v2_data(raw_payload, &query->data.http_api_v2.payload))) {
         error("Error extracting payload expected after the JSON dictionary.");
-        return 1;
+        goto error;
     }
 
-    cloud_req = mallocz(sizeof(struct aclk_cloud_req_v2));
-    cloud_req->data = data;
-    cloud_req->host = localhost;
-
-    if (unlikely(aclk_v2_payload_get_query(cloud_req, cloud_to_agent))) {
+    if (unlikely(aclk_v2_payload_get_query(query->data.http_api_v2.payload, &query->dedup_id))) {
         error("Could not extract payload from query");
-        goto cleanup;
+        goto error;
     }
 
     if (unlikely(!cloud_to_agent->callback_topic)) {
         error("Missing callback_topic");
-        goto cleanup;
+        goto error;
     }
 
     if (unlikely(!cloud_to_agent->msg_id)) {
         error("Missing msg_id");
-        goto cleanup;
+        goto error;
     }
 
     // aclk_queue_query takes ownership of data pointer
-    if (unlikely(aclk_queue_query(
-            cloud_to_agent->callback_topic, cloud_req, cloud_to_agent->msg_id, cloud_to_agent->payload, 0, 0,
-            ACLK_CMD_CLOUD_QUERY_2))) {
-        error("ACLK failed to queue incoming \"http\" v2 message");
-        goto cleanup;
-    }
-
-    return 0;
-cleanup:
-    freez(cloud_req->data);
-    freez(cloud_req);
-    return 1;
-}
-
-// This handles `version` message from cloud used to negotiate
-// protocol version we will use
-static int aclk_handle_version_response(struct aclk_request *cloud_to_agent, char *raw_payload)
-{
-    UNUSED(raw_payload);
-    int version = -1;
-    errno = 0;
-
-    if (unlikely(cloud_to_agent->version != ACLK_VERSION_NEG_VERSION)) {
-        error(
-            "Unsuported version of \"version\" message from cloud. Expected %d, Got %d",
-            ACLK_VERSION_NEG_VERSION,
-            cloud_to_agent->version);
-        return 1;
-    }
-    if (unlikely(!cloud_to_agent->min_version)) {
-        error("Min version missing or 0");
-        return 1;
-    }
-    if (unlikely(!cloud_to_agent->max_version)) {
-        error("Max version missing or 0");
-        return 1;
-    }
-    if (unlikely(cloud_to_agent->max_version < cloud_to_agent->min_version)) {
-        error(
-            "Max version (%d) must be >= than min version (%d)", cloud_to_agent->max_version,
-            cloud_to_agent->min_version);
-        return 1;
-    }
-
-    if (unlikely(cloud_to_agent->min_version > ACLK_VERSION_MAX)) {
-        error(
-            "Agent too old for this cloud. Minimum version required by cloud %d."
-            " Maximum version supported by this agent %d.",
-            cloud_to_agent->min_version, ACLK_VERSION_MAX);
-        aclk_kill_link = 1;
-        aclk_disable_runtime = 1;
-        return 1;
-    }
-    if (unlikely(cloud_to_agent->max_version < ACLK_VERSION_MIN)) {
-        error(
-            "Cloud version is too old for this agent. Maximum version supported by cloud %d."
-            " Minimum (oldest) version supported by this agent %d.",
-            cloud_to_agent->max_version, ACLK_VERSION_MIN);
-        aclk_kill_link = 1;
-        return 1;
-    }
-
-    version = MIN(cloud_to_agent->max_version, ACLK_VERSION_MAX);
-
-    ACLK_SHARED_STATE_LOCK;
-    if (unlikely(now_monotonic_usec() > aclk_shared_state.version_neg_wait_till)) {
-        errno = 0;
-        error("The \"version\" message came too late ignoring.");
-        goto err_cleanup;
-    }
-    if (unlikely(aclk_shared_state.version_neg)) {
-        errno = 0;
-        error("Version has already been set to %d", aclk_shared_state.version_neg);
-        goto err_cleanup;
-    }
-    aclk_shared_state.version_neg = version;
-    ACLK_SHARED_STATE_UNLOCK;
-
-    info("Choosing version %d of ACLK", version);
-
-    aclk_set_rx_handlers(version);
-
+    query->callback_topic = cloud_to_agent->callback_topic;
+    // for clarity and code readability as when we process the request
+    // it would be strange to get URL from `dedup_id`
+    query->data.http_api_v2.query = query->dedup_id;
+    query->msg_id = cloud_to_agent->msg_id;
+    aclk_queue_query(query);
     return 0;
 
-err_cleanup:
-    ACLK_SHARED_STATE_UNLOCK;
+error:
+    aclk_query_free(query);
     return 1;
 }
 
@@ -260,29 +171,12 @@ typedef struct aclk_incoming_msg_type{
     int(*fnc)(struct aclk_request *, char *);
 }aclk_incoming_msg_type;
 
-aclk_incoming_msg_type aclk_incoming_msg_types_v1[] = {
-    { .name = "http",    .fnc = aclk_handle_cloud_request_v1 },
-    { .name = "version", .fnc = aclk_handle_version_response },
-    { .name = NULL,      .fnc = NULL                         }
-};
-
 aclk_incoming_msg_type aclk_incoming_msg_types_compression[] = {
     { .name = "http",    .fnc = aclk_handle_cloud_request_v2 },
-    { .name = "version", .fnc = aclk_handle_version_response },
     { .name = NULL,      .fnc = NULL                         }
 };
 
-struct aclk_incoming_msg_type *aclk_incoming_msg_types = aclk_incoming_msg_types_v1;
-
-void aclk_set_rx_handlers(int version)
-{
-    if(version >= ACLK_V_COMPRESSION) {
-        aclk_incoming_msg_types = aclk_incoming_msg_types_compression;
-        return;
-    }
-
-    aclk_incoming_msg_types = aclk_incoming_msg_types_v1;
-}
+struct aclk_incoming_msg_type *aclk_incoming_msg_types = aclk_incoming_msg_types_compression;
 
 int aclk_handle_cloud_message(char *payload)
 {
@@ -317,10 +211,6 @@ int aclk_handle_cloud_message(char *payload)
         goto err_cleanup;
     }
 
-    if (!aclk_shared_state.version_neg && strcmp(cloud_to_agent.type_id, "version")) {
-        error("Only \"version\" message is allowed before popcorning and version negotiation is finished. Ignoring");
-        goto err_cleanup;
-    }
 
     for (int i = 0; aclk_incoming_msg_types[i].name; i++) {
         if (strcmp(cloud_to_agent.type_id, aclk_incoming_msg_types[i].name) == 0) {

@@ -19,11 +19,11 @@ This collector creates an 'Alarms' menu with one line plot showing alarm states 
 
 Below is an example of the chart produced when running `stress-ng --all 2` for a few minutes. You can see the various warning and critical alarms raised. 
 
-![alt text](https://github.com/andrewm4894/random/blob/master/images/netdata/netdata-alarms-collector.jpg)
+![alarms collector](https://user-images.githubusercontent.com/1153921/101641493-0b086a80-39ef-11eb-9f55-0713e5dfb19f.png)
 
 ## Configuration
 
-Enable the collector and restart Netdata.
+Enable the collector and [restart Netdata](/docs/configure/start-stop-restart.md).
 
 ```bash
 cd /etc/netdata/
@@ -51,6 +51,10 @@ local:
     CLEAR: 0
     WARNING: 1
     CRITICAL: 2
+  # set to true to include a chart with calculated alarm values over time
+  collect_alarm_values: false
 ```
 
 It will default to pulling all alarms at each time step from the Netdata rest api at `http://127.0.0.1:19999/api/v1/alarms?all`
+
+[![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Fcollectors%2Fpython.d.plugin%2Falarms%2FREADME&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)]()

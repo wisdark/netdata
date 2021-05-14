@@ -458,6 +458,11 @@ set(DISKSPACE_PLUGIN_FILES
         collectors/diskspace.plugin/plugin_diskspace.c
         )
 
+set(TIMEX_PLUGIN_FILES
+        collectors/timex.plugin/plugin_timex.h
+        collectors/timex.plugin/plugin_timex.c
+        )
+
 set(FREEIPMI_PLUGIN_FILES
         collectors/freeipmi.plugin/freeipmi_plugin.c
         )
@@ -481,10 +486,16 @@ set(SLABINFO_PLUGIN_FILES
 set(EBPF_PROCESS_PLUGIN_FILES
         collectors/ebpf.plugin/ebpf.c
         collectors/ebpf.plugin/ebpf.h
+        collectors/ebpf.plugin/ebpf_cachestat.c
+        collectors/ebpf.plugin/ebpf_cachestat.h
+        collectors/ebpf.plugin/ebpf_dcstat.c
+        collectors/ebpf.plugin/ebpf_dcstat.h
         collectors/ebpf.plugin/ebpf_process.c
         collectors/ebpf.plugin/ebpf_process.h
         collectors/ebpf.plugin/ebpf_socket.c
         collectors/ebpf.plugin/ebpf_socket.h
+        collectors/ebpf.plugin/ebpf_sync.c
+        collectors/ebpf.plugin/ebpf_sync.h
         collectors/ebpf.plugin/ebpf_apps.c
         collectors/ebpf.plugin/ebpf_apps.h
         )
@@ -590,6 +601,7 @@ set(RRD_PLUGIN_FILES
         database/rrddimvar.h
         database/rrdfamily.c
         database/rrdhost.c
+        database/rrdlabels.c
         database/rrd.c
         database/rrd.h
         database/rrdset.c
@@ -712,25 +724,26 @@ set(BACKENDS_PLUGIN_FILES
 set(CLAIM_PLUGIN_FILES
         claim/claim.c
         claim/claim.h
-        aclk/aclk_common.c
-        aclk/aclk_common.h
+        aclk/legacy/aclk_rrdhost_state.h
+        aclk/legacy/aclk_common.c
+        aclk/legacy/aclk_common.h
         )
 
 set(ACLK_PLUGIN_FILES
-        aclk/agent_cloud_link.c
-        aclk/agent_cloud_link.h
-        aclk/aclk_query.c
-        aclk/aclk_query.h
-        aclk/aclk_lws_wss_client.c
-        aclk/aclk_lws_wss_client.h
-        aclk/aclk_lws_https_client.c
-        aclk/aclk_lws_https_client.h
-        aclk/mqtt.c
-        aclk/mqtt.h
-        aclk/aclk_stats.c
-        aclk/aclk_stats.h
-        aclk/aclk_rx_msgs.c
-        aclk/aclk_rx_msgs.h
+        aclk/legacy/agent_cloud_link.c
+        aclk/legacy/agent_cloud_link.h
+        aclk/legacy/aclk_query.c
+        aclk/legacy/aclk_query.h
+        aclk/legacy/aclk_lws_wss_client.c
+        aclk/legacy/aclk_lws_wss_client.h
+        aclk/legacy/aclk_lws_https_client.c
+        aclk/legacy/aclk_lws_https_client.h
+        aclk/legacy/mqtt.c
+        aclk/legacy/mqtt.h
+        aclk/legacy/aclk_stats.c
+        aclk/legacy/aclk_stats.h
+        aclk/legacy/aclk_rx_msgs.c
+        aclk/legacy/aclk_rx_msgs.h
         )
 
 set(SPAWN_PLUGIN_FILES
@@ -817,6 +830,8 @@ set(DAEMON_FILES
         daemon/daemon.h
         daemon/global_statistics.c
         daemon/global_statistics.h
+        daemon/analytics.c
+        daemon/analytics.h
         daemon/main.c
         daemon/main.h
         daemon/signals.c
@@ -978,6 +993,7 @@ IF(LINUX)
     add_executable(netdata config.h ${NETDATA_FILES}
             ${CGROUPS_PLUGIN_FILES}
             ${DISKSPACE_PLUGIN_FILES}
+            ${TIMEX_PLUGIN_FILES}
             ${PROC_PLUGIN_FILES}
             ${TC_PLUGIN_FILES}
             )
@@ -1332,12 +1348,29 @@ endif()
     target_link_libraries(valid_urls_testdriver libnetdata ${NETDATA_COMMON_LIBRARIES} ${CMOCKA_LIBRARIES})
 #    add_test(NAME test_valid_urls COMMAND valid_urls_testdriver)
 
+    set(CGROUPS_TEST_FILES
+        collectors/cgroups.plugin/tests/test_cgroups_plugin.c
+        collectors/cgroups.plugin/tests/test_cgroups_plugin.h
+        collectors/cgroups.plugin/tests/test_doubles.c
+        database/rrdlabels.c
+        database/rrd.h
+    )
+    add_executable(cgroups_testdriver ${CGROUPS_TEST_FILES} ${CGROUPS_PLUGIN_FILES})
+    target_link_options(
+        cgroups_testdriver
+        PRIVATE
+        -Wl,--wrap=add_label_to_list
+    )
+    target_link_libraries(cgroups_testdriver libnetdata ${NETDATA_COMMON_LIBRARIES} ${CMOCKA_LIBRARIES})
+    add_test(NAME test_cgroups COMMAND cgroups_testdriver)
+
     set_target_properties(
         str2ld_testdriver
         storage_number_testdriver
         exporting_engine_testdriver
         web_api_testdriver
         valid_urls_testdriver
+        cgroups_testdriver
         PROPERTIES RUNTIME_OUTPUT_DIRECTORY tests
     )
 

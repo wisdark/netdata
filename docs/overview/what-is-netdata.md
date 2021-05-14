@@ -18,9 +18,9 @@ Netdata's distributed monitoring Agent collects thousands of metrics from system
 configuration. It runs permanently on all your physical/virtual servers, containers, cloud deployments, and edge/IoT
 devices.
 
-You can [install](/docs/get/README.md#install-the-netdata-agent) Netdata on most Linux distributions (Ubuntu, Debian,
-CentOS, and more), container/microservice platforms (Kubernetes clusters, Docker), and many other operating systems
-(FreeBSD, macOS), with no `sudo` required.
+You can [install](/docs/get-started.mdx) Netdata on most Linux distributions (Ubuntu, Debian, CentOS, and more),
+container/microservice platforms (Kubernetes clusters, Docker), and many other operating systems (FreeBSD, macOS), with
+no `sudo` required.
 
 ![The Netdata
 Agent](https://user-images.githubusercontent.com/1153921/94492596-72a86b00-019f-11eb-91ab-224e6ac9ea21.png)
@@ -57,9 +57,9 @@ case:
 -   **Monitor**: Netdata's health watchdog uses hundreds of preconfigured alarms to notify you via Slack, email,
     PagerDuty and more when an anomaly strikes. Customize with dynamic thresholds, hysteresis, alarm templates, and
     role-based notifications.
--   **Troubleshoot**: 1s granularity helps you detect analyze anomalies other monitoring platforms might have missed.
-    Interactive visualizations reduce your reliance on the console, and historical metrics help you trace issues back to
-    their root cause.
+-   **Troubleshoot**: 1s granularity helps you detect and analyze anomalies other monitoring platforms might have
+    missed. Interactive visualizations reduce your reliance on the console, and historical metrics help you trace issues
+    back to their root cause.
 -   **Store**: Netdata's efficient database engine efficiently stores per-second metrics for days, weeks, or even
     months. Every distributed node stores metrics locally, simplifying deployment, slashing costs, and enriching
     Netdata's interactive dashboards.

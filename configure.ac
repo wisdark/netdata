@@ -197,6 +197,14 @@ AC_ARG_ENABLE(
     [ enable_cloud="detect" ]
 )
 
+AC_ARG_WITH(
+    [aclk-ng],
+    [AS_HELP_STRING([--with-aclk-ng],
+                    [Requires ACLK-NG to be used even in case ACLK Legacy can run on this system])],
+    [aclk_ng="$withval"],
+    [aclk_ng="fallback"]
+)
+
 if test "${enable_cloud}" = "no"; then
     AC_DEFINE([DISABLE_CLOUD], [1], [disable netdata cloud functionality])
 fi
@@ -241,6 +249,7 @@ AC_HEADER_RESOLV
 AC_CHECK_HEADERS_ONCE([sys/prctl.h])
 AC_CHECK_HEADERS_ONCE([sys/vfs.h])
 AC_CHECK_HEADERS_ONCE([sys/statfs.h])
+AC_CHECK_HEADERS_ONCE([linux/magic.h])
 AC_CHECK_HEADERS_ONCE([sys/statvfs.h])
 AC_CHECK_HEADERS_ONCE([sys/mount.h])
 
@@ -632,7 +641,7 @@ AM_CONDITIONAL([ENABLE_CAPABILITY], [test "${with_libcap}" = "yes"])
 
 AC_MSG_CHECKING([if cloud functionality should be enabled])
 AC_MSG_RESULT([${enable_cloud}])
-if test "$enable_cloud" != "no"; then
+if test "$enable_cloud" != "no" -a "$aclk_ng" != "yes"; then
     # just to have all messages that can fail ACLK build in one place
     # so it is easier to see why it can't be built
     if test -n "${SSL_LIBS}"; then
@@ -706,6 +715,7 @@ if test "$enable_cloud" != "no"; then
     fi
     AC_MSG_RESULT([${can_enable_aclk}])
 
+# TODO fix this (you need to try fallback)
     test "${enable_cloud}" = "yes" -a "${can_enable_aclk}" = "no" && \
         AC_MSG_ERROR([User required agent-cloud-link but it can't be built!])
 
@@ -715,7 +725,6 @@ if test "$enable_cloud" != "no"; then
     else
         enable_aclk=$enable_cloud
     fi
-    AC_SUBST([can_enable_aclk])
 
     if test "${enable_aclk}" = "yes"; then
         AC_DEFINE([ENABLE_ACLK], [1], [netdata ACLK])
@@ -723,7 +732,54 @@ if test "$enable_cloud" != "no"; then
 
     AC_MSG_RESULT([${enable_aclk}])
 fi
+
+if test "$enable_cloud" = "no" -a "$aclk_ng" = "yes"; then
+    AC_MSG_ERROR([--disable-cloud && --aclk-ng not allowed together (such configuration is self contradicting)])
+fi
+
+if test "$enable_cloud" != "no" -a "$aclk_ng" != "no"; then
+    can_enable_ng="yes"
+    AC_MSG_CHECKING([if git submodules present for ACLK Next Generation])
+    if test -f "mqtt_websockets/src/mqtt_wss_client.c"; then
+        AC_MSG_RESULT([yes])
+    else
+        AC_MSG_RESULT([no])
+        can_enable_ng="no"
+    fi
+    AC_MSG_CHECKING([if SSL available for ACLK Next Generation])
+    if test -n "${SSL_LIBS}"; then
+        AC_MSG_RESULT([yes])
+        OPTIONAL_SSL_CFLAGS="${SSL_CFLAGS}"
+        OPTIONAL_SSL_LIBS="${SSL_LIBS}"
+    else
+        AC_MSG_RESULT([no])
+    fi
+    AC_MSG_CHECKING([if JSON-C available for ACLK Next Generation])
+    if test "$enable_jsonc" != "yes"; then
+        AC_MSG_RESULT([no])
+        can_enable_ng="no"
+    else
+        AC_MSG_RESULT([yes])
+    fi
+    AC_MSG_CHECKING([ACLK Next Generation can be built])
+    AC_MSG_RESULT([${can_enable_ng}])
+    if test "$aclk_ng" = "yes" -a "$can_enable_ng" != "yes"; then
+        AC_MSG_ERROR([ACLK-NG requested but can't be built])
+    fi
+    if test "$aclk_ng" != "yes" -a "$enable_aclk" == "no" -a "$can_enable_ng" = "yes"; then #default "fallback"
+        AC_MSG_NOTICE([ACLK Legacy could not be built. Trying ACLK-NG as fallback.])
+        aclk_ng="yes"
+    fi
+    if test "$aclk_ng" = "yes"; then
+        AC_DEFINE([ACLK_NG], [1], [ACLK Next Generation Should be used])
+        AC_DEFINE([ENABLE_ACLK], [1], [netdata ACLK])
+        enable_aclk="yes"
+        OPTIONAL_ACLK_NG_CFLAGS="-Imqtt_websockets/src/include -Imqtt_websockets/c-rbuf/include -Imqtt_websockets/MQTT-C/include"
+    fi
+fi
 AC_SUBST([enable_cloud])
+AC_SUBST([enable_aclk])
+AM_CONDITIONAL([ACLK_NG], [test "${aclk_ng}" = "yes"])
 AM_CONDITIONAL([ENABLE_ACLK], [test "${enable_aclk}" = "yes"])
 
 # -----------------------------------------------------------------------------
@@ -888,9 +944,7 @@ if test "${enable_plugin_nfacct}" != "no" -a "${have_libnetfilter_acct}" = "yes"
                                           -a "${have_libmnl}" = "yes" \
                                           -a "${have_nfnetlink_conntrack}" = "yes"; then
     enable_plugin_nfacct="yes"
-    AC_DEFINE([HAVE_LIBMNL], [1], [libmnl usability])
-    AC_DEFINE([HAVE_LIBNETFILTER_ACCT], [1], [libnetfilter_acct usability])
-    AC_DEFINE([HAVE_LINUX_NETFILTER_NFNETLINK_CONNTRACK_H], [1], [libnetfilter_nfnetlink_conntrack header usability])
+    AC_DEFINE([HAVE_NFACCT], [1], [netfilter accounting usability])
     OPTIONAL_NFACCT_CFLAGS="${NFACCT_CFLAGS} ${LIBMNL_CFLAGS}"
     OPTIONAL_NFACCT_LIBS="${NFACCT_LIBS} ${LIBMNL_LIBS}"
 else
@@ -956,8 +1010,6 @@ AC_MSG_CHECKING([if xenstat.plugin should be enabled])
 if test "${enable_plugin_xenstat}" != "no" -a "${have_libxenstat}" = "yes" -a "${have_libxenlight}" = "yes" -a "${have_libyajl}" = "yes"; then
     enable_plugin_xenstat="yes"
     AC_DEFINE([HAVE_LIBXENSTAT], [1], [libxenstat usability])
-    AC_DEFINE([HAVE_LIBXENLIGHT], [1], [libxenlight usability])
-    AC_DEFINE([HAVE_LIBYAJL], [1], [libyajl usability])
     OPTIONAL_XENSTAT_CFLAGS="${XENLIGHT_CFLAGS} ${YAJL_CFLAGS}"
     OPTIONAL_XENSTAT_LIBS="-lxenstat ${XENLIGHT_LIBS} ${YAJL_LIBS}"
 else
@@ -1424,7 +1476,8 @@ AC_SUBST([webdir])
 CFLAGS="${CFLAGS} ${OPTIONAL_MATH_CFLAGS} ${OPTIONAL_NFACCT_CFLAGS} ${OPTIONAL_ZLIB_CFLAGS} ${OPTIONAL_UUID_CFLAGS} \
     ${OPTIONAL_LIBCAP_CFLAGS} ${OPTIONAL_IPMIMONITORING_CFLAGS} ${OPTIONAL_CUPS_CFLAGS} ${OPTIONAL_XENSTAT_FLAGS} \
     ${OPTIONAL_KINESIS_CFLAGS} ${OPTIONAL_PUBSUB_CFLAGS} ${OPTIONAL_PROMETHEUS_REMOTE_WRITE_CFLAGS} \
-    ${OPTIONAL_MONGOC_CFLAGS} ${LWS_CFLAGS} ${OPTIONAL_JSONC_STATIC_CFLAGS} ${OPTIONAL_BPF_CFLAGS} ${OPTIONAL_JUDY_CFLAGS}"
+    ${OPTIONAL_MONGOC_CFLAGS} ${LWS_CFLAGS} ${OPTIONAL_JSONC_STATIC_CFLAGS} ${OPTIONAL_BPF_CFLAGS} ${OPTIONAL_JUDY_CFLAGS} \
+    ${OPTIONAL_ACLK_NG_CFLAGS}"
 
 CXXFLAGS="${CFLAGS} ${CXX11FLAG}"
 
@@ -1474,6 +1527,7 @@ AC_SUBST([OPTIONAL_PROMETHEUS_REMOTE_WRITE_LIBS])
 AC_SUBST([OPTIONAL_MONGOC_CFLAGS])
 AC_SUBST([OPTIONAL_MONGOC_LIBS])
 AC_SUBST([OPTIONAL_LWS_LIBS])
+AC_SUBST([OPTIONAL_ACLK_NG_CFLAGS])
 
 # -----------------------------------------------------------------------------
 # Check if cmocka is available - needed for unit testing
@@ -1527,6 +1581,7 @@ AC_CONFIG_FILES([
     collectors/charts.d.plugin/Makefile
     collectors/checks.plugin/Makefile
     collectors/diskspace.plugin/Makefile
+    collectors/timex.plugin/Makefile
     collectors/fping.plugin/Makefile
     collectors/ioping.plugin/Makefile
     collectors/freebsd.plugin/Makefile
@@ -1612,13 +1667,15 @@ AC_CONFIG_FILES([
     web/api/queries/sum/Makefile
     web/api/health/Makefile
     web/gui/Makefile
+    web/gui/dashboard/Makefile
     web/server/Makefile
     web/server/static/Makefile
     claim/Makefile
-    aclk/Makefile
+    aclk/legacy/Makefile
     spawn/Makefile
     parser/Makefile
 ])
+
 AC_OUTPUT
 
 test "${with_math}" != "yes" && AC_MSG_WARN([You are building without math. math allows accurate calculations. It should be enabled.]) || :

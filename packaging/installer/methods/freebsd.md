@@ -64,7 +64,7 @@ You can now access the Netdata dashboard by navigating to `http://NODE:19999`, r
 
 ![image](https://user-images.githubusercontent.com/2662304/48304090-fd384080-e51b-11e8-80ae-eecb03118dda.png)
 
-From Netdata v1.12 and above, anonymous usage information is collected by default and sent to Google Analytics. To read
+Starting with v1.30, Netdata collects anonymous usage information by default and sends it to a self hosted PostHog instance within the Netdata infrastructure. To read
 more about the information collected and how to opt-out, check the [anonymous statistics
 page](/docs/anonymous-statistics.md).
 
@@ -80,7 +80,7 @@ The `netdata-updater.sh` script will update your Agent.
 | `--dont-wait` | Run installation in non-interactive mode|
 | `--auto-update` or `-u` | Install netdata-updater in cron to update netdata automatically once per day|
 | `--stable-channel` | Use packages from GitHub release pages instead of GCS (nightly updates). This results in less frequent updates|
-| `--nightly-channel` | Use most recent nightly udpates instead of GitHub releases. This results in more frequent updates|
+| `--nightly-channel` | Use most recent nightly updates instead of GitHub releases. This results in more frequent updates|
 | `--disable-go` | Disable installation of go.d.plugin|
 | `--disable-ebpf` | Disable eBPF Kernel plugin (Default: enabled)|
 | `--disable-cloud` | Disable all Netdata Cloud functionality|
@@ -103,4 +103,6 @@ The `netdata-updater.sh` script will update your Agent.
 | `--disable-lto` | Disable Link-Time-Optimization. Default: enabled|
 | `--disable-x86-sse` | Disable SSE instructions. By default SSE optimizations are enabled|
 | `--zlib-is-really-here` or `--libs-are-really-here` | If you get errors about missing zlib or libuuid but you know it is available, you might have a broken pkg-config. Use this option to proceed without checking pkg-config|
-|`--disable-telemetry` | Use this flag to opt-out from our anonymous telemetry progam. (DO_NOT_TRACK=1)|
+|`--disable-telemetry` | Use this flag to opt-out from our anonymous telemetry program. (DO_NOT_TRACK=1)|
+
+[![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Fpackaging%2Finstaller%2Fmethods%2Ffreebsd&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)](<>)

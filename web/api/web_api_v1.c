@@ -867,8 +867,8 @@ static inline void web_client_api_request_v1_info_mirrored_hosts(BUFFER *wb) {
 
         netdata_mutex_lock(&host->receiver_lock);
         buffer_sprintf(
-            wb, "\t\t{ \"guid\": \"%s\", \"reachable\": %s, \"claim_id\": ", host->machine_guid,
-            (host->receiver || host == localhost) ? "true" : "false");
+            wb, "\t\t{ \"guid\": \"%s\", \"reachable\": %s, \"hops\": %d, \"claim_id\": ", host->machine_guid,
+            (host->receiver || host == localhost) ? "true" : "false", host->system_info ? host->system_info->hops : (host == localhost) ? 0 : 1);
         netdata_mutex_unlock(&host->receiver_lock);
 
         rrdhost_aclk_state_lock(host);
@@ -980,10 +980,22 @@ inline int web_client_api_request_v1_info_fill_buffer(RRDHOST *host, BUFFER *wb)
 #ifdef ENABLE_ACLK
     buffer_strcat(wb, "\t\"cloud-available\": true,\n");
 #ifdef ACLK_NG
-    buffer_strcat(wb, "\t\"aclk-implementation\": \"Next Generation\",\n");
+    buffer_strcat(wb, "\t\"aclk-ng-available\": true,\n");
 #else
-    buffer_strcat(wb, "\t\"aclk-implementation\": \"legacy\",\n");
+    buffer_strcat(wb, "\t\"aclk-ng-available\": false,\n");
 #endif
+#ifdef ACLK_LEGACY
+    buffer_strcat(wb, "\t\"aclk-legacy-available\": true,\n");
+#else
+    buffer_strcat(wb, "\t\"aclk-legacy-available\": false,\n");
+#endif
+    buffer_strcat(wb, "\t\"aclk-implementation\": \"");
+    if (aclk_ng) {
+        buffer_strcat(wb, "Next Generation");
+    } else {
+        buffer_strcat(wb, "legacy");
+    }
+    buffer_strcat(wb, "\",\n");
 #else
     buffer_strcat(wb, "\t\"cloud-available\": false,\n");
 #endif

@@ -15,8 +15,8 @@ netdata_publish_dcstat_t **dcstat_pid = NULL;
 static struct bpf_link **probe_links = NULL;
 static struct bpf_object *objects = NULL;
 
-static int *map_fd = NULL;
 static netdata_idx_t dcstat_hash_values[NETDATA_DCSTAT_IDX_END];
+static netdata_idx_t *dcstat_values = NULL;
 
 static int read_thread_closed = 1;
 
@@ -30,9 +30,20 @@ struct netdata_static_thread dcstat_threads = {"DCSTAT KERNEL",
                                                NULL, NULL, 1, NULL,
                                                NULL,  NULL};
 
-static ebpf_local_maps_t dcstat_maps[] = {{.name = "dcstat_pid", .internal_input = ND_EBPF_DEFAULT_PID_SIZE,
-                                           .user_input = 0},
-                                          {.name = NULL, .internal_input = 0, .user_input = 0}};
+static ebpf_local_maps_t dcstat_maps[] = {{.name = "dcstat_global", .internal_input = NETDATA_DIRECTORY_CACHE_END,
+                                           .user_input = 0, .type = NETDATA_EBPF_MAP_STATIC,
+                                           .map_fd = ND_EBPF_MAP_FD_NOT_INITIALIZED},
+                                          {.name = "dcstat_pid", .internal_input = ND_EBPF_DEFAULT_PID_SIZE,
+                                           .user_input = 0,
+                                           .type = NETDATA_EBPF_MAP_RESIZABLE | NETDATA_EBPF_MAP_PID,
+                                           .map_fd = ND_EBPF_MAP_FD_NOT_INITIALIZED},
+                                          {.name = "dcstat_ctrl", .internal_input = NETDATA_CONTROLLER_END,
+                                           .user_input = 0,
+                                           .type = NETDATA_EBPF_MAP_CONTROLLER,
+                                           .map_fd = ND_EBPF_MAP_FD_NOT_INITIALIZED},
+                                          {.name = NULL, .internal_input = 0, .user_input = 0,
+                                           .type = NETDATA_EBPF_MAP_CONTROLLER,
+                                           .map_fd = ND_EBPF_MAP_FD_NOT_INITIALIZED}};
 
 static ebpf_specify_name_t dc_optional_name[] = { {.program_name = "netdata_lookup_fast",
                                                    .function_to_attach = "lookup_fast",
@@ -117,18 +128,21 @@ static void ebpf_dcstat_cleanup(void *ptr)
     }
 
     freez(dcstat_vector);
+    freez(dcstat_values);
 
     ebpf_cleanup_publish_syscall(dcstat_counter_publish_aggregated);
 
     ebpf_dcstat_clean_names();
 
-    struct bpf_program *prog;
-    size_t i = 0 ;
-    bpf_object__for_each_program(prog, objects) {
-        bpf_link__destroy(probe_links[i]);
-        i++;
+    if (probe_links) {
+        struct bpf_program *prog;
+        size_t i = 0 ;
+        bpf_object__for_each_program(prog, objects) {
+            bpf_link__destroy(probe_links[i]);
+            i++;
+        }
+        bpf_object__close(objects);
     }
-    bpf_object__close(objects);
 }
 
 /*****************************************************************
@@ -252,7 +266,7 @@ static void read_apps_table()
     netdata_dcstat_pid_t *cv = dcstat_vector;
     uint32_t key;
     struct pid_stat *pids = root_of_pids;
-    int fd = map_fd[NETDATA_DCSTAT_PID_STATS];
+    int fd = dcstat_maps[NETDATA_DCSTAT_PID_STATS].map_fd;
     size_t length = sizeof(netdata_dcstat_pid_t)*ebpf_nprocs;
     while (pids) {
         key = pids->pid;
@@ -282,12 +296,18 @@ static void read_global_table()
 {
     uint32_t idx;
     netdata_idx_t *val = dcstat_hash_values;
-    netdata_idx_t stored;
-    int fd = map_fd[NETDATA_DCSTAT_GLOBAL_STATS];
+    netdata_idx_t *stored = dcstat_values;
+    int fd = dcstat_maps[NETDATA_DCSTAT_GLOBAL_STATS].map_fd;
 
     for (idx = NETDATA_KEY_DC_REFERENCE; idx < NETDATA_DIRECTORY_CACHE_END; idx++) {
-        if (!bpf_map_lookup_elem(fd, &idx, &stored)) {
-            val[idx] = stored;
+        if (!bpf_map_lookup_elem(fd, &idx, stored)) {
+            int i;
+            int end = ebpf_nprocs;
+            netdata_idx_t total = 0;
+            for (i = 0; i < end; i++)
+                total += stored[i];
+
+            val[idx] = total;
         }
     }
 }
@@ -464,8 +484,6 @@ static void dcstat_collector(ebpf_module_t *em)
     dcstat_threads.thread = mallocz(sizeof(netdata_thread_t));
     dcstat_threads.start_routine = ebpf_dcstat_read_hash;
 
-    map_fd = dcstat_data.map_fd;
-
     netdata_thread_create(dcstat_threads.thread, dcstat_threads.name, NETDATA_THREAD_OPTION_JOINABLE,
                           ebpf_dcstat_read_hash, em);
 
@@ -537,6 +555,7 @@ static void ebpf_dcstat_allocate_global_vectors(size_t length)
 {
     dcstat_pid = callocz((size_t)pid_max, sizeof(netdata_publish_dcstat_t *));
     dcstat_vector = callocz((size_t)ebpf_nprocs, sizeof(netdata_dcstat_pid_t));
+    dcstat_values = callocz((size_t)ebpf_nprocs, sizeof(netdata_idx_t));
 
     memset(dcstat_counter_aggregated_data, 0, length*sizeof(netdata_syscall_stat_t));
     memset(dcstat_counter_publish_aggregated, 0, length*sizeof(netdata_publish_syscall_t));
@@ -565,8 +584,7 @@ void *ebpf_dcstat_thread(void *ptr)
     em->maps = dcstat_maps;
     fill_ebpf_data(&dcstat_data);
 
-    ebpf_update_module(em, &dcstat_config, NETDATA_DIRECTORY_DCSTAT_CONFIG_FILE);
-    ebpf_update_pid_table(&dcstat_maps[0], em);
+    ebpf_update_pid_table(&dcstat_maps[NETDATA_DCSTAT_PID_STATS], em);
 
     ebpf_update_names(dc_optional_name, em);
 

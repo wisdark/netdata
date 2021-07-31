@@ -104,6 +104,7 @@ struct netdata_static_thread static_threads[] = {
     NETDATA_PLUGIN_HOOK_PLUGINSD
     NETDATA_PLUGIN_HOOK_HEALTH
     NETDATA_PLUGIN_HOOK_ANALYTICS
+    NETDATA_PLUGIN_HOOK_SERVICE
 
     {NULL,                   NULL,                    NULL,         0, NULL, NULL, NULL}
 };
@@ -388,20 +389,6 @@ int help(int exitcode) {
     return exitcode;
 }
 
-// TODO: Remove this function with the nix major release.
-void remove_option(int opt_index, int *argc, char **argv) {
-    int i;
-
-    // remove the options.
-    do {
-        *argc = *argc - 1;
-        for(i = opt_index; i < *argc; i++) {
-            argv[i] = argv[i+1];
-        }
-        i = opt_index;
-    } while(argv[i][0] != '-' && opt_index >= *argc);
-}
-
 #ifdef ENABLE_HTTPS
 static void security_init(){
     char filename[FILENAME_MAX + 1];
@@ -556,7 +543,6 @@ static void get_netdata_configured_variables() {
     // get default memory mode for the database
 
     default_rrd_memory_mode = rrd_memory_mode_id(config_get(CONFIG_SECTION_GLOBAL, "memory mode", rrd_memory_mode_name(default_rrd_memory_mode)));
-
 #ifdef ENABLE_DBENGINE
     // ------------------------------------------------------------------------
     // get default Database Engine page cache size in MiB
@@ -581,7 +567,11 @@ static void get_netdata_configured_variables() {
         error("Invalid multidb disk space %d given. Defaulting to %d.", default_multidb_disk_quota_mb, default_rrdeng_disk_quota_mb);
         default_multidb_disk_quota_mb = default_rrdeng_disk_quota_mb;
     }
-
+#else
+    if (default_rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE) {
+       error_report("RRD_MEMORY_MODE_DBENGINE is not supported in this platform. The agent will use memory mode ram instead.");
+       default_rrd_memory_mode = RRD_MEMORY_MODE_RAM;
+    }
 #endif
     // ------------------------------------------------------------------------
 
@@ -733,34 +723,6 @@ int main(int argc, char **argv) {
     // set the name for logging
     program_name = "netdata";
 
-    // parse deprecated options
-    // TODO: Remove this block with the next major release.
-    {
-        i = 1;
-        while(i < argc) {
-            if(strcmp(argv[i], "-pidfile") == 0 && (i+1) < argc) {
-                strncpyz(pidfile, argv[i+1], FILENAME_MAX);
-                fprintf(stderr, "%s: deprecated option -- %s -- please use -P instead.\n", argv[0], argv[i]);
-                remove_option(i, &argc, argv);
-            }
-            else if(strcmp(argv[i], "-nodaemon") == 0 || strcmp(argv[i], "-nd") == 0) {
-                dont_fork = 1;
-                fprintf(stderr, "%s: deprecated option -- %s -- please use -D instead.\n ", argv[0], argv[i]);
-                remove_option(i, &argc, argv);
-            }
-            else if(strcmp(argv[i], "-ch") == 0 && (i+1) < argc) {
-                config_set(CONFIG_SECTION_GLOBAL, "host access prefix", argv[i+1]);
-                fprintf(stderr, "%s: deprecated option -- %s -- please use -s instead.\n", argv[0], argv[i]);
-                remove_option(i, &argc, argv);
-            }
-            else if(strcmp(argv[i], "-l") == 0 && (i+1) < argc) {
-                config_set(CONFIG_SECTION_GLOBAL, "history", argv[i+1]);
-                fprintf(stderr, "%s: deprecated option -- %s -- This option will be removed with V2.*.\n", argv[0], argv[i]);
-                remove_option(i, &argc, argv);
-            }
-            else i++;
-        }
-    }
     if (argc > 1 && strcmp(argv[1], SPAWN_SERVER_COMMAND_LINE_ARGUMENT) == 0) {
         // don't run netdata, this is the spawn server
         spawn_server();
@@ -1269,6 +1231,7 @@ int main(int argc, char **argv) {
     netdata_anonymous_statistics_enabled=-1;
     struct rrdhost_system_info *system_info = calloc(1, sizeof(struct rrdhost_system_info));
     get_system_info(system_info);
+    system_info->hops = 0;
 
     if(rrd_init(netdata_configured_hostname, system_info))
         fatal("Cannot initialize localhost instance with name '%s'.", netdata_configured_hostname);
@@ -1306,6 +1269,8 @@ int main(int argc, char **argv) {
 
     netdata_zero_metrics_enabled = config_get_boolean_ondemand(CONFIG_SECTION_GLOBAL, "enable zero metrics", CONFIG_BOOLEAN_NO);
 
+    set_late_global_environment();
+
     for (i = 0; static_threads[i].name != NULL ; i++) {
         struct netdata_static_thread *st = &static_threads[i];
 
@@ -1324,8 +1289,6 @@ int main(int argc, char **argv) {
 
     info("netdata initialization completed. Enjoy real-time performance monitoring!");
     netdata_ready = 1;
-
-    set_late_global_environment();
 
     send_statistics("START", "-",  "-");
     if (crash_detected)

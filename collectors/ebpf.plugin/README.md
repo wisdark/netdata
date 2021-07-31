@@ -82,6 +82,19 @@ The Agent displays the number of bytes written as negative because they are movi
 
 The Agent counts and shows the number of instances where a running program experiences a read or write error.
 
+#### Create
+
+This chart shows the number of calls for `vfs_create`. This function is responsible to create files.
+
+#### Synchronization
+
+This chart shows the number of calls for `vfs_fsync`. This function is responsible to perform a fsync or fdatasync 
+on a file.
+
+#### Open
+
+This chart shows the number of calls for `vfs_open`. This function is responsible to open files.
+
 ### Process
 
 For this group, the eBPF collector monitors process/thread creation and process end, and then displays any errors in the
@@ -203,11 +216,14 @@ The eBPF collector enables and runs the following eBPF programs by default:
 -   `dcstat` : This eBPF program creates charts that show information about file access using directory cache. It appends
     `kprobes` for `lookup_fast()` and `d_lookup()` to identify if files are inside directory cache, outside and 
     files are not found.
--   `process`: This eBPF program creates charts that show information about process creation, VFS IO, and files removed.
+-   `disk` : This eBPF program creates charts that show information about disk latency independent of filesystem.
+-   `filesystem`: This eBPF program creates charts that show latency information for selected filesystem.
+-   `process`: This eBPF program creates charts that show information about process creation, calls to open files.
     When in `return` mode, it also creates charts showing errors when these operations are executed.
 -   `network viewer`: This eBPF program creates charts with information about `TCP` and `UDP` functions, including the
     bandwidth consumed by each.
 -   `sync`: Montitor calls for syscalls sync(2), fsync(2), fdatasync(2), syncfs(2), msync(2), and sync_file_range(2).
+-   `vfs`: This eBPF program creates charts that show information about VFS (Virtual File System) functions.
 
 ## Thread configuration
 
@@ -225,10 +241,13 @@ The following configuration files are available:
 
 - `cachestat.conf`: Configuration for the `cachestat` thread.
 - `dcstat.conf`: Configuration for the `dcstat` thread.
+- `disk.conf`: Configuration for the `disk` thread.
+- `filesystem.conf`: Configuration for the `filesystem` thread.
 - `process.conf`: Configuration for the `process` thread.
 - `network.conf`: Configuration for the `network viewer` thread. This config file overwrites the global options and
   also lets you specify which network the eBPF collector monitors.
 - `sync.conf`: Configuration for the `sync` thread.
+- `vfs.conf`: Configuration for the `vfs` thread.
 
 ### Network configuration
 
@@ -299,6 +318,22 @@ monitored.
     syncfs = yes
     sync_file_range = yes
 ```
+
+### Filesystem configuration
+
+The filesystem configuration has specific options to disable monitoring for filesystems, by default all 
+filesystems are monitored.
+
+```conf
+[filesystem]
+    btrfsdist = yes
+    ext4dist = yes
+    nfsdist = yes
+    xfsdist = yes
+    zfsdist = yes
+```
+
+The ebpf program `nfsdist` monitors only `nfs` mount points.
 
 ## Troubleshooting
 

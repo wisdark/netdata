@@ -11,6 +11,9 @@ on:
         name: Dashboard Version
         required: true
 
+env:
+  DO_NOT_TRACK: 1
+
 jobs:
   dashboard-pr:
     name: Generate Dashboard Version Bump PR
@@ -33,9 +36,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.NETDATABOT_GITHUB_TOKEN }}
         with:
-          files: |
-            packaging/dashboard.version
-            packaging/dashboard.checksums
+          files: ${{ env.COMMIT_FILES }} # Created by the bundle_dashboard.py script.
           commit-message: 'Update dashboard to version ${{ github.event.inputs.dashboard_version }}.'
           ref: refs/heads/dashboard-${{ github.event.inputs.dashboard_version }}
       - name: Create PR

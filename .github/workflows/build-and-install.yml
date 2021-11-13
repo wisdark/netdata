@@ -22,13 +22,13 @@ jobs:
           - 'alpine:3.14'
           - 'alpine:3.13'
           - 'alpine:3.12'
-          - 'alpine:3.11'
           - 'archlinux:latest'
           - 'centos:8'
           - 'centos:7'
           - 'debian:bullseye' # 11
           - 'debian:10'
           - 'debian:9'
+          - 'fedora:35'
           - 'fedora:34'
           - 'fedora:33'
           - 'opensuse/leap:15.2'
@@ -50,9 +50,6 @@ jobs:
           - distro: 'alpine:3.12'
             pre: 'apk add -U bash'
             rmjsonc: 'apk del json-c-dev'
-          - distro: 'alpine:3.11'
-            pre: 'apk add -U bash'
-            rmjsonc: 'apk del json-c-dev'
 
           - distro: 'archlinux:latest'
             pre: 'pacman --noconfirm -Syu && pacman --noconfirm -Sy grep libffi'
@@ -70,6 +67,8 @@ jobs:
             pre: 'apt-get update'
             rmjsonc: 'apt-get remove -y libjson-c-dev'
 
+          - distro: 'fedora:35'
+            rmjsonc: 'dnf remove -y json-c-devel'
           - distro: 'fedora:34'
             rmjsonc: 'dnf remove -y json-c-devel'
           - distro: 'fedora:33'

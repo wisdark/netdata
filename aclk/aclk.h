@@ -12,7 +12,7 @@
 
 extern time_t aclk_block_until;
 
-extern aclk_env_t *aclk_env;
+extern int disconnect_req;
 
 void *aclk_main(void *ptr);
 

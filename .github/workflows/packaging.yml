@@ -63,6 +63,9 @@ jobs:
           - {distro: fedora, version: "34", pkgclouddistro: fedora/34, format: rpm, base_image: fedora, platform: linux/amd64, arch: amd64}
           - {distro: fedora, version: "34", pkgclouddistro: fedora/34, format: rpm, base_image: fedora, platform: linux/arm/v7, arch: armhf}
           - {distro: fedora, version: "34", pkgclouddistro: fedora/34, format: rpm, base_image: fedora, platform: linux/arm64/v8, arch: arm64}
+          - {distro: fedora, version: "35", pkgclouddistro: fedora/35, format: rpm, base_image: fedora, platform: linux/amd64, arch: amd64}
+          - {distro: fedora, version: "35", pkgclouddistro: fedora/35, format: rpm, base_image: fedora, platform: linux/arm/v7, arch: armhf}
+          - {distro: fedora, version: "35", pkgclouddistro: fedora/35, format: rpm, base_image: fedora, platform: linux/arm64/v8, arch: arm64}
           - {distro: opensuse, version: "15.2", pkgclouddistro: opensuse/15.2, format: rpm, base_image: opensuse/leap, platform: linux/amd64, arch: amd64}
           - {distro: opensuse, version: "15.2", pkgclouddistro: opensuse/15.2, format: rpm, base_image: opensuse/leap, platform: linux/arm64/v8, arch: arm64}
           - {distro: opensuse, version: "15.3", pkgclouddistro: opensuse/15.3, format: rpm, base_image: opensuse/leap, platform: linux/amd64, arch: amd64}
@@ -127,6 +130,15 @@ jobs:
           else
             echo "version=${{ matrix.alias }}" >> $GITHUB_ENV
           fi
+      - name: Fetch base image
+        uses: nick-invision/retry@v2
+        with:
+          max_attempts: 3
+          retry_wait_seconds: 30
+          timeout_seconds: 900
+          command: |
+            docker pull --platform ${{ matrix.platform }} ${{ matrix.base_image }}:${{ env.version }}
+            docker pull --platform ${{ matrix.platform }} netdata/package-builders:${{ matrix.distro }}${{ matrix.version }}
       - name: Build Packages
         shell: bash
         run: |

@@ -266,7 +266,14 @@ void aclk_handle_new_cloud_msg(const char *message_type, const char *msg, size_t
     // TODO do the look up table with hashes to optimize when there are more
     // than few
     if (!strcmp(message_type, "cmd")) {
-        aclk_handle_cloud_message((char *)msg);
+        // msg is binary payload in all other cases
+        // however in this message from old legacy cloud
+        // we have to convert it to C string
+        char *str = mallocz(msg_len+1);
+        memcpy(str, msg, msg_len);
+        str[msg_len] = 0;
+        aclk_handle_cloud_message(str);
+        freez(str);
         return;
     }
     if (!strcmp(message_type, "CreateNodeInstanceResult")) {
@@ -314,6 +321,7 @@ void aclk_handle_new_cloud_msg(const char *message_type, const char *msg, size_t
                 netdata_mutex_lock(&host->receiver_lock);
                 query->data.node_update.live = (host->receiver != NULL);
                 netdata_mutex_unlock(&host->receiver_lock);
+                query->data.node_update.hops = host->system_info->hops;
             }
         }
 
@@ -407,6 +415,24 @@ void aclk_handle_new_cloud_msg(const char *message_type, const char *msg, size_t
         }
         aclk_process_send_alarm_snapshot(sas->node_id, sas->claim_id, sas->snapshot_id, sas->sequence_id);
         destroy_send_alarm_snapshot(sas);
+        return;
+    }
+    if (!strcmp(message_type, "DisconnectReq")) {
+        struct disconnect_cmd *cmd = parse_disconnect_cmd(msg, msg_len);
+        if (!cmd)
+            return;
+        if (cmd->permaban) {
+            error ("Cloud Banned This Agent!");
+            aclk_disable_runtime = 1;
+        }
+        info ("Cloud requested disconnect (EC=%u, \"%s\")", (unsigned int)cmd->error_code, cmd->error_description);
+        if (cmd->reconnect_after_s > 0) {
+            aclk_block_until = now_monotonic_sec() + cmd->reconnect_after_s;
+            info ("Cloud asks not to reconnect for %u seconds. We shall honor that request", (unsigned int)cmd->reconnect_after_s);
+        }
+        disconnect_req = 1;
+        freez(cmd->error_description);
+        freez(cmd);
         return;
     }
     error ("Unknown new cloud arch message type received \"%s\"", message_type);

@@ -241,6 +241,7 @@ ML_FILES = \
     $(NULL)
 
 if ENABLE_ML
+
 ML_FILES += \
     ml/BitBufferCounter.h \
     ml/BitBufferCounter.cc \
@@ -264,7 +265,12 @@ ML_FILES += \
     ml/ml.cc \
     ml/ml-private.h \
     $(NULL)
+
+# Disable warnings from dlib library
+ml/kmeans/dlib/dlib/all/source.$(OBJEXT) : CXXFLAGS += -Wno-sign-compare -Wno-type-limits
+
 endif
+
 
 if ENABLE_ML_TESTS
 ML_TESTS_FILES = \
@@ -674,6 +680,7 @@ ACLK_NG_FILES += \
 
 ACLK_NG_PROTO_DEFINITIONS = \
     aclk/aclk-schemas/proto/aclk/v1/lib.proto \
+    aclk/aclk-schemas/proto/agent/v1/disconnect.proto \
     aclk/aclk-schemas/proto/agent/v1/connection.proto \
     aclk/aclk-schemas/proto/alarm/v1/config.proto \
     aclk/aclk-schemas/proto/alarm/v1/stream.proto \
@@ -704,6 +711,8 @@ ACLK_NG_PROTO_BUILT_FILES = aclk/aclk-schemas/proto/agent/v1/connection.pb.cc \
     aclk/aclk-schemas/proto/chart/v1/config.pb.h \
     aclk/aclk-schemas/proto/aclk/v1/lib.pb.cc \
     aclk/aclk-schemas/proto/aclk/v1/lib.pb.h \
+    aclk/aclk-schemas/proto/agent/v1/disconnect.pb.cc \
+    aclk/aclk-schemas/proto/agent/v1/disconnect.pb.h \
     aclk/aclk-schemas/proto/alarm/v1/config.pb.cc \
     aclk/aclk-schemas/proto/alarm/v1/config.pb.h \
     aclk/aclk-schemas/proto/alarm/v1/stream.pb.cc \
@@ -746,6 +755,10 @@ aclk/aclk-schemas/proto/chart/v1/config.pb.h: aclk/aclk-schemas/proto/chart/v1/c
 
 aclk/aclk-schemas/proto/aclk/v1/lib.pb.cc \
 aclk/aclk-schemas/proto/aclk/v1/lib.pb.h: aclk/aclk-schemas/proto/aclk/v1/lib.proto
+	$(PROTOC) -I=aclk/aclk-schemas --cpp_out=$(builddir)/aclk/aclk-schemas $^
+
+aclk/aclk-schemas/proto/agent/v1/disconnect.pb.cc \
+aclk/aclk-schemas/proto/agent/v1/disconnect.pb.h: aclk/aclk-schemas/proto/agent/v1/disconnect.proto
 	$(PROTOC) -I=aclk/aclk-schemas --cpp_out=$(builddir)/aclk/aclk-schemas $^
 
 aclk/aclk-schemas/proto/alarm/v1/config.pb.cc \

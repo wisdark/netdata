@@ -24,12 +24,11 @@
 #define ACLK_STABLE_TIMEOUT 3 // Minimum delay to mark AGENT as stable
 
 int aclk_pubacks_per_conn = 0; // How many PubAcks we got since MQTT conn est.
+int disconnect_req = 0;
 
 int aclk_alert_reloaded = 1; //1 on startup, and again on health_reload
 
 time_t aclk_block_until = 0;
-
-aclk_env_t *aclk_env = NULL;
 
 mqtt_wss_client mqttwss_client;
 
@@ -182,7 +181,7 @@ void aclk_mqtt_wss_log_cb(mqtt_wss_log_type_t log_type, const char* str)
 
 //TODO prevent big buffer on stack
 #define RX_MSGLEN_MAX 4096
-static void msg_callback(const char *topic, const void *msg, size_t msglen, int qos)
+static void msg_callback_old_protocol(const char *topic, const void *msg, size_t msglen, int qos)
 {
     char cmsg[RX_MSGLEN_MAX];
     size_t len = (msglen < RX_MSGLEN_MAX - 1) ? msglen : (RX_MSGLEN_MAX - 1);
@@ -218,7 +217,7 @@ static void msg_callback(const char *topic, const void *msg, size_t msglen, int 
         error("Received message on unexpected topic %s", topic);
 
     if (aclk_shared_state.mqtt_shutdown_msg_id > 0) {
-        error("Link is shutting down. Ignoring message.");
+        error("Link is shutting down. Ignoring incoming message.");
         return;
     }
 
@@ -226,7 +225,7 @@ static void msg_callback(const char *topic, const void *msg, size_t msglen, int 
 }
 
 #ifdef ENABLE_NEW_CLOUD_PROTOCOL
-static void msg_callback_new(const char *topic, const void *msg, size_t msglen, int qos)
+static void msg_callback_new_protocol(const char *topic, const void *msg, size_t msglen, int qos)
 {
     if (msglen > RX_MSGLEN_MAX)
         error("Incoming ACLK message was bigger than MAX of %d and got truncated.", RX_MSGLEN_MAX);
@@ -234,7 +233,7 @@ static void msg_callback_new(const char *topic, const void *msg, size_t msglen, 
     debug(D_ACLK, "Got Message From Broker Topic \"%s\" QOS %d", topic, qos);
 
     if (aclk_shared_state.mqtt_shutdown_msg_id > 0) {
-        error("Link is shutting down. Ignoring message.");
+        error("Link is shutting down. Ignoring incoming message.");
         return;
     }
 
@@ -263,7 +262,14 @@ static void msg_callback_new(const char *topic, const void *msg, size_t msglen, 
 
     aclk_handle_new_cloud_msg(msgtype, msg, msglen);
 }
-#endif
+
+static inline void msg_callback(const char *topic, const void *msg, size_t msglen, int qos) {
+    if (aclk_use_new_cloud_arch)
+        msg_callback_new_protocol(topic, msg, msglen, qos);
+    else
+        msg_callback_old_protocol(topic, msg, msglen, qos);
+}
+#endif /* ENABLE_NEW_CLOUD_PROTOCOL */
 
 static void puback_callback(uint16_t packet_id)
 {
@@ -293,6 +299,8 @@ static int read_query_thread_count()
     return threads;
 }
 
+void aclk_graceful_disconnect(mqtt_wss_client client);
+
 /* Keeps connection alive and handles all network comms.
  * Returns on error or when netdata is shutting down.
  * @param client instance of mqtt_wss_client
@@ -310,6 +318,15 @@ static int handle_connection(mqtt_wss_client client)
             return 1;
         }
 
+        if (disconnect_req) {
+            disconnect_req = 0;
+            aclk_graceful_disconnect(client);
+            aclk_queue_unlock();
+            aclk_shared_state.mqtt_shutdown_msg_id = -1;
+            aclk_shared_state.mqtt_shutdown_msg_rcvd = 0;
+            return 1;
+        }
+
         // mqtt_wss_service will return faster than in one second
         // if there is enough work to do
         time_t now = now_monotonic_sec();
@@ -320,6 +337,17 @@ static int handle_connection(mqtt_wss_client client)
             QUERY_THREAD_WAKEUP;
         }
     }
+    return 0;
+}
+
+inline static int aclk_popcorn_check()
+{
+    ACLK_SHARED_STATE_LOCK;
+    if (unlikely(aclk_shared_state.agent_state == ACLK_HOST_INITIALIZING)) {
+        ACLK_SHARED_STATE_UNLOCK;
+        return 1;
+    }
+    ACLK_SHARED_STATE_UNLOCK;
     return 0;
 }
 
@@ -409,12 +437,12 @@ static int wait_popcorning_finishes()
         if (elapsed >= ACLK_STABLE_TIMEOUT) {
             aclk_shared_state.agent_state = ACLK_HOST_STABLE;
             ACLK_SHARED_STATE_UNLOCK;
-            error("ACLK localhost popocorn finished");
+            error("ACLK localhost popcorn timer finished");
             return 0;
         }
         ACLK_SHARED_STATE_UNLOCK;
         need_wait = ACLK_STABLE_TIMEOUT - elapsed;
-        error("ACLK localhost popocorn wait %d seconds longer", need_wait);
+        error("ACLK localhost popcorn timer - wait %d seconds longer", need_wait);
         sleep(need_wait);
     }
     return 1;
@@ -499,7 +527,7 @@ static int aclk_block_till_recon_allowed() {
         sleep_usec(recon_delay * USEC_PER_MS);
         recon_delay = 0;
     }
-    return 0;
+    return netdata_exit;
 }
 
 #ifndef ACLK_DISABLE_CHALLENGE
@@ -577,6 +605,13 @@ static int aclk_attempt_to_connect(mqtt_wss_client client)
             .drop_on_publish_fail = 1
         };
 
+#if defined(ENABLE_NEW_CLOUD_PROTOCOL) && defined(ACLK_NEWARCH_DEVMODE)
+        aclk_use_new_cloud_arch = 1;
+        info("Switching ACLK to new protobuf protocol. Due to #define ACLK_NEWARCH_DEVMODE.");
+#else
+        aclk_use_new_cloud_arch = 0;
+#endif
+
 #ifndef ACLK_DISABLE_CHALLENGE
         if (aclk_env) {
             aclk_env_t_destroy(aclk_env);
@@ -591,6 +626,24 @@ static int aclk_attempt_to_connect(mqtt_wss_client client)
             // delay handled by aclk_block_till_recon_allowed
             continue;
         }
+
+        if (netdata_exit)
+            return 1;
+
+#ifndef ACLK_NEWARCH_DEVMODE
+        if (aclk_env->encoding == ACLK_ENC_PROTO) {
+#ifndef ENABLE_NEW_CLOUD_PROTOCOL
+            error("Cloud requested New Cloud Protocol to be used but this agent cannot support it!");
+            continue;
+#endif
+            if (!aclk_env_has_capa("proto")) {
+                error ("Can't encoding=proto without at least \"proto\" capability.");
+                continue;
+            }
+            info("Switching ACLK to new protobuf protocol. Due to /env response.");
+            aclk_use_new_cloud_arch = 1;
+        }
+#endif
 
         memset(&auth_url, 0, sizeof(url_t));
         if (url_parse(aclk_env->auth_endpoint, &auth_url)) {
@@ -690,9 +743,6 @@ static int aclk_attempt_to_connect(mqtt_wss_client client)
  */
 void *aclk_main(void *ptr)
 {
-#if defined(ENABLE_NEW_CLOUD_PROTOCOL) && defined(ACLK_NEWARCH_DEVMODE)
-    aclk_use_new_cloud_arch = 1;
-#endif
     struct netdata_static_thread *static_thread = (struct netdata_static_thread *)ptr;
 
     struct aclk_stats_thread *stats_thread = NULL;
@@ -727,9 +777,9 @@ void *aclk_main(void *ptr)
         goto exit;
 
 #ifdef ENABLE_NEW_CLOUD_PROTOCOL
-    if (!(mqttwss_client = mqtt_wss_new("mqtt_wss", aclk_mqtt_wss_log_cb, (aclk_use_new_cloud_arch ? msg_callback_new : msg_callback), puback_callback))) {
-#else
     if (!(mqttwss_client = mqtt_wss_new("mqtt_wss", aclk_mqtt_wss_log_cb, msg_callback, puback_callback))) {
+#else
+    if (!(mqttwss_client = mqtt_wss_new("mqtt_wss", aclk_mqtt_wss_log_cb, msg_callback_old_protocol, puback_callback))) {
 #endif
         error("Couldn't initialize MQTT_WSS network library");
         goto exit;
@@ -768,7 +818,7 @@ void *aclk_main(void *ptr)
         if (!aclk_use_new_cloud_arch)
             queue_connect_payloads();
 
-        if (!handle_connection(mqttwss_client)) {
+        if (handle_connection(mqttwss_client)) {
             aclk_stats_upd_online(0);
             aclk_connected = 0;
         }
@@ -850,7 +900,7 @@ int ng_aclk_update_chart(RRDHOST *host, char *chart_name, int create)
 {
     struct aclk_query *query;
 
-    if (aclk_popcorn_check_bump())
+    if (host == localhost ? aclk_popcorn_check_bump() : aclk_popcorn_check())
         return 0;
 
     query = aclk_query_new(create ? CHART_NEW : CHART_DEL);
@@ -978,6 +1028,7 @@ void ng_aclk_host_state_update(RRDHOST *host, int cmd)
         create_query->data.node_creation.hops = (uint32_t) host->system_info->hops;
         create_query->data.node_creation.hostname = strdupz(host->hostname);
         create_query->data.node_creation.machine_guid = strdupz(host->machine_guid);
+        info("Registering host=%s, hops=%u",host->machine_guid, host->system_info->hops);
         aclk_queue_query(create_query);
         return;
     }
@@ -992,6 +1043,8 @@ void ng_aclk_host_state_update(RRDHOST *host, int cmd)
     uuid_unparse_lower(node_id, (char*)query->data.node_update.node_id);
     query->data.node_update.queryable = 1;
     query->data.node_update.session_id = aclk_session_newarch;
+    info("Queuing status update for node=%s, live=%d, hops=%u",(char*)query->data.node_update.node_id, cmd,
+         host->system_info->hops);
     aclk_queue_query(query);
 }
 
@@ -1015,6 +1068,9 @@ void aclk_send_node_instances()
             uuid_unparse_lower(list->node_id, (char*)query->data.node_update.node_id);
             query->data.node_update.queryable = 1;
             query->data.node_update.session_id = aclk_session_newarch;
+            info("Queuing status update for node=%s, live=%d, hops=%d",(char*)query->data.node_update.node_id,
+                 list->live,
+                 list->hops);
             aclk_queue_query(query);
         } else {
             aclk_query_t create_query;
@@ -1026,6 +1082,8 @@ void aclk_send_node_instances()
             create_query->data.node_creation.hostname = list->hostname;
             create_query->data.node_creation.machine_guid  = mallocz(UUID_STR_LEN);
             uuid_unparse_lower(list->host_id, (char*)create_query->data.node_creation.machine_guid);
+            info("Queuing registration for host=%s, hops=%d",(char*)create_query->data.node_creation.machine_guid,
+                 list->hops);
             aclk_queue_query(create_query);
         }
 

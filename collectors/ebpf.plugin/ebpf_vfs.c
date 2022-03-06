@@ -103,7 +103,7 @@ static void ebpf_vfs_cleanup(void *ptr)
  *****************************************************************/
 
 /**
- * Send data to Netdata calling auxiliar functions.
+ * Send data to Netdata calling auxiliary functions.
  *
  * @param em the structure with thread information
 */
@@ -270,7 +270,7 @@ static void ebpf_vfs_sum_pids(netdata_publish_vfs_t *vfs, struct pid_on_target *
 }
 
 /**
- * Send data to Netdata calling auxiliar functions.
+ * Send data to Netdata calling auxiliary functions.
  *
  * @param em   the structure with thread information
  * @param root the target list.
@@ -1122,7 +1122,7 @@ static int ebpf_send_systemd_vfs_charts(ebpf_module_t *em)
 }
 
 /**
- * Send data to Netdata calling auxiliar functions.
+ * Send data to Netdata calling auxiliary functions.
  *
  * @param em the main collector structure
 */
@@ -1576,8 +1576,9 @@ void *ebpf_vfs_thread(void *ptr)
     if (!em->enabled)
         goto endvfs;
 
-    probe_links = ebpf_load_program(ebpf_plugin_dir, em, kernel_string, &objects);
+    probe_links = ebpf_load_program(ebpf_plugin_dir, em, running_on_kernel, isrh, &objects);
     if (!probe_links) {
+        em->enabled = CONFIG_BOOLEAN_NO;
         goto endvfs;
     }
 
@@ -1591,11 +1592,15 @@ void *ebpf_vfs_thread(void *ptr)
 
     pthread_mutex_lock(&lock);
     ebpf_create_global_charts(em);
+    ebpf_update_stats(&plugin_statistics, em);
     pthread_mutex_unlock(&lock);
 
     vfs_collector(em);
 
 endvfs:
+    if (!em->enabled)
+        ebpf_update_disabled_plugin_stats(em);
+
     netdata_thread_cleanup_pop(1);
     return NULL;
 }

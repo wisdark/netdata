@@ -32,6 +32,8 @@ void Config::readMLConfig(void) {
     unsigned MinTrainSamples = config_get_number(ConfigSectionML, "minimum num samples to train", 1 * 3600);
     unsigned TrainEvery = config_get_number(ConfigSectionML, "train every", 1 * 3600);
 
+    unsigned DBEngineAnomalyRateEvery = config_get_number(ConfigSectionML, "dbengine anomaly rate every", 60);
+
     unsigned DiffN = config_get_number(ConfigSectionML, "num samples to diff", 1);
     unsigned SmoothN = config_get_number(ConfigSectionML, "num samples to smooth", 3);
     unsigned LagN = config_get_number(ConfigSectionML, "num samples to lag", 5);
@@ -47,12 +49,6 @@ void Config::readMLConfig(void) {
     double ADWindowRateThreshold = config_get_float(ConfigSectionML, "window minimum anomaly rate", 0.25);
     double ADDimensionRateThreshold = config_get_float(ConfigSectionML, "anomaly event min dimension rate threshold", 0.05);
 
-    std::string HostsToSkip = config_get(ConfigSectionML, "hosts to skip from training", "!*");
-    std::string ChartsToSkip = config_get(ConfigSectionML, "charts to skip from training",
-            "!system.* !cpu.* !mem.* !disk.* !disk_* "
-            "!ip.* !ipv4.* !ipv6.* !net.* !net_* !netfilter.* "
-            "!services.* !apps.* !groups.* !user.* !ebpf.* !netdata.* *");
-
     std::stringstream SS;
     SS << netdata_configured_cache_dir << "/anomaly-detection.db";
     Cfg.AnomalyDBPath = SS.str();
@@ -64,6 +60,8 @@ void Config::readMLConfig(void) {
     MaxTrainSamples = clamp(MaxTrainSamples, 1 * 3600u, 6 * 3600u);
     MinTrainSamples = clamp(MinTrainSamples, 1 * 3600u, 6 * 3600u);
     TrainEvery = clamp(TrainEvery, 1 * 3600u, 6 * 3600u);
+
+    DBEngineAnomalyRateEvery = clamp(DBEngineAnomalyRateEvery, 1 * 60u, 15 * 60u);
 
     DiffN = clamp(DiffN, 0u, 1u);
     SmoothN = clamp(SmoothN, 0u, 5u);
@@ -85,7 +83,7 @@ void Config::readMLConfig(void) {
      */
 
     if (MinTrainSamples >= MaxTrainSamples) {
-        error("invalid min/max train samples found (%d >= %d)", MinTrainSamples, MaxTrainSamples);
+        error("invalid min/max train samples found (%u >= %u)", MinTrainSamples, MaxTrainSamples);
 
         MinTrainSamples = 1 * 3600;
         MaxTrainSamples = 4 * 3600;
@@ -108,6 +106,8 @@ void Config::readMLConfig(void) {
     Cfg.MinTrainSamples = MinTrainSamples;
     Cfg.TrainEvery = TrainEvery;
 
+    Cfg.DBEngineAnomalyRateEvery = DBEngineAnomalyRateEvery;
+
     Cfg.DiffN = DiffN;
     Cfg.SmoothN = SmoothN;
     Cfg.LagN = LagN;
@@ -123,6 +123,14 @@ void Config::readMLConfig(void) {
     Cfg.ADWindowRateThreshold = ADWindowRateThreshold;
     Cfg.ADDimensionRateThreshold = ADDimensionRateThreshold;
 
-    Cfg.SP_HostsToSkip = simple_pattern_create(HostsToSkip.c_str(), NULL, SIMPLE_PATTERN_EXACT);
+    Cfg.HostsToSkip = config_get(ConfigSectionML, "hosts to skip from training", "!*");
+    Cfg.SP_HostsToSkip = simple_pattern_create(Cfg.HostsToSkip.c_str(), NULL, SIMPLE_PATTERN_EXACT);
+
+    // Always exclude anomaly_detection charts from training.
+    Cfg.ChartsToSkip = "anomaly_detection.* ";
+    Cfg.ChartsToSkip += config_get(ConfigSectionML, "charts to skip from training",
+            "!system.* !cpu.* !mem.* !disk.* !disk_* "
+            "!ip.* !ipv4.* !ipv6.* !net.* !net_* !netfilter.* "
+            "!services.* !apps.* !groups.* !user.* !ebpf.* !netdata.* *");
     Cfg.SP_ChartsToSkip = simple_pattern_create(ChartsToSkip.c_str(), NULL, SIMPLE_PATTERN_EXACT);
 }

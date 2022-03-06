@@ -53,7 +53,7 @@ CapabilityBoundingSet=CAP_FOWNER
 # is required for apps, perf and slabinfo plugins
 CapabilityBoundingSet=CAP_SETPCAP
 # is required for perf plugin
-CapabilityBoundingSet=CAP_SYS_ADMIN
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_PERFMON
 # is required for apps plugin
 CapabilityBoundingSet=CAP_SYS_PTRACE
 # is required for ebpf plugin
@@ -62,6 +62,10 @@ CapabilityBoundingSet=CAP_SYS_RESOURCE
 CapabilityBoundingSet=CAP_NET_RAW
 # is required for cgroups plugin
 CapabilityBoundingSet=CAP_SYS_CHROOT
+# is required for nfacct plugin (bandwidth accounting)
+CapabilityBoundingSet=CAP_NET_ADMIN
+# is required for plugins that use sudo
+CapabilityBoundingSet=CAP_SETGID CAP_SETUID
 
 # Sandboxing
 ProtectSystem=full
@@ -71,6 +75,8 @@ ProtectHome=read-only
 ProtectControlGroups=true
 # We whitelist this because it's the standard location to listen on a UNIX socket.
 ReadWriteDirectories=/run/netdata
+# This is needed to make email-based alert deliver work if Postfix is the email provider on the system.
+ReadWriteDirectories=-/var/spool/postfix/maildrop
 
 [Install]
 WantedBy=multi-user.target

@@ -2,9 +2,12 @@
 
 #include "common.h"
 #include "buildinfo.h"
+#include "static_threads.h"
 
 int netdata_zero_metrics_enabled;
 int netdata_anonymous_statistics_enabled;
+
+struct netdata_static_thread *static_threads;
 
 struct config netdata_config = {
         .first_section = NULL,
@@ -44,6 +47,9 @@ void netdata_cleanup_and_exit(int ret) {
 
         // stop everything
         info("EXIT: stopping static threads...");
+#ifdef ENABLE_NEW_CLOUD_PROTOCOL
+        aclk_sync_exit_all();
+#endif
         cancel_main_threads();
 
         // free the database
@@ -72,41 +78,6 @@ void netdata_cleanup_and_exit(int ret) {
     (void) unlink(agent_incomplete_shutdown_file);
     exit(ret);
 }
-
-struct netdata_static_thread static_threads[] = {
-    NETDATA_PLUGIN_HOOK_GLOBAL_STATISTICS
-
-    NETDATA_PLUGIN_HOOK_CHECKS
-    NETDATA_PLUGIN_HOOK_FREEBSD
-    NETDATA_PLUGIN_HOOK_MACOS
-
-    // linux internal plugins
-    NETDATA_PLUGIN_HOOK_LINUX_PROC
-    NETDATA_PLUGIN_HOOK_LINUX_DISKSPACE
-    NETDATA_PLUGIN_HOOK_LINUX_TIMEX
-    NETDATA_PLUGIN_HOOK_LINUX_CGROUPS
-    NETDATA_PLUGIN_HOOK_LINUX_TC
-
-    NETDATA_PLUGIN_HOOK_IDLEJITTER
-    NETDATA_PLUGIN_HOOK_STATSD
-
-#if defined(ENABLE_ACLK) || defined(ACLK_NG)
-    NETDATA_ACLK_HOOK
-#endif
-
-        // common plugins for all systems
-    {"BACKENDS",             NULL,                    NULL,         1, NULL, NULL, backends_main},
-    {"EXPORTING",            NULL,                    NULL,         1, NULL, NULL, exporting_main},
-    {"WEB_SERVER[static1]",  NULL,                    NULL,         0, NULL, NULL, socket_listen_main_static_threaded},
-    {"STREAM",               NULL,                    NULL,         0, NULL, NULL, rrdpush_sender_thread},
-
-    NETDATA_PLUGIN_HOOK_PLUGINSD
-    NETDATA_PLUGIN_HOOK_HEALTH
-    NETDATA_PLUGIN_HOOK_ANALYTICS
-    NETDATA_PLUGIN_HOOK_SERVICE
-
-    {NULL,                   NULL,                    NULL,         0, NULL, NULL, NULL}
-};
 
 void web_server_threading_selection(void) {
     web_server_mode = web_server_mode_id(config_get(CONFIG_SECTION_WEB, "mode", web_server_mode_name(web_server_mode)));
@@ -278,6 +249,8 @@ void cancel_main_threads() {
     }
     else
         info("All threads finished.");
+
+    free(static_threads);
 }
 
 struct option_def option_definitions[] = {
@@ -360,13 +333,16 @@ int help(int exitcode) {
             "  -W stacksize=N           Set the stacksize (in bytes).\n\n"
             "  -W debug_flags=N         Set runtime tracing to debug.log.\n\n"
             "  -W unittest              Run internal unittests and exit.\n\n"
+            "  -W sqlite-check          Check metadata database integrity and exit.\n\n"
+            "  -W sqlite-fix            Check metadata database integrity, fix if needed and exit.\n\n"
+            "  -W sqlite-compact        Reclaim metadata database unused space and exit.\n\n"
 #ifdef ENABLE_DBENGINE
             "  -W createdataset=N       Create a DB engine dataset of N seconds and exit.\n\n"
             "  -W stresstest=A,B,C,D,E,F\n"
             "                           Run a DB engine stress test for A seconds,\n"
             "                           with B writers and C readers, with a ramp up\n"
             "                           time of D seconds for writers, a page cache\n"
-            "                           size of E MiB, an optional disk space limit"
+            "                           size of E MiB, an optional disk space limit\n"
             "                           of F MiB and exit.\n\n"
 #endif
             "  -W set section option value\n"
@@ -714,9 +690,11 @@ int main(int argc, char **argv) {
     int i;
     int config_loaded = 0;
     int dont_fork = 0;
+    bool close_open_fds = true;
     size_t default_stacksize;
     char *user = NULL;
 
+    static_threads = static_threads_get();
 
     netdata_ready=0;
     // set the name for logging
@@ -801,6 +779,20 @@ int main(int argc, char **argv) {
                         char* createdataset_string = "createdataset=";
                         char* stresstest_string = "stresstest=";
 #endif
+                        if(strcmp(optarg, "sqlite-check") == 0) {
+                            sql_init_database(DB_CHECK_INTEGRITY);
+                            return 0;
+                        }
+
+                        if(strcmp(optarg, "sqlite-fix") == 0) {
+                            sql_init_database(DB_CHECK_FIX_DB);
+                            return 0;
+                        }
+
+                        if(strcmp(optarg, "sqlite-compact") == 0) {
+                            sql_init_database(DB_CHECK_RECLAIM_SPACE);
+                            return 0;
+                        }
 
                         if(strcmp(optarg, "unittest") == 0) {
                             if(unit_test_buffer()) return 1;
@@ -1047,7 +1039,13 @@ int main(int argc, char **argv) {
                             print_build_info_json();
                             return 0;
                         }
-                        else {
+                        else if(strcmp(optarg, "keepopenfds") == 0) {
+                            // Internal dev option to skip closing inherited
+                            // open FDs. Useful, when we want to run the agent
+                            // under profiling tools that open/maintain their
+                            // own FDs.
+                            close_open_fds = false;
+                        } else {
                             fprintf(stderr, "Unknown -W parameter '%s'\n", optarg);
                             return help(1);
                         }
@@ -1062,12 +1060,12 @@ int main(int argc, char **argv) {
     }
 
 #ifdef _SC_OPEN_MAX
-    // close all open file descriptors, except the standard ones
-    // the caller may have left open files (lxc-attach has this issue)
-    {
-        int fd;
-        for(fd = (int) (sysconf(_SC_OPEN_MAX) - 1); fd > 2; fd--)
-            if(fd_is_valid(fd)) close(fd);
+    if (close_open_fds == true) {
+        // close all open file descriptors, except the standard ones
+        // the caller may have left open files (lxc-attach has this issue)
+        for(int fd = (int) (sysconf(_SC_OPEN_MAX) - 1); fd > 2; fd--)
+            if(fd_is_valid(fd))
+                close(fd);
     }
 #endif
 
@@ -1241,6 +1239,7 @@ int main(int argc, char **argv) {
     struct rrdhost_system_info *system_info = calloc(1, sizeof(struct rrdhost_system_info));
     get_system_info(system_info);
     system_info->hops = 0;
+    get_install_type(&system_info->install_type, &system_info->prebuilt_arch, &system_info->prebuilt_dist);
 
     if(rrd_init(netdata_configured_hostname, system_info))
         fatal("Cannot initialize localhost instance with name '%s'.", netdata_configured_hostname);
@@ -1326,12 +1325,6 @@ int main(int argc, char **argv) {
     snprintfz(filename, FILENAME_MAX, "%s/.aclk_report_sent", netdata_configured_varlib_dir);
     if (netdata_anonymous_statistics_enabled > 0 && access(filename, F_OK)) { // -1 -> not initialized
         send_statistics("ACLK_DISABLED", "-", "-");
-#ifdef ACLK_NO_LWS
-        send_statistics("BUILD_FAIL_LWS", "-", "-");
-#endif
-#ifdef ACLK_NO_LIBMOSQ
-        send_statistics("BUILD_FAIL_MOSQ", "-", "-");
-#endif
         int fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 444);
         if (fd == -1)
             error("Cannot create file '%s'. Please fix this.", filename);

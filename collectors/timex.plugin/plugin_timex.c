@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#include "plugin_timex.h"
+#include "daemon/common.h"
 #include "sys/timex.h"
 
 #define PLUGIN_TIMEX_NAME "timex.plugin"
@@ -80,7 +80,7 @@ void *timex_main(void *ptr)
             rrdset_done(st_sync_state);
         }
 
-        if (do_sync) {
+        if (do_offset) {
             static RRDSET *st_offset = NULL;
             static RRDDIM *rd_offset;
 

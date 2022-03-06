@@ -15,6 +15,8 @@ public:
     unsigned MinTrainSamples;
     unsigned TrainEvery;
 
+    unsigned DBEngineAnomalyRateEvery;
+
     unsigned DiffN;
     unsigned SmoothN;
     unsigned LagN;
@@ -30,7 +32,10 @@ public:
     double ADWindowRateThreshold;
     double ADDimensionRateThreshold;
 
+    std::string HostsToSkip;
     SIMPLE_PATTERN *SP_HostsToSkip;
+
+    std::string ChartsToSkip;
     SIMPLE_PATTERN *SP_ChartsToSkip;
 
     std::string AnomalyDBPath;

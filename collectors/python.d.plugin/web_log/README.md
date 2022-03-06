@@ -31,7 +31,7 @@ If Netdata is installed on a system running a web server, it will detect it and 
 ![image](https://cloud.githubusercontent.com/assets/2662304/22900686/e283f636-f237-11e6-93d2-cbdf63de150c.png)
 *[**netdata**](https://my-netdata.io/) charts based on metrics collected by querying the `nginx` API (i.e. `/stub_status`).*
 
-> [**netdata**](https://my-netdata.io/) supports `apache`, `nginx`, `lighttpd` and `tomcat`. To obtain real-time information from a web server API, the web server needs to expose it. For directions on configuring your web server, check the config files for each web server. There is a directory with a config file for each web server under [`/etc/netdata/python.d/`](../). 
+> [**netdata**](https://my-netdata.io/) supports `apache`, `nginx`, `lighttpd` and `tomcat`. To obtain real-time information from a web server API, the web server needs to expose it. For directions on configuring your web server, check the config files for each web server. There is a directory with a config file for each web server under `/etc/netdata/python.d/`. 
 
 ## Configuration
 
@@ -120,7 +120,7 @@ This is a nice view of the traffic the web server is receiving and is sending.
 
 What is important to know for this chart, is that the bandwidth used for each request and response is accounted at the time the log is written. Since [**netdata**](https://my-netdata.io/) refreshes this chart every single second, you may have unrealistic spikes is the size of the requests or responses is too big. The reason is simple: a response may have needed 1 minute to be completed, but all the bandwidth used during that minute for the specific response will be accounted at the second the log line is written.
 
-As the legend on the chart suggests, you can use FireQoS to setup QoS on the web server ports and IPs to accurately measure the bandwidth the web server is using. Actually, [there may be a few more reasons to install QoS on your servers](/collectors/tc.plugin/README.md#tcplugin)...
+As the legend on the chart suggests, you can use FireQOS to setup QoS on the web server ports and IPs to accurately measure the bandwidth the web server is using. Actually, [there may be a few more reasons to install QoS on your servers](/collectors/tc.plugin/README.md#tcplugin)...
 
 **Bandwidth** KB/s
 
@@ -216,4 +216,4 @@ The column `minimum requests` state the minimum number of requests required for 
 
 Netdata alarms are user-configurable. Sample config files can be found under directory `health/health.d` of the [Netdata GitHub repository](https://github.com/netdata/netdata/).
 
-[![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Fcollectors%2Fpython.d.plugin%2Fweb_log%2FREADME&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)](<>)
+

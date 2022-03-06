@@ -44,7 +44,7 @@ section for details.
 
 The `dbengine multihost disk space` option determines the amount of disk space in **MiB** that is dedicated to storing
 Netdata metric values and all related metadata describing them. You can use the [**database engine
-calculator**](/docs/store/change-metrics-storage.md#calculate-the-system-resources-RAM-disk-space-needed-to-store-metrics)
+calculator**](/docs/store/change-metrics-storage.md#calculate-the-system-resources-ram-disk-space-needed-to-store-metrics)
 to correctly set `dbengine multihost disk space` based on your metrics retention policy. The calculator gives an
 accurate estimate based on how many child nodes you have, how many metrics your Agent collects, and more.
 
@@ -62,7 +62,7 @@ Netdata metric values per legacy database engine instance (see [details on the l
 
 When using the multihost database engine, all parent and child nodes share the same `page cache size` and `dbengine
 multihost disk space` in a single dbengine instance. The [**database engine
-calculator**](/docs/store/change-metrics-storage.md#calculate-the-system-resources-RAM-disk-space-needed-to-store-metrics)
+calculator**](/docs/store/change-metrics-storage.md#calculate-the-system-resources-ram-disk-space-needed-to-store-metrics)
 helps you properly set `page cache size` and `dbengine multihost disk space` on your parent node to allocate enough
 resources based on your metrics retention policy and how many child nodes you have.
 
@@ -112,7 +112,7 @@ An important observation is that RAM usage depends on both the `page cache size`
 options.
 
 You can use our [database engine
-calculator](/docs/store/change-metrics-storage.md#calculate-the-system-resources-RAM-disk-space-needed-to-store-metrics)
+calculator](/docs/store/change-metrics-storage.md#calculate-the-system-resources-ram-disk-space-needed-to-store-metrics)
 to validate the memory requirements for your particular system(s) and configuration (**out-of-date**).
 
 ### Disk space requirements
@@ -256,4 +256,4 @@ and generate a read load of 1.7M/sec, whereas in the CPU-bound scenario the read
 Consequently, there is a significant degree of interference by the reader threads, that slow down the writer threads.
 This is also possible because the interference effects are greater than the SSD impact on data generation throughput.
 
-[![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Fdatabase%2Fengine%2FREADME&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)](<>)
+

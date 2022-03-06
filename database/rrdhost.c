@@ -382,6 +382,16 @@ RRDHOST *rrdhost_create(const char *hostname,
         else localhost = host;
     }
 
+    // ------------------------------------------------------------------------
+    // init new ML host and update system_info to let upstreams know
+    // about ML functionality
+    //
+
+    if (is_localhost && host->system_info) {
+        host->system_info->ml_capable = ml_capable();
+        host->system_info->ml_enabled = ml_enabled(host);
+    }
+
     ml_new_host(host);
 
     info("Host '%s' (at registry as '%s') with guid '%s' initialized"
@@ -630,8 +640,6 @@ RRDHOST *rrdhost_find_or_create(
         rrdhost_unlock(host);
     }
 
-    rrdhost_cleanup_orphan_hosts_nolock(host);
-
     rrd_unlock();
 
     return host;
@@ -640,7 +648,7 @@ inline int rrdhost_should_be_removed(RRDHOST *host, RRDHOST *protected_host, tim
     if(host != protected_host
        && host != localhost
        && rrdhost_flag_check(host, RRDHOST_FLAG_ORPHAN)
-       && host->receiver
+       && !host->receiver
        && host->senders_disconnected_time
        && host->senders_disconnected_time + rrdhost_free_orphan_time < now)
         return 1;
@@ -679,18 +687,18 @@ restart_after_removal:
 
 int rrd_init(char *hostname, struct rrdhost_system_info *system_info) {
     rrdset_free_obsolete_time = config_get_number(CONFIG_SECTION_GLOBAL, "cleanup obsolete charts after seconds", rrdset_free_obsolete_time);
-    // Current chart locking and invalidation scheme doesn't prevent Netdata from segmentaion faults if a short
+    // Current chart locking and invalidation scheme doesn't prevent Netdata from segmentation faults if a short
     // cleanup delay is set. Extensive stress tests showed that 10 seconds is quite a safe delay. Look at
     // https://github.com/netdata/netdata/pull/11222#issuecomment-868367920 for more information.
     if (rrdset_free_obsolete_time < 10) {
         rrdset_free_obsolete_time = 10;
-        info("The \"cleanup obsolete charts after seconds\" option was set to 10 seconds. A lower delay can potentially cause a segmentaion fault.");
+        info("The \"cleanup obsolete charts after seconds\" option was set to 10 seconds. A lower delay can potentially cause a segmentation fault.");
     }
     gap_when_lost_iterations_above = (int)config_get_number(CONFIG_SECTION_GLOBAL, "gap when lost iterations above", gap_when_lost_iterations_above);
     if (gap_when_lost_iterations_above < 1)
         gap_when_lost_iterations_above = 1;
 
-    if (unlikely(sql_init_database())) {
+    if (unlikely(sql_init_database(DB_CHECK_NONE))) {
         if (default_rrd_memory_mode == RRD_MEMORY_MODE_DBENGINE)
             fatal("Failed to initialize SQLite");
         info("Skipping SQLITE metadata initialization since memory mode is not db engine");
@@ -822,6 +830,9 @@ void rrdhost_system_info_free(struct rrdhost_system_info *system_info) {
         freez(system_info->container);
         freez(system_info->container_detection);
         freez(system_info->is_k8s_node);
+        freez(system_info->install_type);
+        freez(system_info->prebuilt_arch);
+        freez(system_info->prebuilt_dist);
         freez(system_info);
     }
 }
@@ -839,6 +850,10 @@ void rrdhost_free(RRDHOST *host) {
     rrdpush_sender_thread_stop(host); // stop a possibly running thread
     cbuffer_free(host->sender->buffer);
     buffer_free(host->sender->build);
+#ifdef ENABLE_COMPRESSION
+    if (host->sender->compressor)
+        host->sender->compressor->destroy(&host->sender->compressor);
+#endif
     freez(host->sender);
     host->sender = NULL;
     if (netdata_exit) {
@@ -861,7 +876,20 @@ void rrdhost_free(RRDHOST *host) {
 
 
     rrdhost_wrlock(host);   // lock this RRDHOST
-
+#if defined(ENABLE_ACLK) && defined(ENABLE_NEW_CLOUD_PROTOCOL)
+    struct aclk_database_worker_config *wc =  host->dbsync_worker;
+    if (wc && !netdata_exit) {
+        struct aclk_database_cmd cmd;
+        memset(&cmd, 0, sizeof(cmd));
+        cmd.opcode = ACLK_DATABASE_ORPHAN_HOST;
+        struct aclk_completion compl ;
+        init_aclk_completion(&compl );
+        cmd.completion = &compl ;
+        aclk_database_enq_cmd(wc, &cmd);
+        wait_for_aclk_completion(&compl );
+        destroy_aclk_completion(&compl );
+    }
+#endif
     // ------------------------------------------------------------------------
     // release its children resources
 
@@ -938,6 +966,7 @@ void rrdhost_free(RRDHOST *host) {
 
     pthread_mutex_destroy(&host->aclk_state_lock);
     freez(host->aclk_state.claimed_id);
+    freez(host->aclk_state.prev_claimed_id);
     freez((void *)host->tags);
     free_label_list(host->labels.head);
     freez((void *)host->os);
@@ -963,7 +992,10 @@ void rrdhost_free(RRDHOST *host) {
     freez(host->node_id);
 
     freez(host);
-
+#if defined(ENABLE_ACLK) && defined(ENABLE_NEW_CLOUD_PROTOCOL)
+    if (wc)
+        wc->is_orphan = 0;
+#endif
     rrd_hosts_available--;
 }
 
@@ -1053,6 +1085,18 @@ static struct label *rrdhost_load_auto_labels(void)
     if (localhost->system_info->is_k8s_node)
         label_list =
             add_label_to_list(label_list, "_is_k8s_node", localhost->system_info->is_k8s_node, LABEL_SOURCE_AUTO);
+
+    if (localhost->system_info->install_type)
+        label_list =
+            add_label_to_list(label_list, "_install_type", localhost->system_info->install_type, LABEL_SOURCE_AUTO);
+
+    if (localhost->system_info->prebuilt_arch)
+        label_list =
+            add_label_to_list(label_list, "_prebuilt_arch", localhost->system_info->prebuilt_arch, LABEL_SOURCE_AUTO);
+
+    if (localhost->system_info->prebuilt_dist)
+        label_list =
+            add_label_to_list(label_list, "_prebuilt_dist", localhost->system_info->prebuilt_dist, LABEL_SOURCE_AUTO);
 
     label_list = add_aclk_host_labels(label_list);
 
@@ -1557,8 +1601,8 @@ int rrdhost_set_system_info_variable(struct rrdhost_system_info *system_info, ch
         system_info->container_os_version_id = strdupz(value);
     }
     else if(!strcmp(name, "NETDATA_CONTAINER_OS_DETECTION")){
-        freez(system_info->host_os_detection);
-        system_info->host_os_detection = strdupz(value);
+        freez(system_info->container_os_detection);
+        system_info->container_os_detection = strdupz(value);
     }
     else if(!strcmp(name, "NETDATA_HOST_OS_NAME")){
         freez(system_info->host_os_name);

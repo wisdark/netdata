@@ -155,6 +155,12 @@ AC_ARG_ENABLE(
     [enable_https="detect"]
 )
 AC_ARG_ENABLE(
+    [compression],
+    [AS_HELP_STRING([--enable-compression], [Enable LZ4 compression support @<:@default autodetect@:>@])],
+    ,
+    [enable_compression="detect"]
+)
+AC_ARG_ENABLE(
     [dbengine],
     [AS_HELP_STRING([--disable-dbengine], [disable netdata dbengine @<:@default autodetect@:>@])],
     ,
@@ -199,7 +205,7 @@ AC_ARG_ENABLE(
 
 # -----------------------------------------------------------------------------
 # Enforce building with C99, bail early if we can't.
-test "${ac_cv_prog_cc_c99}" = "no" && AC_MSG_ERROR([Netdata rquires a compiler that supports C99 to build])
+test "${ac_cv_prog_cc_c99}" = "no" && AC_MSG_ERROR([Netdata requires a compiler that supports C99 to build])
 
 # -----------------------------------------------------------------------------
 # Check if cloud is enabled and if the functionality is available
@@ -210,22 +216,6 @@ AC_ARG_ENABLE(
                     [Disables all cloud functionality])],
     [ enable_cloud="$enableval" ],
     [ enable_cloud="detect" ]
-)
-
-AC_ARG_WITH(
-    [aclk-legacy],
-    [AS_HELP_STRING([--with-aclk-legacy],
-                    [Requires Legacy ACLK to be used even in case ACLK-NG can run on this system])],
-    [aclk_legacy="$withval"],
-    [aclk_legacy="detect"]
-)
-
-AC_ARG_WITH(
-    [aclk-ng],
-    [AS_HELP_STRING([--with-aclk-ng],
-                    [Requires ACLK-NG to be used even in case ACLK Legacy can run on this system])],
-    [aclk_ng="$withval"],
-    [aclk_ng="detect"]
 )
 
 AC_ARG_WITH(
@@ -272,7 +262,6 @@ AC_FUNC_STRERROR_R
 AC_C__GENERIC
 AC_C___ATOMIC
 # AC_C_STMT_EXPR
-AC_CHECK_SIZEOF([void *])
 AC_CANONICAL_HOST
 AC_HEADER_MAJOR
 AC_HEADER_RESOLV
@@ -295,24 +284,21 @@ AC_MSG_CHECKING([operating system])
 case "$host_os" in
 freebsd*)
     build_target=freebsd
-    build_target_id=2
     CFLAGS="${CFLAGS} -I/usr/local/include -L/usr/local/lib"
     ;;
 darwin*)
     build_target=macos
-    build_target_id=3
     LDFLAGS="${LDFLAGS} -framework CoreFoundation -framework IOKit"
     ;;
 *)
     build_target=linux
-    build_target_id=1
     ;;
 esac
 
 AM_CONDITIONAL([FREEBSD], [test "${build_target}" = "freebsd"])
 AM_CONDITIONAL([MACOS], [test "${build_target}" = "macos"])
 AM_CONDITIONAL([LINUX], [test "${build_target}" = "linux"])
-AC_MSG_RESULT([${build_target} with id ${build_target_id}])
+AC_MSG_RESULT([Host OS: ${build_target}])
 
 
 # -----------------------------------------------------------------------------
@@ -376,10 +362,15 @@ OPTIONAL_UV_LIBS="${UV_LIBS}"
 
 AC_CHECK_LIB(
     [lz4],
+    [LZ4_initStream],
+    [LZ4_LIBS_FAST="-llz4"]
+)
+
+AC_CHECK_LIB(
+    [lz4],
     [LZ4_compress_default],
     [LZ4_LIBS="-llz4"]
 )
-
 
 # -----------------------------------------------------------------------------
 # zlib
@@ -413,7 +404,6 @@ PKG_CHECK_MODULES(
     [have_uuid=yes],
     [AC_MSG_ERROR([libuuid required but not found. Try installing 'uuid-dev' or 'libuuid-devel'.])]
 )
-AC_DEFINE([NETDATA_WITH_UUID], [1], [uuid usability])
 OPTIONAL_UUID_CFLAGS="${UUID_CFLAGS}"
 OPTIONAL_UUID_LIBS="${UUID_LIBS}"
 
@@ -535,6 +525,37 @@ else
 fi
 AC_MSG_RESULT([${enable_https}])
 AM_CONDITIONAL([ENABLE_HTTPS], [test "${enable_https}" = "yes"])
+
+AC_MSG_CHECKING([if netdata compression should be used])
+if test "${enable_compression}" != "no"; then
+    if test "${LZ4_LIBS_FAST}"; then
+        LIBS_BKP="${LIBS}"
+        LIBS="${LZ4_LIBS_FAST}"
+        AC_TRY_LINK(
+            [ #include <lz4.h> ],
+            [
+                LZ4_stream_t* stream = LZ4_initStream(NULL, 0);
+            ],
+            [ enable_compression="yes"],
+            [ enable_compression="no" ]
+        )
+        LIBS="${LIBS_BKP}"
+        if test "${enable_compression}" == "yes"; then
+            OPTIONAL_LZ4_LIBS="${LZ4_LIBS_FAST}"
+            AC_DEFINE([ENABLE_COMPRESSION], [1], [netdata compression usability])
+        fi
+    else
+        if test "${enable_compression}" == "yes"; then
+            AC_MSG_ERROR([liblz4 with version >= 1.9.0 required to enable_compression. Try installing the required version of 'liblz4-dev' or 'liblz4-devel'.])
+            enable_compression="no"
+        fi
+        enable_compression="no"
+    fi
+else
+    enable_compression="no"
+fi
+AC_MSG_RESULT([${enable_compression}])
+AM_CONDITIONAL([ENABLE_COMPRESSION], [test "${enable_compression}" = "yes"])
 
 # -----------------------------------------------------------------------------
 # JSON-C
@@ -721,22 +742,8 @@ fi
 
 AC_MSG_CHECKING([if Cloud functionality should be enabled])
 AC_MSG_RESULT([${enable_cloud}])
-if test "$aclk_ng" = "no"; then
-    AC_DEFINE([ACLK_NG_DISABLED], [1], [ACLK NG was disabled by user request])
-fi
-if test "$aclk_legacy" = "no"; then
-    AC_DEFINE([ACLK_LEGACY_DISABLED], [1], [ACLK Legacy was disabled by user request])
-fi
 
-if test "$enable_cloud" = "no" -a "$aclk_legacy" = "yes"; then
-    AC_MSG_ERROR([--disable-cloud && --with-aclk-legacy not allowed together (such configuration is self contradicting)])
-fi
-
-if test "$enable_cloud" = "no" -a "$aclk_ng" = "yes"; then
-    AC_MSG_ERROR([--disable-cloud && --with-aclk-ng not allowed together (such configuration is self contradicting)])
-fi
-
-if test "$enable_cloud" != "no" -a "$aclk_ng" != "no"; then
+if test "$enable_cloud" != "no"; then
     AC_MSG_NOTICE([Checking if ACLK Next Generation can be built])
     can_enable_ng="yes"
     AC_MSG_CHECKING([if git submodules present for ACLK Next Generation])
@@ -764,18 +771,16 @@ if test "$enable_cloud" != "no" -a "$aclk_ng" != "no"; then
 
     AC_MSG_CHECKING([ACLK Next Generation can be built])
     AC_MSG_RESULT([${can_enable_ng}])
-    if test "$can_enable_ng" = "no" -a "$aclk_ng" = "yes"; then
-        AC_MSG_ERROR([You have requested --with-aclk-ng but it can't be built. See reasons in lines above])
+    if test "$can_enable_ng" = "no" -a "$enable_cloud" = "yes"; then
+        AC_MSG_ERROR([You have requested --with-cloud but ACLK can't be built. See reasons in lines above])
     fi
     if test "$can_enable_ng" = "yes"; then
-        aclk_ng="yes"
         enable_aclk="yes"
-        AC_DEFINE([ACLK_NG], [1], [ACLK Next Generation Should be used])
         AC_DEFINE([ENABLE_ACLK], [1], [netdata ACLK])
-        OPTIONAL_ACLK_NG_CFLAGS="-I \$(abs_top_srcdir)/mqtt_websockets/src/include -I \$(abs_top_srcdir)/mqtt_websockets/c-rbuf/include -I \$(abs_top_srcdir)/mqtt_websockets/MQTT-C/include"
+        OPTIONAL_ACLK_CFLAGS="-I \$(abs_top_srcdir)/mqtt_websockets/src/include -I \$(abs_top_srcdir)/mqtt_websockets/c-rbuf/include -I \$(abs_top_srcdir)/mqtt_websockets/MQTT-C/include"
     fi
 
-    if test "$aclk_ng" = "yes" -a "$new_cloud_protocol" != "no"; then
+    if test "$new_cloud_protocol" != "no"; then
         can_build_new_cloud_protocol="yes"
         AC_MSG_CHECKING([if protobuf available for New Cloud Protocol])
         if test "${have_libprotobuf}" != "yes"; then
@@ -799,36 +804,15 @@ if test "$enable_cloud" != "no" -a "$aclk_ng" != "no"; then
             AC_MSG_RESULT([yes])
         fi
 
-        if test "${with_bundled_protobuf}" = "yes"; then
-            AC_LANG_PUSH([C++]) 
-            CXXFLAGS="${CXXFLAGS} -std=c++11"
-
-            # On some platforms, std::atomic needs a helper library
-            AC_MSG_CHECKING(whether -latomic is needed for static protobuf)
-            AC_LINK_IFELSE([AC_LANG_SOURCE([[
-              #include <atomic>
-              #include <cstdint>
-              std::atomic<std::int64_t> v;
-              int main() {
-                return v;
-              }
-            ]])], STD_ATOMIC_NEED_LIBATOMIC=no, STD_ATOMIC_NEED_LIBATOMIC=yes)
-            AC_MSG_RESULT($STD_ATOMIC_NEED_LIBATOMIC)
-            if test "x$STD_ATOMIC_NEED_LIBATOMIC" = xyes; then
-                OPTIONAL_ATOMIC_LIBS="-latomic"
-            fi
-            AC_SUBST([OPTIONAL_ATOMIC_LIBS])
-            AC_LANG_POP([C++])
-        fi
         AC_MSG_CHECKING([ACLK Next Generation can support New Cloud protocol])
         AC_MSG_RESULT([${can_build_new_cloud_protocol}])
         if test "$new_cloud_protocol" = "yes" -a "$can_build_new_cloud_protocol" != "yes"; then
-            AC_MSG_ERROR([Requested new cloud protocol support but it cant be build])
+            AC_MSG_ERROR([Requested new cloud protocol support but it can't be build])
         fi
         if test "$can_build_new_cloud_protocol" = "yes"; then
             new_cloud_protocol="yes"
             AC_DEFINE([ENABLE_NEW_CLOUD_PROTOCOL], [1], [New protobuf based Netdata Cloud Protocol Support])
-            OPTIONAL_ACLK_NG_CFLAGS="${OPTIONAL_ACLK_NG_CFLAGS} -I \$(abs_top_srcdir)/aclk/aclk-schemas"
+            OPTIONAL_ACLK_CFLAGS="${OPTIONAL_ACLK_CFLAGS} -I \$(abs_top_srcdir)/aclk/aclk-schemas"
             OPTIONAL_PROTOBUF_CFLAGS="${PROTOBUF_CFLAGS}"
             CXX11FLAG="-std=c++11"
             OPTIONAL_PROTOBUF_LIBS="${PROTOBUF_LIBS}"
@@ -836,96 +820,12 @@ if test "$enable_cloud" != "no" -a "$aclk_ng" != "no"; then
     fi
 fi
 
-if test "$enable_cloud" != "no" -a "$aclk_legacy" != "no"; then
-    AC_MSG_NOTICE([Checking if ACLK Legacy can be built])
-    if test -n "${SSL_LIBS}"; then
-        OPTIONAL_SSL_CFLAGS="${SSL_CFLAGS}"
-        OPTIONAL_SSL_LIBS="${SSL_LIBS}"
-    else
-        AC_MSG_WARN([OpenSSL required for agent-cloud-link but not found. Try installing 'libssl-dev' or 'openssl-devel'.])
-    fi
-
-    AC_MSG_CHECKING([if libmosquitto static lib is present (and builds)])
-    if test -f "externaldeps/mosquitto/libmosquitto.a"; then
-        LIBS_BKP="${LIBS}"
-        LIBS="externaldeps/mosquitto/libmosquitto.a ${OPTIONAL_SSL_LIBS} ${LIBS_BKP}"
-        AC_LINK_IFELSE([AC_LANG_SOURCE([[#include "externaldeps/mosquitto/mosquitto.h"
-                                         int main (int argc, char **argv) {
-                                             int m,mm,r;
-                                             mosquitto_lib_version(&m, &mm, &r);
-                                         }]])],
-                                        [HAVE_libmosquitto_a="yes"],
-                                        [HAVE_libmosquitto_a="no"])
-        LIBS="${LIBS_BKP}"
-    else
-        HAVE_libmosquitto_a="no"
-        AC_DEFINE([ACLK_NO_LIBMOSQ], [1], [Libmosquitto.a was not found during build.])
-    fi
-    AC_MSG_RESULT([${HAVE_libmosquitto_a}])
-
-    if test "${with_bundled_lws}" = "yes"; then
-        AC_MSG_CHECKING([if libwebsockets static lib is present for ACLK Legacy])
-        if test -f "externaldeps/libwebsockets/libwebsockets.a"; then
-            LWS_CFLAGS="-I \$(abs_top_srcdir)/externaldeps/libwebsockets/include"
-            OPTIONAL_LWS_LIBS="\$(abs_top_srcdir)/externaldeps/libwebsockets/libwebsockets.a"
-            AC_MSG_RESULT([yes])
-            AC_DEFINE([BUNDLED_LWS], [1], [using statically linked libwebsockets])
-        else
-            AC_DEFINE([ACLK_NO_LWS], [1], [libwebsockets.a was not found during build.])
-            # this should be error if installer ever changes default to system
-            # as currently this is default we prefer building netdata without ACLK
-            # instead of error fail
-            AC_MSG_RESULT([no])
-            AC_MSG_WARN([You required static libwebsockets to be used but we can't use it. Disabling ACLK Legacy])
-        fi
-    else
-        AC_CHECK_LIB([websockets],
-            [lws_get_vhost_by_name],
-            [OPTIONAL_LWS_LIBS="-lwebsockets"],
-            [AC_DEFINE([ACLK_NO_LWS], [1], [usable system libwebsockets was not found during build.])])
-    fi
-
-    if test "${build_target}" = "linux"; then
-        if test "${have_libcap}" = "yes" -a "${with_libcap}" = "no"; then
-            AC_MSG_ERROR([agent-cloud-link can't be built without libcap. Disable it by --disable-cloud or enable libcap])
-        fi
-        if test "${with_libcap}" = "yes"; then
-            LWS_CFLAGS+=" ${LIBCAP_CFLAGS}"
-        fi
-    fi
-
-    # next 2 lines are just to have info for ACLK dependencies in common place
-    AC_MSG_CHECKING([if json-c available for ACLK Legacy])
-    AC_MSG_RESULT([${enable_jsonc}])
-
-    AC_MSG_CHECKING([if netdata ACLK Legacy can be built])
-    if test "${HAVE_libmosquitto_a}" = "yes" -a -n "${OPTIONAL_LWS_LIBS}" -a -n "${SSL_LIBS}" -a "${enable_jsonc}" = "yes"; then
-        can_build_legacy="yes"
-    else
-        can_build_legacy="no"
-    fi
-    AC_MSG_RESULT([${can_build_legacy}])
-
-    if test "$can_build_legacy" = "no" -a "$aclk_legacy" = "yes"; then
-        AC_MSG_ERROR([You have requested --with-aclk-legacy but it can't be built. See reasons in lines above])
-    fi
-
-    if test "$can_build_legacy" = "yes"; then
-        AC_DEFINE([ACLK_LEGACY], [1], [ACLK Legacy Should be used])
-        AC_DEFINE([ENABLE_ACLK], [1], [netdata ACLK])
-        aclk_legacy="yes"
-        enable_aclk="yes"
-    fi
-fi
-
 if test "$enable_cloud" = "yes" -a "$enable_aclk" != "yes"; then
-    AC_MSG_ERROR([Neither ACLK-NG nor ACLK-Legacy can be built but --enable-cloud was requested])
+    AC_MSG_ERROR([ACLK can't be built but --enable-cloud was requested])
 fi
 
 AC_SUBST([enable_cloud])
 AC_SUBST([enable_aclk])
-AM_CONDITIONAL([ACLK_NG], [test "${aclk_ng}" = "yes"])
-AM_CONDITIONAL([ACLK_LEGACY], [test "${aclk_legacy}" = "yes"])
 AM_CONDITIONAL([ENABLE_ACLK], [test "${enable_aclk}" = "yes"])
 AM_CONDITIONAL([ENABLE_NEW_CLOUD_PROTOCOL], [test "${can_build_new_cloud_protocol}" = "yes"])
 
@@ -1225,7 +1125,7 @@ fi
 # -----------------------------------------------------------------------------
 # ml - anomaly detection
 
-# Check if uuid is availabe. Fail if ML was explicitly requested.
+# Check if uuid is available. Fail if ML was explicitly requested.
 if test "${enable_ml}" = "yes" -a "${have_uuid}" != "yes"; then
     AC_MSG_ERROR([You have explicitly requested --enable-ml functionality but libuuid can not be found."])
 fi
@@ -1387,12 +1287,7 @@ PKG_CHECK_MODULES(
 PKG_CHECK_MODULES(
     [AWS_CPP_SDK_CORE],
     [aws-cpp-sdk-core],
-    [AC_CHECK_LIB(
-        [aws-cpp-sdk-core],
-        [cJSON_free],
-        [have_libaws_cpp_sdk_core=yes],
-        [have_libaws_cpp_sdk_core=no]
-    )],
+    [have_libaws_cpp_sdk_core=yes],
     [have_libaws_cpp_sdk_core=no]
 )
 
@@ -1401,27 +1296,6 @@ PKG_CHECK_MODULES(
     [aws-cpp-sdk-kinesis],
     [have_libaws_cpp_sdk_kinesis=yes],
     [have_libaws_cpp_sdk_kinesis=no]
-)
-
-AC_CHECK_LIB(
-    [aws-checksums],
-    [aws_checksums_crc32],
-    [have_libaws_checksums=yes],
-    [have_libaws_checksums=no]
-)
-
-AC_CHECK_LIB(
-    [aws-c-common],
-    [aws_default_allocator],
-    [have_libaws_c_common=yes],
-    [have_libaws_c_common=no]
-)
-
-AC_CHECK_LIB(
-    [aws-c-event-stream],
-    [aws_event_stream_library_init],
-    [have_libaws_c_event_stream=yes],
-    [have_libaws_c_event_stream=no]
 )
 
 test "${enable_backend_kinesis}" = "yes" -a "${have_libaws_cpp_sdk_kinesis}" != "yes" && \
@@ -1439,17 +1313,9 @@ test "${enable_backend_kinesis}" = "yes" -a "${have_libssl}" != "yes" && \
 test "${enable_backend_kinesis}" = "yes" -a "${have_libcrypto}" != "yes" && \
     AC_MSG_ERROR([libcrypto required but not found])
 
-test "${enable_backend_kinesis}" = "yes" -a "${have_libaws_checksums}" != "yes" \
-                                         -a "${have_libaws_c_common}" != "yes" \
-                                         -a "${have_libaws_c_event_stream}" != "yes" && \
-    AC_MSG_ERROR([AWS SKD third party dependencies required but not found])
-
 AC_MSG_CHECKING([if kinesis backend should be enabled])
 if test "${enable_backend_kinesis}" != "no" -a "${have_libaws_cpp_sdk_kinesis}" = "yes" \
                                             -a "${have_libaws_cpp_sdk_core}" = "yes" \
-                                            -a "${have_libaws_checksums}" = "yes" \
-                                            -a "${have_libaws_c_common}" = "yes" \
-                                            -a "${have_libaws_c_event_stream}" = "yes" \
                                             -a "${have_libcurl}" = "yes" \
                                             -a "${have_libssl}" = "yes" \
                                             -a "${have_libcrypto}" = "yes"; then
@@ -1477,12 +1343,14 @@ PKG_CHECK_MODULES(
     [have_libgrpc=no]
 )
 
-PKG_CHECK_MODULES(
-    [PUBSUB],
-    [googleapis_cpp_pubsub_protos],
-    [have_pubsub_protos=yes],
-    [have_pubsub_protos=no]
-)
+if test "${enable_exporting_pubsub}" != "no"; then
+    PKG_CHECK_MODULES(
+        [PUBSUB],
+        [google_cloud_cpp_pubsub_protos],
+        [have_pubsub_protos=yes],
+        [have_pubsub_protos=no]
+    )
+fi
 
 AC_PATH_PROG([CXX_BINARY], [${CXX}], [no])
 AS_IF(
@@ -1655,11 +1523,44 @@ AC_MSG_RESULT([${enable_lto}])
 
 # -----------------------------------------------------------------------------
 
-AM_CONDITIONAL([ENABLE_CXX_LINKER], [test "${enable_backend_kinesis}" = "yes" \
-                                     -o "${enable_exporting_pubsub}" = "yes" \
-                                     -o "${enable_backend_prometheus_remote_write}" = "yes" \
-                                     -o "${new_cloud_protocol}" = "yes" \
-                                     -o "${build_ml}" = "yes"])
+if test "${enable_backend_kinesis}" = "yes" -o \
+        "${enable_exporting_pubsub}" = "yes" -o \
+        "${enable_backend_prometheus_remote_write}" = "yes" -o \
+        "${new_cloud_protocol}" = "yes" -o \
+        "${build_ml}" = "yes"; then
+    enable_cxx_linker="yes"
+
+    # Try to unconditionally link with -latomic. If the compiler can satisfy
+    # all the atomic ops with builtins then, the library will be left unused.
+    # Otherwise, some ops will be covered by the compiler's intrinsics and some
+    # will be picked up by the linker from -latomic. In the later case, if
+    # -latomic is not available there will be a build failure, which would
+    # have happened either way before this change.
+    AC_LANG_PUSH([C++])
+
+    AC_MSG_CHECKING(whether we can use -latomic)
+    OLD_LIBS="${LIBS}"
+    LIBS="-latomic"
+    AC_LINK_IFELSE([AC_LANG_SOURCE([[
+      #include <atomic>
+      #include <cstdint>
+      std::atomic<std::int64_t> v;
+      int main() {
+        return v;
+      }
+    ]])], CAN_USE_LIBATOMIC=yes, CAN_USE_LIBATOMIC=no)
+    LIBS="${OLD_LIBS}"
+    AC_MSG_RESULT($CAN_USE_LIBATOMIC)
+
+    if test "x$CAN_USE_LIBATOMIC" = xyes; then
+        OPTIONAL_ATOMIC_LIBS="-latomic"
+    fi
+    AC_SUBST([OPTIONAL_ATOMIC_LIBS])
+
+    AC_LANG_POP([C++])
+fi
+
+AM_CONDITIONAL([ENABLE_CXX_LINKER], [test "${enable_cxx_linker}" = "yes"])
 
 AC_DEFINE_UNQUOTED([NETDATA_USER], ["${with_user}"], [use this user to drop privileged])
 
@@ -1674,7 +1575,6 @@ libconfigdir="${libdir}/netdata/conf.d"
 logdir="${localstatedir}/log/netdata"
 pluginsdir="${libexecdir}/netdata/plugins.d"
 
-AC_SUBST([build_target])
 AC_SUBST([varlibdir])
 AC_SUBST([registrydir])
 AC_SUBST([cachedir])
@@ -1691,12 +1591,11 @@ CFLAGS="${CFLAGS} ${OPTIONAL_PROTOBUF_CFLAGS} ${OPTIONAL_MATH_CFLAGS} ${OPTIONAL
     ${OPTIONAL_LIBCAP_CFLAGS} ${OPTIONAL_IPMIMONITORING_CFLAGS} ${OPTIONAL_CUPS_CFLAGS} ${OPTIONAL_XENSTAT_FLAGS} \
     ${OPTIONAL_KINESIS_CFLAGS} ${OPTIONAL_PUBSUB_CFLAGS} ${OPTIONAL_PROMETHEUS_REMOTE_WRITE_CFLAGS} \
     ${OPTIONAL_MONGOC_CFLAGS} ${LWS_CFLAGS} ${OPTIONAL_JSONC_STATIC_CFLAGS} ${OPTIONAL_BPF_CFLAGS} ${OPTIONAL_JUDY_CFLAGS} \
-    ${OPTIONAL_ACLK_NG_CFLAGS} ${OPTIONAL_ML_CFLAGS} ${OPTIONAL_ML_TESTS_CFLAGS}"
+    ${OPTIONAL_ACLK_CFLAGS} ${OPTIONAL_ML_CFLAGS} ${OPTIONAL_ML_TESTS_CFLAGS}"
 
 CXXFLAGS="${CFLAGS} ${CXX11FLAG}"
 
 CPPFLAGS="\
-    -DTARGET_OS=${build_target_id} \
 	-DVARLIB_DIR=\"\\\"${varlibdir}\\\"\" \
 	-DCACHE_DIR=\"\\\"${cachedir}\\\"\" \
 	-DCONFIG_DIR=\"\\\"${configdir}\\\"\" \
@@ -1741,7 +1640,7 @@ AC_SUBST([OPTIONAL_PROMETHEUS_REMOTE_WRITE_LIBS])
 AC_SUBST([OPTIONAL_MONGOC_CFLAGS])
 AC_SUBST([OPTIONAL_MONGOC_LIBS])
 AC_SUBST([OPTIONAL_LWS_LIBS])
-AC_SUBST([OPTIONAL_ACLK_NG_CFLAGS])
+AC_SUBST([OPTIONAL_ACLK_CFLAGS])
 AC_SUBST([OPTIONAL_PROTOBUF_CFLAGS])
 AC_SUBST([OPTIONAL_PROTOBUF_LIBS])
 AC_SUBST([OPTIONAL_GTEST_CFLAGS])
@@ -1847,6 +1746,7 @@ AC_CONFIG_FILES([
     libnetdata/avl/Makefile
     libnetdata/buffer/Makefile
     libnetdata/clocks/Makefile
+    libnetdata/completion/Makefile
     libnetdata/config/Makefile
     libnetdata/dictionary/Makefile
     libnetdata/ebpf/Makefile
@@ -1895,7 +1795,6 @@ AC_CONFIG_FILES([
     web/server/Makefile
     web/server/static/Makefile
     claim/Makefile
-    aclk/legacy/Makefile
     spawn/Makefile
     parser/Makefile
 ])

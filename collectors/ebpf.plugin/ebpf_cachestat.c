@@ -111,7 +111,7 @@ static void ebpf_cachestat_cleanup(void *ptr)
  *
  * Update publish values before to write dimension.
  *
- * @param out  strcuture that will receive data.
+ * @param out  structure that will receive data.
  * @param mpa  calls for mark_page_accessed during the last second.
  * @param mbd  calls for mark_buffer_dirty during the last second.
  * @param apcl calls for add_to_page_cache_lru during the last second.
@@ -481,7 +481,7 @@ void ebpf_cachestat_sum_pids(netdata_publish_cachestat_t *publish, struct pid_on
 }
 
 /**
- * Send data to Netdata calling auxiliar functions.
+ * Send data to Netdata calling auxiliary functions.
  *
  * @param root the target list.
 */
@@ -784,7 +784,7 @@ static void ebpf_obsolete_specific_cachestat_charts(char *type, int update_every
 }
 
 /**
- * Send data to Netdata calling auxiliar functions.
+ * Send data to Netdata calling auxiliary functions.
  *
  * @param update_every value to overwrite the update frequency set by the server.
 */
@@ -985,11 +985,14 @@ void *ebpf_cachestat_thread(void *ptr)
     pthread_mutex_lock(&lock);
     ebpf_cachestat_allocate_global_vectors(em->apps_charts);
 
-    probe_links = ebpf_load_program(ebpf_plugin_dir, em, kernel_string, &objects);
+    probe_links = ebpf_load_program(ebpf_plugin_dir, em, running_on_kernel, isrh, &objects);
     if (!probe_links) {
         pthread_mutex_unlock(&lock);
+        em->enabled = CONFIG_BOOLEAN_NO;
         goto endcachestat;
     }
+
+    ebpf_update_stats(&plugin_statistics, em);
 
     int algorithms[NETDATA_CACHESTAT_END] = {
         NETDATA_EBPF_ABSOLUTE_IDX, NETDATA_EBPF_INCREMENTAL_IDX, NETDATA_EBPF_ABSOLUTE_IDX, NETDATA_EBPF_ABSOLUTE_IDX
@@ -1006,6 +1009,9 @@ void *ebpf_cachestat_thread(void *ptr)
     cachestat_collector(em);
 
 endcachestat:
+    if (!em->enabled)
+        ebpf_update_disabled_plugin_stats(em);
+
     netdata_thread_cleanup_pop(1);
     return NULL;
 }

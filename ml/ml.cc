@@ -6,6 +6,20 @@
 
 using namespace ml;
 
+bool ml_capable() {
+    return true;
+}
+
+bool ml_enabled(RRDHOST *RH) {
+    if (!Cfg.EnableAnomalyDetection)
+        return false;
+
+    if (simple_pattern_matches(Cfg.SP_HostsToSkip, RH->hostname))
+        return false;
+
+    return true;
+}
+
 /*
  * Assumptions:
  *  1) hosts outlive their sets, and sets outlive their dimensions,
@@ -17,10 +31,7 @@ void ml_init(void) {
 }
 
 void ml_new_host(RRDHOST *RH) {
-    if (!Cfg.EnableAnomalyDetection)
-        return;
-
-    if (simple_pattern_matches(Cfg.SP_HostsToSkip, RH->hostname))
+    if (!ml_enabled(RH))
         return;
 
     Host *H = new Host(RH);
@@ -75,12 +86,24 @@ char *ml_get_host_info(RRDHOST *RH) {
     if (RH && RH->ml_host) {
         Host *H = static_cast<Host *>(RH->ml_host);
         H->getConfigAsJson(ConfigJson);
-        H->getDetectionInfoAsJson(ConfigJson);
     } else {
         ConfigJson["enabled"] = false;
     }
 
     return strdup(ConfigJson.dump(2, '\t').c_str());
+}
+
+char *ml_get_host_runtime_info(RRDHOST *RH) {
+    nlohmann::json ConfigJson;
+
+    if (RH && RH->ml_host) {
+        Host *H = static_cast<Host *>(RH->ml_host);
+        H->getDetectionInfoAsJson(ConfigJson);
+    } else {
+        return nullptr;
+    }
+
+    return strdup(ConfigJson.dump(1, '\t').c_str());
 }
 
 bool ml_is_anomalous(RRDDIM *RD, double Value, bool Exists) {
@@ -138,6 +161,44 @@ char *ml_get_anomaly_event_info(RRDHOST *RH, const char *AnomalyDetectorName,
     return strdup(Json.dump(4, '\t').c_str());
 }
 
+void ml_process_rrdr(RRDR *R, int MaxAnomalyRates) {
+    if (R->rows != 1)
+        return;
+
+    if (MaxAnomalyRates < 1 || MaxAnomalyRates >= R->d)
+        return;
+
+    calculated_number *CNs = R->v;
+    RRDR_DIMENSION_FLAGS *DimFlags = R->od;
+
+    std::vector<std::pair<calculated_number, int>> V;
+
+    V.reserve(R->d);
+    for (int Idx = 0; Idx != R->d; Idx++)
+        V.emplace_back(CNs[Idx], Idx);
+
+    std::sort(V.rbegin(), V.rend());
+
+    for (int Idx = MaxAnomalyRates; Idx != R->d; Idx++) {
+        int UnsortedIdx = V[Idx].second;
+
+        int OldFlags = static_cast<int>(DimFlags[UnsortedIdx]);
+        int NewFlags = OldFlags | RRDR_DIMENSION_HIDDEN;
+
+        DimFlags[UnsortedIdx] = static_cast<rrdr_dimension_flag>(NewFlags);
+    }
+}
+
+void ml_dimension_update_name(RRDSET *RS, RRDDIM *RD, const char *Name) {
+    (void) RS;
+
+    Dimension *D = static_cast<Dimension *>(RD->state->ml_dimension);
+    if (!D)
+        return;
+
+    D->setAnomalyRateRDName(Name);
+}
+
 #if defined(ENABLE_ML_TESTS)
 
 #include "gtest/gtest.h"
@@ -151,3 +212,5 @@ int test_ml(int argc, char *argv[]) {
 }
 
 #endif // ENABLE_ML_TESTS
+
+#include "ml-private.h"

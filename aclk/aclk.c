@@ -121,7 +121,7 @@ static int wait_till_agent_claimed(void)
  * agent claimed, cloud url set and private key available
  * 
  * @param aclk_hostname points to location where string pointer to hostname will be set
- * @param ackl_port port to int where port will be saved
+ * @param aclk_port port to int where port will be saved
  * 
  * @return If non 0 returned irrecoverable error happened and ACLK should be terminated
  */
@@ -183,6 +183,7 @@ void aclk_mqtt_wss_log_cb(mqtt_wss_log_type_t log_type, const char* str)
 #define RX_MSGLEN_MAX 4096
 static void msg_callback_old_protocol(const char *topic, const void *msg, size_t msglen, int qos)
 {
+    UNUSED(qos);
     char cmsg[RX_MSGLEN_MAX];
     size_t len = (msglen < RX_MSGLEN_MAX - 1) ? msglen : (RX_MSGLEN_MAX - 1);
     const char *cmd_topic = aclk_get_topic(ACLK_TOPICID_COMMAND);
@@ -211,7 +212,7 @@ static void msg_callback_old_protocol(const char *topic, const void *msg, size_t
     close(logfd);
 #endif
 
-    debug(D_ACLK, "Got Message From Broker Topic \"%s\" QOS %d MSG: \"%s\"", topic, qos, cmsg);
+    debug(D_ACLK, "Got Message From Broker Topic \"%s\" QoS %d MSG: \"%s\"", topic, qos, cmsg);
 
     if (strcmp(cmd_topic, topic))
         error("Received message on unexpected topic %s", topic);
@@ -221,12 +222,13 @@ static void msg_callback_old_protocol(const char *topic, const void *msg, size_t
         return;
     }
 
-    aclk_handle_cloud_message(cmsg);
+    aclk_handle_cloud_cmd_message(cmsg);
 }
 
 #ifdef ENABLE_NEW_CLOUD_PROTOCOL
 static void msg_callback_new_protocol(const char *topic, const void *msg, size_t msglen, int qos)
 {
+    UNUSED(qos);
     if (msglen > RX_MSGLEN_MAX)
         error("Incoming ACLK message was bigger than MAX of %d and got truncated.", RX_MSGLEN_MAX);
 
@@ -281,7 +283,7 @@ static void puback_callback(uint16_t packet_id)
 #endif
 
     if (aclk_shared_state.mqtt_shutdown_msg_id == (int)packet_id) {
-        error("Got PUBACK for shutdown message. Can exit gracefully.");
+        info("Shutdown message has been acknowledged by the cloud. Exiting gracefully");
         aclk_shared_state.mqtt_shutdown_msg_rcvd = 1;
     }
 }
@@ -301,7 +303,7 @@ static int read_query_thread_count()
 
 void aclk_graceful_disconnect(mqtt_wss_client client);
 
-/* Keeps connection alive and handles all network comms.
+/* Keeps connection alive and handles all network communications.
  * Returns on error or when netdata is shutting down.
  * @param client instance of mqtt_wss_client
  * @returns  0 - Netdata Exits
@@ -314,12 +316,16 @@ static int handle_connection(mqtt_wss_client client)
         // timeout 1000 to check at least once a second
         // for netdata_exit
         if (mqtt_wss_service(client, 1000) < 0){
-            error("Connection Error or Dropped");
+            error_report("Connection Error or Dropped");
             return 1;
         }
 
-        if (disconnect_req) {
+        if (disconnect_req || aclk_kill_link) {
+            info("Going to restart connection due to disconnect_req=%s (cloud req), aclk_kill_link=%s (reclaim)",
+                disconnect_req ? "true" : "false",
+                aclk_kill_link ? "true" : "false");
             disconnect_req = 0;
+            aclk_kill_link = 0;
             aclk_graceful_disconnect(client);
             aclk_queue_unlock();
             aclk_shared_state.mqtt_shutdown_msg_id = -1;
@@ -450,7 +456,7 @@ static int wait_popcorning_finishes()
 
 void aclk_graceful_disconnect(mqtt_wss_client client)
 {
-    error("Preparing to Gracefully Shutdown the ACLK");
+    info("Preparing to gracefully shutdown ACLK connection");
     aclk_queue_lock();
     aclk_queue_flush();
 #ifdef ENABLE_NEW_CLOUD_PROTOCOL
@@ -467,14 +473,16 @@ void aclk_graceful_disconnect(mqtt_wss_client client)
             break;
         }
         if (aclk_shared_state.mqtt_shutdown_msg_rcvd) {
-            error("MQTT App Layer `disconnect` message sent successfully");
+            info("MQTT App Layer `disconnect` message sent successfully");
             break;
         }
     }
+    info("ACLK link is down");
+    log_access("ACLK DISCONNECTED");
     aclk_stats_upd_online(0);
     aclk_connected = 0;
 
-    error("Attempting to Gracefully Shutdown MQTT/WSS connection");
+    info("Attempting to gracefully shutdown the MQTT/WSS connection");
     mqtt_wss_disconnect(client, 1000);
 }
 
@@ -505,7 +513,7 @@ static unsigned long aclk_reconnect_delay() {
     return aclk_tbeb_delay(0, aclk_env->backoff.base, aclk_env->backoff.min_s, aclk_env->backoff.max_s);
 }
 
-/* Block till aclk_reconnect_delay is satisifed or netdata_exit is signalled
+/* Block till aclk_reconnect_delay is satisfied or netdata_exit is signalled
  * @return 0 - Go ahead and connect (delay expired)
  *         1 - netdata_exit
  */
@@ -605,12 +613,7 @@ static int aclk_attempt_to_connect(mqtt_wss_client client)
             .drop_on_publish_fail = 1
         };
 
-#if defined(ENABLE_NEW_CLOUD_PROTOCOL) && defined(ACLK_NEWARCH_DEVMODE)
-        aclk_use_new_cloud_arch = 1;
-        info("Switching ACLK to new protobuf protocol. Due to #define ACLK_NEWARCH_DEVMODE.");
-#else
         aclk_use_new_cloud_arch = 0;
-#endif
 
 #ifndef ACLK_DISABLE_CHALLENGE
         if (aclk_env) {
@@ -630,20 +633,19 @@ static int aclk_attempt_to_connect(mqtt_wss_client client)
         if (netdata_exit)
             return 1;
 
-#ifndef ACLK_NEWARCH_DEVMODE
         if (aclk_env->encoding == ACLK_ENC_PROTO) {
 #ifndef ENABLE_NEW_CLOUD_PROTOCOL
             error("Cloud requested New Cloud Protocol to be used but this agent cannot support it!");
             continue;
-#endif
+#else
             if (!aclk_env_has_capa("proto")) {
                 error ("Can't encoding=proto without at least \"proto\" capability.");
                 continue;
             }
             info("Switching ACLK to new protobuf protocol. Due to /env response.");
             aclk_use_new_cloud_arch = 1;
-        }
 #endif
+        }
 
         memset(&auth_url, 0, sizeof(url_t));
         if (url_parse(aclk_env->auth_endpoint, &auth_url)) {
@@ -720,12 +722,13 @@ static int aclk_attempt_to_connect(mqtt_wss_client client)
             json_object_put(lwt);
 
         if (!ret) {
-            info("MQTTWSS connection succeeded");
+            info("ACLK connection successfully established");
+            log_access("ACLK CONNECTED");
             mqtt_connected_actions(client);
             return 0;
         }
 
-        error("Connect failed\n");
+        error_report("Connect failed");
     }
 
     return 1;
@@ -757,6 +760,11 @@ void *aclk_main(void *ptr)
         static_thread->enabled = NETDATA_MAIN_THREAD_EXITED;
         return NULL;
     }
+
+    unsigned int proto_hdl_cnt;
+#ifdef ENABLE_NEW_CLOUD_PROTOCOL
+    proto_hdl_cnt = aclk_init_rx_msg_handlers();
+#endif
 
     // This thread is unusual in that it cannot be cancelled by cancel_main_threads()
     // as it must notify the far end that it shutdown gracefully and avoid the LWT.
@@ -795,6 +803,7 @@ void *aclk_main(void *ptr)
         stats_thread = callocz(1, sizeof(struct aclk_stats_thread));
         stats_thread->thread = mallocz(sizeof(netdata_thread_t));
         stats_thread->query_thread_count = query_threads.count;
+        aclk_stats_thread_prepare(query_threads.count, proto_hdl_cnt);
         netdata_thread_create(
             stats_thread->thread, ACLK_STATS_THREAD_NAME, NETDATA_THREAD_OPTION_JOINABLE, aclk_stats_main_thread,
             stats_thread);
@@ -805,6 +814,16 @@ void *aclk_main(void *ptr)
     do {
         if (aclk_attempt_to_connect(mqttwss_client))
             goto exit_full;
+
+#if defined(ENABLE_ACLK) && !defined(ENABLE_NEW_CLOUD_PROTOCOL)
+        error_report("############################  WARNING  ###############################");
+        error_report("#       Your agent is configured to connect to cloud but has         #");
+        error_report("#      no protobuf protocol support (uses legacy JSON protocol)      #");
+        error_report("#  Legacy protocol will be deprecated soon (planned 1st March 2022)  #");
+        error_report("#  Visit following link for more info and instructions how to solve  #");
+        error_report("#   https://www.netdata.cloud/blog/netdata-clouds-new-architecture   #");
+        error_report("######################################################################");
+#endif
 
         // warning this assumes the popcorning is relative short (3s)
         // if that changes call mqtt_wss_service from within
@@ -821,6 +840,7 @@ void *aclk_main(void *ptr)
         if (handle_connection(mqttwss_client)) {
             aclk_stats_upd_online(0);
             aclk_connected = 0;
+            log_access("ACLK DISCONNECTED");
         }
     } while (!netdata_exit);
 
@@ -853,7 +873,7 @@ exit:
 // fix this in both old and new ACLK
 extern void health_alarm_entry2json_nolock(BUFFER *wb, ALARM_ENTRY *ae, RRDHOST *host);
 
-void ng_aclk_alarm_reload(void)
+void aclk_alarm_reload(void)
 {
     ACLK_SHARED_STATE_LOCK;
     if (unlikely(aclk_shared_state.agent_state == ACLK_HOST_INITIALIZING)) {
@@ -865,7 +885,7 @@ void ng_aclk_alarm_reload(void)
     aclk_queue_query(aclk_query_new(METADATA_ALARMS));
 }
 
-int ng_aclk_update_alarm(RRDHOST *host, ALARM_ENTRY *ae)
+int aclk_update_alarm(RRDHOST *host, ALARM_ENTRY *ae)
 {
     BUFFER *local_buffer;
     json_object *msg;
@@ -896,7 +916,7 @@ int ng_aclk_update_alarm(RRDHOST *host, ALARM_ENTRY *ae)
     return 0;
 }
 
-int ng_aclk_update_chart(RRDHOST *host, char *chart_name, int create)
+int aclk_update_chart(RRDHOST *host, char *chart_name, int create)
 {
     struct aclk_query *query;
 
@@ -920,7 +940,7 @@ int ng_aclk_update_chart(RRDHOST *host, char *chart_name, int create)
  * Add a new collector to the list
  * If it exists, update the chart count
  */
-void ng_aclk_add_collector(RRDHOST *host, const char *plugin_name, const char *module_name)
+void aclk_add_collector(RRDHOST *host, const char *plugin_name, const char *module_name)
 {
     struct aclk_query *query;
     struct _collector *tmp_collector;
@@ -963,7 +983,7 @@ void ng_aclk_add_collector(RRDHOST *host, const char *plugin_name, const char *m
  * This function will release the memory used and schedule
  * a cloud update
  */
-void ng_aclk_del_collector(RRDHOST *host, const char *plugin_name, const char *module_name)
+void aclk_del_collector(RRDHOST *host, const char *plugin_name, const char *module_name)
 {
     struct aclk_query *query;
     struct _collector *tmp_collector;
@@ -1004,7 +1024,7 @@ void ng_aclk_del_collector(RRDHOST *host, const char *plugin_name, const char *m
     aclk_queue_query(query);
 }
 
-void ng_aclk_host_state_update(RRDHOST *host, int cmd)
+void aclk_host_state_update(RRDHOST *host, int cmd)
 {
     uuid_t node_id;
     int ret;

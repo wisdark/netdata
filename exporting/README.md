@@ -1,11 +1,11 @@
 <!--
-title: "Exporting engine reference"
+title: "Exporting reference"
 description: "With the exporting engine, you can archive your Netdata metrics to multiple external databases for long-term storage or further analysis."
-sidebar_label: Reference guide
+sidebar_label: Exporting reference
 custom_edit_url: https://github.com/netdata/netdata/edit/master/exporting/README.md
 -->
 
-# Exporting engine reference
+# Exporting reference
 
 Welcome to the exporting engine reference guide. This guide contains comprehensive information about enabling,
 configuring, and monitoring Netdata's exporting engine, which allows you to send metrics to external time-series
@@ -311,4 +311,4 @@ Netdata adds 3 alarms:
 
 ![image](https://cloud.githubusercontent.com/assets/2662304/20463779/a46ed1c2-af43-11e6-91a5-07ca4533cac3.png)
 
-[![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Fexporting%2FREADME&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)](<>)
+

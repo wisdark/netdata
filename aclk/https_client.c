@@ -587,7 +587,7 @@ void https_req_response_init(https_req_response_t *res) {
     res->payload_size = 0;
 }
 
-static inline char *min_non_null(char *a, char *b) {
+static inline char *UNUSED_FUNCTION(min_non_null)(char *a, char *b) {
     if (!a)
         return b;
     if (!b)
@@ -606,7 +606,7 @@ static int parse_host_port(url_t *url) {
             error(URL_PARSER_LOG_PREFIX ": specified but no port number");
             return 1;
         }
-        if (port_len > 5 /* MAX port lenght is 5digit long in decimal */) {
+        if (port_len > 5 /* MAX port length is 5digit long in decimal */) {
             error(URL_PARSER_LOG_PREFIX "port # is too long");
             return 1;
         }

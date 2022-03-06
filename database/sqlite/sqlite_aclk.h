@@ -20,6 +20,7 @@
 #define ACLK_DATABASE_CLEANUP_INTERVAL (3600)
 #define ACLK_DATABASE_ROTATION_INTERVAL (3600)
 #define ACLK_DELETE_ACK_INTERNAL (600)
+#define ACLK_DELETE_ACK_ALERTS_INTERNAL (86400)
 #define ACLK_SYNC_QUERY_SIZE 512
 
 struct aclk_completion {
@@ -124,6 +125,7 @@ enum aclk_database_opcode {
     ACLK_DATABASE_CHART_ACK,
     ACLK_DATABASE_UPD_RETENTION,
     ACLK_DATABASE_DIM_DELETION,
+    ACLK_DATABASE_ORPHAN_HOST,
 #endif
     ACLK_DATABASE_ALARM_HEALTH_LOG,
     ACLK_DATABASE_CLEANUP,
@@ -192,6 +194,8 @@ struct aclk_database_worker_config {
     int node_info_send;
     int chart_pending;
     int chart_reset_count;
+    volatile unsigned is_shutting_down;
+    volatile unsigned is_orphan;
     struct aclk_database_worker_config  *next;
 };
 
@@ -225,4 +229,7 @@ void sql_aclk_sync_init(void);
 void sql_check_aclk_table_list(struct aclk_database_worker_config *wc);
 void sql_delete_aclk_table_list(struct aclk_database_worker_config *wc, struct aclk_database_cmd cmd);
 void sql_maint_aclk_sync_database(struct aclk_database_worker_config *wc, struct aclk_database_cmd cmd);
+int claimed();
+void aclk_sync_exit_all();
+struct aclk_database_worker_config *find_inactive_wc_by_node_id(char *node_id);
 #endif //NETDATA_SQLITE_ACLK_H

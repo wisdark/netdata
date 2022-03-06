@@ -55,7 +55,7 @@ void aclk_env_t_destroy(aclk_env_t *env) {
 
 int aclk_env_has_capa(const char *capa)
 {
-    for (int i = 0; i < aclk_env->capability_count; i++) {
+    for (int i = 0; i < (int) aclk_env->capability_count; i++) {
         if (!strcasecmp(capa, aclk_env->capabilities[i]))
             return 1;
     }
@@ -64,7 +64,7 @@ int aclk_env_has_capa(const char *capa)
 
 #ifdef ACLK_LOG_CONVERSATION_DIR
 volatile int aclk_conversation_log_counter = 0;
-#if !defined(HAVE_C___ATOMIC) || defined(NETDATA_NO_ATOMIC_INSTRUCTIONS)
+#if !defined(HAVE_C___ATOMIC)
 netdata_mutex_t aclk_conversation_log_mutex = NETDATA_MUTEX_INITIALIZER;
 int aclk_get_conv_log_next()
 {

@@ -436,6 +436,7 @@ struct rrdset_volatile {
     uuid_t hash_id;
     struct label *new_labels;
     struct label_index labels;
+    bool is_ar_chart;
 };
 
 // ----------------------------------------------------------------------------
@@ -754,6 +755,11 @@ struct rrdhost_system_info {
     char *container_detection;
     char *is_k8s_node;
     uint16_t hops;
+    bool ml_capable;
+    bool ml_enabled;
+    char *install_type;
+    char *prebuilt_arch;
+    char *prebuilt_dist;
 };
 
 struct rrdhost {
@@ -799,22 +805,22 @@ struct rrdhost {
     // ------------------------------------------------------------------------
     // streaming of data to remote hosts - rrdpush
 
-    unsigned int rrdpush_send_enabled:1;            // 1 when this host sends metrics to another netdata
+    unsigned int rrdpush_send_enabled;            // 1 when this host sends metrics to another netdata
     char *rrdpush_send_destination;                 // where to send metrics to
     char *rrdpush_send_api_key;                     // the api key at the receiving netdata
 
     // the following are state information for the threading
     // streaming metrics from this netdata to an upstream netdata
     struct sender_state *sender;
-    volatile unsigned int rrdpush_sender_spawn:1;   // 1 when the sender thread has been spawn
+    volatile unsigned int rrdpush_sender_spawn;   // 1 when the sender thread has been spawn
     netdata_thread_t rrdpush_sender_thread;         // the sender thread
     void *dbsync_worker;
 
-    volatile unsigned int rrdpush_sender_connected:1; // 1 when the sender is ready to push metrics
+    volatile unsigned int rrdpush_sender_connected; // 1 when the sender is ready to push metrics
     int rrdpush_sender_socket;                      // the fd of the socket to the remote host, or -1
 
-    volatile unsigned int rrdpush_sender_error_shown:1; // 1 when we have logged a communication error
-    volatile unsigned int rrdpush_sender_join:1;    // 1 when we have to join the sending thread
+    volatile unsigned int rrdpush_sender_error_shown; // 1 when we have logged a communication error
+    volatile unsigned int rrdpush_sender_join;    // 1 when we have to join the sending thread
 
     SIMPLE_PATTERN *rrdpush_send_charts_matching;   // pattern to match the charts to be sent
 
@@ -837,7 +843,7 @@ struct rrdhost {
     // ------------------------------------------------------------------------
     // health monitoring options
 
-    unsigned int health_enabled:1;                  // 1 when this host has health enabled
+    unsigned int health_enabled;                  // 1 when this host has health enabled
     time_t health_delay_up_to;                      // a timestamp to delay alarms processing up to
     char *health_default_exec;                      // the full path of the alarms notifications program
     char *health_default_recipient;                 // the default recipient for all alarms
@@ -1150,7 +1156,10 @@ static inline time_t rrdset_first_entry_t_nolock(RRDSET *st)
         time_t first_entry_t = LONG_MAX;
 
         rrddim_foreach_read(rd, st) {
-            first_entry_t = MIN(first_entry_t, rd->state->query_ops.oldest_time(rd));
+            first_entry_t =
+                MIN(first_entry_t,
+                    rd->state->query_ops.oldest_time(rd) > st->update_every ?
+                        rd->state->query_ops.oldest_time(rd) - st->update_every : 0);
         }
 
         if (unlikely(LONG_MAX == first_entry_t)) return 0;

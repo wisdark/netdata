@@ -380,6 +380,9 @@ typedef struct ebpf_bandwidth {
     uint64_t call_udp_sent;      // Number of times udp_sendmsg was called
     uint64_t call_udp_received;  // Number of times udp_recvmsg was called
     uint64_t close;              // Number of times tcp_close was called
+    uint64_t drop;               // THIS IS NOT USED FOR WHILE, we are in groom section
+    uint32_t tcp_v4_connection;  // Number of times tcp_v4_connection was called.
+    uint32_t tcp_v6_connection;  // Number of times tcp_v6_connection was called.
 } ebpf_bandwidth_t;
 
 /**
@@ -405,32 +408,30 @@ static inline void debug_log_int(const char *fmt, ...)
 //
 extern struct pid_stat **all_pids;
 
-extern int ebpf_read_apps_groups_conf(struct target **apps_groups_default_target,
+int ebpf_read_apps_groups_conf(struct target **apps_groups_default_target,
                                       struct target **apps_groups_root_target,
                                       const char *path,
                                       const char *file);
 
-extern void clean_apps_groups_target(struct target *apps_groups_root_target);
+void clean_apps_groups_target(struct target *apps_groups_root_target);
 
-extern size_t zero_all_targets(struct target *root);
+size_t zero_all_targets(struct target *root);
 
-extern int am_i_running_as_root();
+int am_i_running_as_root();
 
-extern void cleanup_exited_pids();
+void cleanup_exited_pids();
 
-extern int ebpf_read_hash_table(void *ep, int fd, uint32_t pid);
+int ebpf_read_hash_table(void *ep, int fd, uint32_t pid);
 
-extern int get_pid_comm(pid_t pid, size_t n, char *dest);
+int get_pid_comm(pid_t pid, size_t n, char *dest);
 
-extern size_t read_processes_statistic_using_pid_on_target(ebpf_process_stat_t **ep,
+size_t read_processes_statistic_using_pid_on_target(ebpf_process_stat_t **ep,
                                                            int fd,
                                                            struct pid_on_target *pids);
 
-extern size_t read_bandwidth_statistic_using_pid_on_target(ebpf_bandwidth_t **ep, int fd, struct pid_on_target *pids);
+size_t read_bandwidth_statistic_using_pid_on_target(ebpf_bandwidth_t **ep, int fd, struct pid_on_target *pids);
 
-extern void collect_data_for_all_processes(int tbl_pid_stats_fd);
-
-extern void clean_global_memory();
+void collect_data_for_all_processes(int tbl_pid_stats_fd);
 
 extern ebpf_process_stat_t **global_process_stats;
 extern ebpf_process_publish_apps_t **current_apps_data;

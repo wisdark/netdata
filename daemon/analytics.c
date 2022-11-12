@@ -7,11 +7,11 @@ struct analytics_data analytics_data;
 extern void analytics_exporting_connectors (BUFFER *b);
 extern void analytics_exporting_connectors_ssl (BUFFER *b);
 extern void analytics_build_info (BUFFER *b);
-extern int aclk_connected, aclk_use_new_cloud_arch;
+extern int aclk_connected;
 
 struct collector {
-    char *plugin;
-    char *module;
+    const char *plugin;
+    const char *module;
 };
 
 struct array_printer {
@@ -249,8 +249,8 @@ void analytics_exporters(void)
     buffer_free(bi);
 }
 
-int collector_counter_callb(void *entry, void *data)
-{
+int collector_counter_callb(const DICTIONARY_ITEM *item __maybe_unused, void *entry, void *data) {
+
     struct array_printer *ap = (struct array_printer *)data;
     struct collector *col = (struct collector *)entry;
 
@@ -278,25 +278,28 @@ int collector_counter_callb(void *entry, void *data)
 void analytics_collectors(void)
 {
     RRDSET *st;
-    DICTIONARY *dict = dictionary_create(DICTIONARY_FLAG_SINGLE_THREADED);
+    DICTIONARY *dict = dictionary_create(DICT_OPTION_SINGLE_THREADED);
     char name[500];
     BUFFER *bt = buffer_create(1000);
 
-    rrdset_foreach_read(st, localhost)
-    {
-        if (rrdset_is_available_for_viewers(st)) {
-            struct collector col = { .plugin = st->plugin_name ? st->plugin_name : "",
-                                     .module = st->module_name ? st->module_name : "" };
-            snprintfz(name, 499, "%s:%s", col.plugin, col.module);
-            dictionary_set(dict, name, &col, sizeof(struct collector));
-        }
+    rrdset_foreach_read(st, localhost) {
+        if(!rrdset_is_available_for_viewers(st))
+            continue;
+
+        struct collector col = {
+            .plugin = rrdset_plugin_name(st),
+            .module = rrdset_module_name(st)
+        };
+        snprintfz(name, 499, "%s:%s", col.plugin, col.module);
+        dictionary_set(dict, name, &col, sizeof(struct collector));
     }
+    rrdset_foreach_done(st);
 
     struct array_printer ap;
     ap.c = 0;
     ap.both = bt;
 
-    dictionary_get_all(dict, collector_counter_callb, &ap);
+    dictionary_walkthrough_read(dict, collector_counter_callb, &ap);
     dictionary_destroy(dict);
 
     analytics_set_data(&analytics_data.netdata_collectors, (char *)buffer_tostring(ap.both));
@@ -334,11 +337,12 @@ void analytics_alarms_notifications(void)
 
     BUFFER *b = buffer_create(1000);
     int cnt = 0;
-    FILE *fp = mypopen(script, &command_pid);
-    if (fp) {
+    FILE *fp_child_input;
+    FILE *fp_child_output = netdata_popen(script, &command_pid, &fp_child_input);
+    if (fp_child_output) {
         char line[200 + 1];
 
-        while (fgets(line, 200, fp) != NULL) {
+        while (fgets(line, 200, fp_child_output) != NULL) {
             char *end = line;
             while (*end && *end != '\n')
                 end++;
@@ -351,7 +355,7 @@ void analytics_alarms_notifications(void)
 
             cnt++;
         }
-        mypclose(fp, command_pid);
+        netdata_pclose(fp_child_input, fp_child_output, command_pid);
     }
     freez(script);
 
@@ -381,8 +385,8 @@ void analytics_https(void)
     BUFFER *b = buffer_create(30);
 #ifdef ENABLE_HTTPS
     analytics_exporting_connectors_ssl(b);
-    buffer_strcat(b, netdata_client_ctx && localhost->ssl.flags == NETDATA_SSL_HANDSHAKE_COMPLETE && localhost->rrdpush_sender_connected == 1 ? "streaming|" : "|");
-    buffer_strcat(b, netdata_srv_ctx ? "web" : "");
+    buffer_strcat(b, netdata_ssl_client_ctx && rrdhost_flag_check(localhost, RRDHOST_FLAG_RRDPUSH_SENDER_CONNECTED) && localhost->sender->ssl.flags == NETDATA_SSL_HANDSHAKE_COMPLETE ? "streaming|" : "|");
+    buffer_strcat(b, netdata_ssl_srv_ctx ? "web" : "");
 #else
     buffer_strcat(b, "||");
 #endif
@@ -395,12 +399,11 @@ void analytics_charts(void)
 {
     RRDSET *st;
     int c = 0;
+
     rrdset_foreach_read(st, localhost)
-    {
-        if (rrdset_is_available_for_viewers(st)) {
-            c++;
-        }
-    }
+        if(rrdset_is_available_for_viewers(st)) c++;
+    rrdset_foreach_done(st);
+
     {
         char b[7];
         snprintfz(b, 6, "%d", c);
@@ -412,18 +415,19 @@ void analytics_metrics(void)
 {
     RRDSET *st;
     long int dimensions = 0;
-    RRDDIM *rd;
-    rrdset_foreach_read(st, localhost)
-    {
-        rrdset_rdlock(st);
-        rrddim_foreach_read(rd, st)
-        {
-            if (rrddim_flag_check(rd, RRDDIM_FLAG_HIDDEN) || rrddim_flag_check(rd, RRDDIM_FLAG_OBSOLETE))
-                continue;
-            dimensions++;
+    rrdset_foreach_read(st, localhost) {
+        if (rrdset_is_available_for_viewers(st)) {
+            RRDDIM *rd;
+            rrddim_foreach_read(rd, st) {
+                if (rrddim_option_check(rd, RRDDIM_OPTION_HIDDEN) || rrddim_flag_check(rd, RRDDIM_FLAG_OBSOLETE))
+                    continue;
+                dimensions++;
+            }
+            rrddim_foreach_done(rd);
         }
-        rrdset_unlock(st);
     }
+    rrdset_foreach_done(st);
+
     {
         char b[7];
         snprintfz(b, 6, "%ld", dimensions);
@@ -436,7 +440,7 @@ void analytics_alarms(void)
     int alarm_warn = 0, alarm_crit = 0, alarm_normal = 0;
     char b[10];
     RRDCALC *rc;
-    for (rc = localhost->alarms; rc; rc = rc->next) {
+    foreach_rrdcalc_in_rrdhost_read(localhost, rc) {
         if (unlikely(!rc->rrdset || !rc->rrdset->last_collected_time.tv_sec))
             continue;
 
@@ -451,6 +455,7 @@ void analytics_alarms(void)
                 alarm_normal++;
         }
     }
+    foreach_rrdcalc_in_rrdhost_done(rc);
 
     snprintfz(b, 9, "%d", alarm_normal);
     analytics_set_data(&analytics_data.netdata_alarms_normal, b);
@@ -494,12 +499,7 @@ void analytics_aclk(void)
 #ifdef ENABLE_ACLK
     if (aclk_connected) {
         analytics_set_data(&analytics_data.netdata_host_aclk_available, "true");
-#ifdef ENABLE_NEW_CLOUD_PROTOCOL
-        if (aclk_use_new_cloud_arch)
-            analytics_set_data_str(&analytics_data.netdata_host_aclk_protocol, "New");
-        else
-#endif
-            analytics_set_data_str(&analytics_data.netdata_host_aclk_protocol, "Legacy");
+        analytics_set_data_str(&analytics_data.netdata_host_aclk_protocol, "New");
     }
     else
 #endif
@@ -525,23 +525,18 @@ void analytics_gather_immutable_meta_data(void)
  */
 void analytics_gather_mutable_meta_data(void)
 {
-    rrdhost_rdlock(localhost);
-
     analytics_collectors();
     analytics_alarms();
     analytics_charts();
     analytics_metrics();
     analytics_aclk();
-
-    rrdhost_unlock(localhost);
-
     analytics_mirrored_hosts();
     analytics_alarms_notifications();
 
     analytics_set_data(
-        &analytics_data.netdata_config_is_parent, (localhost->next || configured_as_parent()) ? "true" : "false");
+        &analytics_data.netdata_config_is_parent, (rrdhost_hosts_available() > 1 || configured_as_parent()) ? "true" : "false");
 
-    char *claim_id = is_agent_claimed();
+    char *claim_id = get_agent_claimid();
     analytics_set_data(&analytics_data.netdata_host_agent_claimed, claim_id ? "true" : "false");
     freez(claim_id);
 
@@ -697,7 +692,7 @@ void get_system_timezone(void)
     // http://stackoverflow.com/questions/4554271/how-to-avoid-excessive-stat-etc-localtime-calls-in-strftime-on-linux
     const char *tz = getenv("TZ");
     if (!tz || !*tz)
-        setenv("TZ", config_get(CONFIG_SECTION_GLOBAL, "TZ environment variable", ":/etc/localtime"), 0);
+        setenv("TZ", config_get(CONFIG_SECTION_ENV_VARS, "TZ", ":/etc/localtime"), 0);
 
     char buffer[FILENAME_MAX + 1] = "";
     const char *timezone = NULL;
@@ -842,6 +837,20 @@ void set_global_environment()
     setenv("HOME", verify_required_directory(netdata_configured_home_dir), 1);
     setenv("NETDATA_HOST_PREFIX", netdata_configured_host_prefix, 1);
 
+    {
+        BUFFER *user_plugins_dirs = buffer_create(FILENAME_MAX);
+
+        for (size_t i = 1; i < PLUGINSD_MAX_DIRECTORIES && plugin_directories[i]; i++) {
+            if (i > 1)
+                buffer_strcat(user_plugins_dirs, " ");
+            buffer_strcat(user_plugins_dirs, plugin_directories[i]);
+        }
+
+        setenv("NETDATA_USER_PLUGINS_DIRS", buffer_tostring(user_plugins_dirs), 1);
+
+        buffer_free(user_plugins_dirs);
+    }
+
     analytics_data.data_length = 0;
     analytics_set_data(&analytics_data.netdata_config_stream_enabled, "null");
     analytics_set_data(&analytics_data.netdata_config_memory_mode, "null");
@@ -904,13 +913,13 @@ void set_global_environment()
     if (!p)
         p = "/bin:/usr/bin";
     snprintfz(path, 1024, "%s:%s", p, "/sbin:/usr/sbin:/usr/local/bin:/usr/local/sbin");
-    setenv("PATH", config_get(CONFIG_SECTION_PLUGINS, "PATH environment variable", path), 1);
+    setenv("PATH", config_get(CONFIG_SECTION_ENV_VARS, "PATH", path), 1);
 
     // python options
     p = getenv("PYTHONPATH");
     if (!p)
         p = "";
-    setenv("PYTHONPATH", config_get(CONFIG_SECTION_PLUGINS, "PYTHONPATH environment variable", p), 1);
+    setenv("PYTHONPATH", config_get(CONFIG_SECTION_ENV_VARS, "PYTHONPATH", p), 1);
 
     // disable buffering for python plugins
     setenv("PYTHONUNBUFFERED", "1", 1);
@@ -1008,11 +1017,12 @@ void send_statistics(const char *action, const char *action_result, const char *
 
     info("%s '%s' '%s' '%s'", as_script, action, action_result, action_data);
 
-    FILE *fp = mypopen(command_to_run, &command_pid);
-    if (fp) {
+    FILE *fp_child_input;
+    FILE *fp_child_output = netdata_popen(command_to_run, &command_pid, &fp_child_input);
+    if (fp_child_output) {
         char buffer[4 + 1];
-        char *s = fgets(buffer, 4, fp);
-        int exit_code = mypclose(fp, command_pid);
+        char *s = fgets(buffer, 4, fp_child_output);
+        int exit_code = netdata_pclose(fp_child_input, fp_child_output, command_pid);
         if (exit_code)
             error("Execution of anonymous statistics script returned %d.", exit_code);
         if (s && strncmp(buffer, "200", 3))

@@ -7,12 +7,14 @@ on:
     paths:
       - packaging/repoconfig/**
       - .github/workflows/repoconfig-packages.yml
+      - .github/data/distros.yml
   push:
     branches:
       - master
     paths:
       - packaging/repoconfig/**
       - .github/workflows/repoconfig-packages.yml
+      - .github/data/distros.yml
 env:
   DISABLE_TELEMETRY: 1
   REPO_PREFIX: netdata/netdata
@@ -25,7 +27,7 @@ jobs:
     steps:
       - name: Checkout
         id: checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Prepare tools
         id: prepare
         run: |
@@ -50,11 +52,10 @@ jobs:
                       'pkgclouddistro': data['include'][i]['packages']['repo_distro'],
                       'format': data['include'][i]['packages']['type'],
                       'base_image': data['include'][i]['base_image'] if 'base_image' in data['include'][i] else data['include'][i]['distro'],
-                      'platform': data['platform_map']['amd64'],
-                      'arch': 'amd64'
+                      'platform': data['platform_map']['amd64']
                   })
 
-          entries.sort(key=lambda k: (k['arch'], k['distro'], k['version']))
+          entries.sort(key=lambda k: (k['distro'], k['version']))
           matrix = json.dumps({'include': entries}, sort_keys=True)
           print('Generated Matrix: ' + matrix)
           print('::set-output name=matrix::' + matrix)
@@ -65,7 +66,7 @@ jobs:
           SLACK_ICON_EMOJI: ':github-actions:'
           SLACK_TITLE: 'Repository Package Build matrix generation failed:'
           SLACK_USERNAME: 'GitHub Actions'
-          SLACK_MESSAGE: >-
+          SLACK_MESSAGE: |-
               ${{ github.repository }}: Failed to generate build matrix for repository package build.
               Checkout: ${{ steps.checkout.outcome }}
               Prepare Tools: ${{ steps.prepare.outcome }}
@@ -76,6 +77,7 @@ jobs:
             failure()
             && github.event_name != 'pull_request'
             && startsWith(github.ref, 'refs/heads/master')
+            && github.repository == 'netdata/netdata'
           }}
 
   build:
@@ -96,7 +98,7 @@ jobs:
     steps:
       - name: Checkout
         id: checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         # Unlike normally, we do not need a deep clone or submodules for this.
       - name: Fetch base image
         id: fetch-images
@@ -113,6 +115,35 @@ jobs:
           docker run --security-opt seccomp=unconfined -e DISABLE_TELEMETRY=1 --platform ${{ matrix.platform }} \
               -v "$PWD":/netdata ${{ matrix.base_image }}:${{ matrix.version }} \
               /netdata/packaging/repoconfig/build-${{ matrix.format }}.sh
+      - name: SSH setup
+        id: ssh-setup
+        if: github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.NETDATABOT_PACKAGES_SSH_KEY }}
+          name: id_ecdsa
+          known_hosts: ${{ secrets.PACKAGES_KNOWN_HOSTS }}
+      - name: Upload to packages.netdata.cloud
+        id: package-upload
+        continue-on-error: true
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          .github/scripts/package-upload.sh \
+          ${{ matrix.repo_distro }} \
+          ${{ matrix.arch }} \
+          ${{ matrix.format }} \
+          netdata/netdata
+          .github/scripts/package-upload.sh \
+          ${{ matrix.repo_distro }} \
+          ${{ matrix.arch }} \
+          ${{ matrix.format }} \
+          netdata/netdata-edge
+          .github/scripts/package-upload.sh \
+          ${{ matrix.repo_distro }} \
+          ${{ matrix.arch }} \
+          ${{ matrix.format }} \
+          netdata/netdata-repoconfig
       - name: Upload Packages
         id: publish
         if: github.event_name != 'pull_request' && github.repository == 'netdata/netdata'
@@ -133,7 +164,7 @@ jobs:
             .github/scripts/package_cloud_wrapper.sh push "${REPO_PREFIX}-repoconfig/${{ matrix.pkgclouddistro }}" "${pkgfile}"
           done
       - name: Failure Notification
-        if: ${{ failure() }}
+        if: ${{ failure() && github.repository == 'netdata/netdata' }}
         uses: rtCamp/action-slack-notify@v2
         env:
           SLACK_COLOR: 'danger'
@@ -141,10 +172,12 @@ jobs:
           SLACK_ICON_EMOJI: ':github-actions:'
           SLACK_TITLE: 'Repository Package Build failed:'
           SLACK_USERNAME: 'GitHub Actions'
-          SLACK_MESSAGE: >-
+          SLACK_MESSAGE: |-
               ${{ github.repository }}: ${{ matrix.pkgclouddistro }} ${{ matrix.version }} repository package build failed.
               Checkout: ${{ steps.checkout.outcome }}
               Fetch images: ${{ steps.fetch-images.outcome }}
               Build: ${{ steps.build.outcome }}
-              Publish: ${{ steps.publish.outcome }}
+              Import SSH Key: ${{ steps.ssh-setup.outcome }}
+              Publish to packages.netdata.cloud: ${{ steps.package-upload.outcome }}
+              Publish to PackageCloud: ${{ steps.publish.outcome }}
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}

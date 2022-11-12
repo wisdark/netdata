@@ -17,7 +17,7 @@ on:
         default: nightly
         required: true
 concurrency: # This keeps multiple instances of the job from running concurrently for the same ref and event type.
-  group: release-${{ github.ref }}-${{ github.event_name }}
+  group: build-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 jobs:
   build-dist: # Build the distribution tarball and store it as an artifact.
@@ -28,10 +28,15 @@ jobs:
     steps:
       - name: Checkout
         id: checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
           submodules: recursive
+      - name: Fix tags
+        id: fix-tags
+        if: github.event_name != 'push'
+        run: |
+          git fetch --tags --force
       - name: Mark Stable
         id: channel
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.type != 'nightly'
@@ -40,6 +45,7 @@ jobs:
       - name: Build
         id: build
         run: |
+          git describe
           mkdir -p artifacts
           ./packaging/installer/install-required-packages.sh --dont-wait --non-interactive netdata
           autoreconf -ivf
@@ -55,7 +61,7 @@ jobs:
           cp netdata-*.tar.gz artifacts/
       - name: Store
         id: store
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: dist-tarball
           path: artifacts/*.tar.gz
@@ -68,9 +74,10 @@ jobs:
           SLACK_ICON_EMOJI: ':github-actions:'
           SLACK_TITLE: 'Distribution tarball creation failed:'
           SLACK_USERNAME: 'GitHub Actions'
-          SLACK_MESSAGE: >-
+          SLACK_MESSAGE: |-
               ${{ github.repository }}: Failed to create source tarball for distribution.
               Checkout: ${{ steps.checkout.outcome }}
+              Fix Tags: ${{ steps.fix-tags.outcome }}
               Mark stable: ${{ steps.channel.outcome }}
               Build: ${{ steps.build.outcome }}
               Store: ${{ steps.store.outcome }}
@@ -80,6 +87,7 @@ jobs:
             failure()
             && startsWith(github.ref, 'refs/heads/master')
             && github.event_name != 'pull_request'
+            && github.repository == 'netdata/netdata'
           }}
 
   build-static: # Build the static binary archives, and store them as artifacts.
@@ -88,28 +96,50 @@ jobs:
     strategy:
       matrix:
         arch:
-          - 'x86_64'
-          - 'armv7l'
-          - 'aarch64'
-          - 'ppc64le'
+          - x86_64
+          - armv7l
+          - aarch64
+          - ppc64le
     steps:
       - name: Checkout
         id: checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
           submodules: recursive
+      - name: Fix tags
+        id: fix-tags
+        if: github.event_name != 'push'
+        run: |
+          git fetch --tags --force
       - name: Mark Stable
         id: channel
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.type != 'nightly'
         run: |
           sed -i 's/^RELEASE_CHANNEL="nightly" *#/RELEASE_CHANNEL="stable" #/' netdata-installer.sh packaging/makeself/install-or-update.sh
+      - name: Get Cache Key
+        id: cache-key
+        run: .github/scripts/get-static-cache-key.sh ${{ matrix.arch }}
+      - name: Cache
+        id: cache
+        uses: actions/cache@v3
+        with:
+          path: artifacts/cache
+          key: ${{ steps.cache-key.outputs.key }}
       - name: Build
-        id: build
+        if: github.event_name != 'workflow_dispatch' # Don’t use retries on PRs.
         run: .github/scripts/build-static.sh ${{ matrix.arch }}
+      - name: Build
+        if: github.event_name == 'workflow_dispatch'
+        id: build
+        uses: nick-fields/retry@v2
+        with:
+          timeout_minutes: 180
+          retries: 3
+          command: .github/scripts/build-static.sh ${{ matrix.arch }}
       - name: Store
         id: store
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: static-archive
           path: artifacts/*.gz.run
@@ -122,9 +152,10 @@ jobs:
           SLACK_ICON_EMOJI: ':github-actions:'
           SLACK_TITLE: 'Static build failed:'
           SLACK_USERNAME: 'GitHub Actions'
-          SLACK_MESSAGE: >-
+          SLACK_MESSAGE: |-
               ${{ github.repository }}: Failed to create static installer archive for ${{ matrix.arch }}.
               Checkout: ${{ steps.checkout.outcome }}
+              Fix Tags: ${{ steps.fix-tags.outcome }}
               Mark stable: ${{ steps.channel.outcome }}
               Build: ${{ steps.build.outcome }}
               Store: ${{ steps.store.outcome }}
@@ -134,6 +165,7 @@ jobs:
             failure()
             && startsWith(github.ref, 'refs/heads/master')
             && github.event_name != 'pull_request'
+            && github.repository == 'netdata/netdata'
           }}
 
   matrix: # Generate the shared build matrix for our build tests.
@@ -144,7 +176,7 @@ jobs:
     steps:
       - name: Checkout
         id: checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Prepare tools
         id: prepare
         run: |
@@ -156,19 +188,32 @@ jobs:
           from ruamel.yaml import YAML
           import json
           yaml = YAML(typ='safe')
+          entries = list()
+
           with open('.github/data/distros.yml') as f:
               data = yaml.load(f)
-          del data['platform_map']
+
           for i, v in enumerate(data['include']):
-              data['include'][i]['artifact_key'] = data['include'][i]['distro'] + str(data['include'][i]['version']).replace('.', '')
-              if 'packages' in data['include'][i]:
-                  del data['include'][i]['packages']
-              if 'base_image' in data['include'][i]:
-                  data['include'][i]['distro'] = data['include'][i]['base_image']
-                  del data['include'][i]['base_image']
-              data['include'][i]['distro'] = ':'.join([data['include'][i]['distro'], str(data['include'][i]['version'])])
-              del data['include'][i]['version']
-          matrix = json.dumps(data, sort_keys=True)
+              e = {
+                'artifact_key': v['distro'] + str(v['version']).replace('.', ''),
+                'version': v['version'],
+              }
+
+              if 'base_image' in v:
+                e['distro'] = ':'.join([v['base_image'], str(v['version'])])
+              else:
+                e['distro'] = ':'.join([v['distro'], str(v['version'])])
+
+              if 'env_prep' in v:
+                e['env_prep'] = v['env_prep']
+
+              if 'jsonc_removal' in v:
+                e['jsonc_removal'] = v['jsonc_removal']
+
+              entries.append(e)
+
+          entries.sort(key=lambda k: k['distro'])
+          matrix = json.dumps({'include': entries}, sort_keys=True)
           print('Generated Matrix: ' + matrix)
           print('::set-output name=matrix::' + matrix)
       - name: Failure Notification
@@ -179,7 +224,7 @@ jobs:
           SLACK_ICON_EMOJI: ':github-actions:'
           SLACK_TITLE: 'Build matrix preparation failed:'
           SLACK_USERNAME: 'GitHub Actions'
-          SLACK_MESSAGE: >-
+          SLACK_MESSAGE: |-
               ${{ github.repository }}: Failed to prepare build matrix for build checks.
               Checkout: ${{ steps.checkout.outcome }}
               Prepare tools: ${{ steps.prepare.outcome }}
@@ -190,6 +235,7 @@ jobs:
             failure()
             && startsWith(github.ref, 'refs/heads/master')
             && github.event_name != 'pull_request'
+            && github.repository == 'netdata/netdata'
           }}
 
   prepare-test-images: # Prepare the test environments for our build checks. This also checks dependency handling code for each tested environment.
@@ -197,6 +243,8 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - matrix
+    env:
+      RETRY_DELAY: 300
     strategy:
       # Unlike the actal build tests, this completes _very_ fast (average of about 3 minutes for each job), so we
       # just run everything in parallel instead lof limiting job concurrency.
@@ -205,13 +253,49 @@ jobs:
     steps:
       - name: Checkout
         id: checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Setup Buildx
         id: buildx
-        uses: docker/setup-buildx-action@v1
+        uses: docker/setup-buildx-action@v2
       - name: Build test environment
-        id: build
-        uses: docker/build-push-action@v2
+        id: build1
+        uses: docker/build-push-action@v3
+        continue-on-error: true # We retry 3 times at 5 minute intervals if there is a failure here.
+        with:
+          push: false
+          load: false
+          file: .github/dockerfiles/Dockerfile.build_test
+          build-args: |
+            BASE=${{ matrix.distro }}
+            PRE=${{ matrix.env_prep }}
+            RMJSONC=${{ matrix.jsonc_removal }}
+          outputs: type=oci,dest=/tmp/image.tar
+          tags: test:${{ matrix.artifact_key }}
+      - name: Retry delay
+        if: ${{ steps.build1.outcome == 'failure' }}
+        run: sleep "${RETRY_DELAY}"
+      - name: Build test environment (attempt 2)
+        if: ${{ steps.build1.outcome == 'failure' }}
+        id: build2
+        uses: docker/build-push-action@v3
+        continue-on-error: true # We retry 3 times at 5 minute intervals if there is a failure here.
+        with:
+          push: false
+          load: false
+          file: .github/dockerfiles/Dockerfile.build_test
+          build-args: |
+            BASE=${{ matrix.distro }}
+            PRE=${{ matrix.env_prep }}
+            RMJSONC=${{ matrix.jsonc_removal }}
+          outputs: type=oci,dest=/tmp/image.tar
+          tags: test:${{ matrix.artifact_key }}
+      - name: Retry delay
+        if: ${{ steps.build1.outcome == 'failure' && steps.build2.outcome == 'failure' }}
+        run: sleep "${RETRY_DELAY}"
+      - name: Build test environment (attempt 3)
+        if: ${{ steps.build1.outcome == 'failure' && steps.build2.outcome == 'failure' }}
+        id: build3
+        uses: docker/build-push-action@v3
         with:
           push: false
           load: false
@@ -224,7 +308,7 @@ jobs:
           tags: test:${{ matrix.artifact_key }}
       - name: Upload image artifact
         id: upload
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: ${{ matrix.artifact_key }}-test-env
           path: /tmp/image.tar
@@ -237,11 +321,13 @@ jobs:
           SLACK_ICON_EMOJI: ':github-actions:'
           SLACK_TITLE: 'Test environment preparation for ${{ matrix.distro }} failed:'
           SLACK_USERNAME: 'GitHub Actions'
-          SLACK_MESSAGE: >-
+          SLACK_MESSAGE: |-
               ${{ github.repository }}: Test environment preparation for ${{ matrix.distro }} failed.
               Checkout: ${{ steps.checkout.outcome }}
               Set up Buildx: ${{ steps.buildx.outcome }}
-              Build test environment: ${{ steps.build.outcome }}
+              Build test environment: ${{ steps.build1.outcome }}
+              Build test environment (attempt 2): ${{ steps.build2.outcome }}
+              Build test environment (attempt 3): ${{ steps.build3.outcome }}
               Upload: ${{ steps.upload.outcome }}
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
         if: >-
@@ -249,6 +335,7 @@ jobs:
             failure()
             && startsWith(github.ref, 'refs/heads/master')
             && github.event_name != 'pull_request'
+            && github.repository == 'netdata/netdata'
           }}
 
   source-build: # Test various source build arrangements.
@@ -264,12 +351,12 @@ jobs:
     steps:
       - name: Checkout
         id: checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           submodules: recursive
       - name: Fetch test environment
         id: fetch
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         with:
           name: ${{ matrix.artifact_key }}-test-env
       - name: Load test environment
@@ -281,23 +368,23 @@ jobs:
         id: build-basic
         run: |
           docker run --security-opt seccomp=unconfined -w /netdata sha256:${{ steps.load.outputs.image }} \
-              /bin/sh -c 'autoreconf -ivf && ./configure && make -j2'
+              /bin/sh -c 'autoreconf -ivf && ./configure --disable-dependency-tracking && make -j2'
       - name: netdata-installer on ${{ matrix.distro }}, disable cloud
         id: build-no-cloud
         run: |
           docker run --security-opt seccomp=unconfined -w /netdata sha256:${{ steps.load.outputs.image }} \
-              /bin/sh -c './netdata-installer.sh --dont-wait --dont-start-it --disable-cloud'
+              /bin/sh -c './netdata-installer.sh --dont-wait --dont-start-it --disable-cloud --one-time-build'
       - name: netdata-installer on ${{ matrix.distro }}, require cloud
         id: build-cloud
         run: |
           docker run --security-opt seccomp=unconfined -w /netdata sha256:${{ steps.load.outputs.image }} \
-              /bin/sh -c './netdata-installer.sh --dont-wait --dont-start-it --require-cloud'
+              /bin/sh -c './netdata-installer.sh --dont-wait --dont-start-it --require-cloud --one-time-build'
       - name: netdata-installer on ${{ matrix.distro }}, require cloud, no JSON-C
         id: build-no-jsonc
         if: matrix.jsonc_removal != ''
         run: |
           docker run --security-opt seccomp=unconfined -w /netdata sha256:${{ steps.load.outputs.image }} \
-              /bin/sh -c '/rmjsonc.sh && ./netdata-installer.sh --dont-wait --dont-start-it --require-cloud'
+              /bin/sh -c '/rmjsonc.sh && ./netdata-installer.sh --dont-wait --dont-start-it --require-cloud --one-time-build'
       - name: Failure Notification
         uses: rtCamp/action-slack-notify@v2
         env:
@@ -306,7 +393,7 @@ jobs:
           SLACK_ICON_EMOJI: ':github-actions:'
           SLACK_TITLE: 'Build tests for ${{ matrix.distro }} failed:'
           SLACK_USERNAME: 'GitHub Actions'
-          SLACK_MESSAGE: >-
+          SLACK_MESSAGE: |-
               ${{ github.repository }}: Build tests for ${{ matrix.distro }} failed.
               Checkout: ${{ steps.checkout.outcome }}
               Fetch test environment: ${{ steps.fetch.outcome }}
@@ -321,6 +408,7 @@ jobs:
             failure()
             && startsWith(github.ref, 'refs/heads/master')
             && github.event_name != 'pull_request'
+            && github.repository == 'netdata/netdata'
           }}
 
   updater-check: # Test the generated dist archive using the updater code.
@@ -344,10 +432,10 @@ jobs:
     steps:
       - name: Checkout
         id: checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Fetch dist tarball artifacts
         id: fetch-tarball
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         with:
           name: dist-tarball
           path: dist-tarball
@@ -363,7 +451,7 @@ jobs:
           cat sha256sums.txt
       - name: Fetch test environment
         id: fetch-test-environment
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         with:
           name: ${{ matrix.artifact_key }}-test-env
       - name: Load test environment
@@ -384,7 +472,7 @@ jobs:
           SLACK_ICON_EMOJI: ':github-actions:'
           SLACK_TITLE: 'Updater checks for ${{ matrix.distro }} failed:'
           SLACK_USERNAME: 'GitHub Actions'
-          SLACK_MESSAGE: >-
+          SLACK_MESSAGE: |-
               ${{ github.repository }}: Updater checks for ${{ matrix.distro }} failed.
               Checkout: ${{ steps.checkout.outcome }}
               Fetch dist tarball: ${{ steps.fetch-tarball.outcome }}
@@ -398,6 +486,7 @@ jobs:
             failure()
             && startsWith(github.ref, 'refs/heads/master')
             && github.event_name != 'pull_request'
+            && github.repository == 'netdata/netdata'
           }}
 
   prepare-upload: # Consolidate the artifacts for uploading or releasing.
@@ -409,19 +498,19 @@ jobs:
     steps:
       - name: Checkout
         id: checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Prepare Environment
         id: prepare
         run: mkdir -p artifacts
       - name: Retrieve Dist Tarball
         id: fetch-dist
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         with:
           name: dist-tarball
           path: dist-tarball
       - name: Retrieve Static Build Artifacts
         id: fetch-static
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         with:
           name: static-archive
           path: static-archive
@@ -437,7 +526,7 @@ jobs:
           cat sha256sums.txt
       - name: Store Artifacts
         id: store
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: final-artifacts
           path: artifacts/*
@@ -450,7 +539,7 @@ jobs:
           SLACK_ICON_EMOJI: ':github-actions:'
           SLACK_TITLE: 'Failed to prepare release artifacts for upload:'
           SLACK_USERNAME: 'GitHub Actions'
-          SLACK_MESSAGE: >-
+          SLACK_MESSAGE: |-
               ${{ github.repository }}: Failed to prepare release artifacts for upload.
               CHeckout: ${{ steps.checkout.outcome }}
               Prepare environment: ${{ steps.prepare.outcome }}
@@ -464,6 +553,7 @@ jobs:
             failure()
             && startsWith(github.ref, 'refs/heads/master')
             && github.event_name != 'pull_request'
+            && github.repository == 'netdata/netdata'
           }}
 
   artifact-verification-dist: # Verify the regular installer works with the consolidated artifacts.
@@ -481,10 +571,10 @@ jobs:
     steps:
       - name: Checkout
         id: checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Fetch artifacts
         id: fetch
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         with:
           name: final-artifacts
           path: artifacts
@@ -501,7 +591,7 @@ jobs:
           SLACK_ICON_EMOJI: ':github-actions:'
           SLACK_TITLE: 'Artifact verification for source tarball failed.'
           SLACK_USERNAME: 'GitHub Actions'
-          SLACK_MESSAGE: >-
+          SLACK_MESSAGE: |-
               ${{ github.repository }}: Artifact verification for source tarball failed.
               Checkout: ${{ steps.checkout.outcome }}
               Fetch artifacts: ${{ steps.fetch.outcome }}
@@ -512,6 +602,7 @@ jobs:
             failure()
             && startsWith(github.ref, 'refs/heads/master')
             && github.event_name != 'pull_request'
+            && github.repository == 'netdata/netdata'
           }}
 
   artifact-verification-static: # Verify the static installer works with the consolidated artifacts.
@@ -529,10 +620,10 @@ jobs:
     steps:
       - name: Checkout
         id: checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Fetch artifacts
         id: fetch-artifacts
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         with:
           name: final-artifacts
           path: artifacts
@@ -549,7 +640,7 @@ jobs:
           SLACK_ICON_EMOJI: ':github-actions:'
           SLACK_TITLE: 'Artifact verification for static build failed.'
           SLACK_USERNAME: 'GitHub Actions'
-          SLACK_MESSAGE: >-
+          SLACK_MESSAGE: |-
               ${{ github.repository }}: Artifact verification for static build failed.
               Checkout:  ${{ steps.checkout.outcome }}
               Fetch artifacts: ${{ steps.fetch-artifacts.outcome }}
@@ -560,12 +651,13 @@ jobs:
             failure()
             && startsWith(github.ref, 'refs/heads/master')
             && github.event_name != 'pull_request'
+            && github.repository == 'netdata/netdata'
           }}
 
   upload-nightly: # Upload the nightly build artifacts to GCS.
     name: Upload Nightly Artifacts
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.type == 'nightly'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.type == 'nightly' && github.repository == 'netdata/netdata'
     needs:
       - updater-check
       - source-build
@@ -574,20 +666,20 @@ jobs:
     steps:
       - name: Retrieve Artifacts
         id: fetch
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         with:
           name: final-artifacts
           path: final-artifacts
       - name: Setup Gcloud
         id: gcloud
-        uses: google-github-actions/setup-gcloud@v0.5.1
+        uses: google-github-actions/setup-gcloud@v0.6.2
         with:
           project_id: ${{ secrets.GCP_NIGHTLY_STORAGE_PROJECT }}
           service_account_key: ${{ secrets.GCP_STORAGE_SERVICE_ACCOUNT_KEY }}
           export_default_credentials: true
       - name: Upload Artifacts
         id: upload
-        uses: google-github-actions/upload-cloud-storage@v0.5.0
+        uses: google-github-actions/upload-cloud-storage@v0.10.4
         with:
           destination: ${{ secrets.GCP_NIGHTLY_STORAGE_BUCKET }}
           gzip: false
@@ -601,7 +693,7 @@ jobs:
           SLACK_ICON_EMOJI: ':github-actions:'
           SLACK_TITLE: 'Failed to upload nightly release artifacts:'
           SLACK_USERNAME: 'GitHub Actions'
-          SLACK_MESSAGE: >-
+          SLACK_MESSAGE: |-
               ${{ github.repository }}: Failed to upload nightly release artifacts.
               Fetch artifacts: ${{ steps.fetch.outcome }}
               Setup GCloud: ${{ steps.gcloud.outcome }}
@@ -614,22 +706,39 @@ jobs:
             && github.event_name != 'pull_request'
           }}
 
+  normalize-tag: # Fix the release tag if needed
+    name: Normalize Release Tag
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.type == 'release'
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Normalize Tag
+        id: tag
+        run: |
+          if echo ${{ github.event.inputs.version }} | grep -qE '^[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+$'; then
+            echo "::set-output name=tag::v${{ github.event.inputs.version }}"
+          else
+            echo "::set-output name=tag::${{ github.event.inputs.version }}"
+          fi
+
   upload-release: # Create the draft release and upload the build artifacts.
     name: Create Release Draft
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.type == 'release'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.type == 'release' && github.repository == 'netdata/netdata'
     needs:
       - updater-check
       - source-build
       - artifact-verification-dist
       - artifact-verification-static
+      - normalize-tag
     steps:
       - name: Checkout
         id: checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Retrieve Artifacts
         id: fetch
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         with:
           name: final-artifacts
           path: final-artifacts
@@ -641,7 +750,7 @@ jobs:
           artifactErrorsFailBuild: true
           artifacts: 'final-artifacts/sha256sums.txt,final-artifacts/netdata-*.tar.gz,final-artifacts/netdata-*.gz.run'
           draft: true
-          tag: ${{ github.event.inputs.version }}
+          tag: ${{ needs.normalize-tag.outputs.tag }}
           token: ${{ secrets.NETDATABOT_GITHUB_TOKEN }}
       - name: Failure Notification
         uses: rtCamp/action-slack-notify@v2
@@ -651,7 +760,7 @@ jobs:
           SLACK_ICON_EMOJI: ':github-actions:'
           SLACK_TITLE: 'Failed to draft release:'
           SLACK_USERNAME: 'GitHub Actions'
-          SLACK_MESSAGE: >-
+          SLACK_MESSAGE: |-
               ${{ github.repository }}: Failed to create draft release or attach artifacts.
               Checkout: ${{ steps.checkout.outcome }}
               Fetch artifacts: ${{ steps.fetch.outcome }}

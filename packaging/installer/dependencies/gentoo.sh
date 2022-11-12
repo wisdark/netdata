@@ -21,14 +21,12 @@ package_tree="
   app-arch/tar
   net-misc/curl
   app-arch/gzip
-  net-analyzer/netcat
   sys-apps/util-linux
   net-libs/libmnl
   dev-libs/json-c
   dev-libs/libuv
   app-arch/lz4
   dev-libs/openssl
-  dev-libs/judy
   virtual/libelf
   dev-lang/python
   dev-libs/libuv

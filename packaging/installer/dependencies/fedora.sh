@@ -32,9 +32,9 @@ declare -a package_tree=(
   autoconf-archive
   autogen
   automake
+  libatomic
   libtool
   cmake
-  nmap-ncat
   zlib-devel
   libuuid-devel
   libmnl-devel
@@ -42,7 +42,6 @@ declare -a package_tree=(
   libuv-devel
   lz4-devel
   openssl-devel
-  Judy-devel
   elfutils-libelf-devel
   git
   pkgconfig

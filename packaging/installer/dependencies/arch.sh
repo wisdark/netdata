@@ -16,7 +16,6 @@ declare -a package_tree=(
   automake
   libtool
   cmake
-  gnu-netcat
   zlib
   util-linux
   libmnl
@@ -24,7 +23,6 @@ declare -a package_tree=(
   libuv
   lz4
   openssl
-  judy
   libelf
   git
   pkgconfig

@@ -3,8 +3,7 @@
 #ifdef ENABLE_COMPRESSION
 #include "lz4.h"
 
-#define LZ4_MAX_MSG_SIZE 0x4000
-#define LZ4_STREAM_BUFFER_SIZE (0x10000 + LZ4_MAX_MSG_SIZE)
+#define STREAM_COMPRESSION_MSG "STREAM_COMPRESSION"
 
 #define SIGNATURE ((uint32_t)('z' | 0x80) | (0x80 << 8) | (0x80 << 16) | ('\n' << 24))
 #define SIGNATURE_MASK ((uint32_t)0xff | (0x80 << 8) | (0x80 << 16) | (0xff << 24))
@@ -16,8 +15,9 @@
  */
 struct compressor_data {
     LZ4_stream_t *stream;
-    char *stream_buffer;
-    size_t stream_buffer_pos;
+    char *input_ring_buffer;
+    size_t input_ring_buffer_size;
+    size_t input_ring_buffer_pos;
 };
 
 
@@ -29,9 +29,9 @@ static void lz4_compressor_reset(struct compressor_state *state)
     if (state->data) {
         if (state->data->stream) {
             LZ4_resetStream_fast(state->data->stream);            
-            info("STREAM_COMPRESSION: Compressor resets stream fast!");
+            info("%s: Compressor Reset", STREAM_COMPRESSION_MSG);
         }
-        state->data->stream_buffer_pos = 0;
+        state->data->input_ring_buffer_pos = 0;
     }
 }
 
@@ -45,55 +45,72 @@ static void lz4_compressor_destroy(struct compressor_state **state)
         if (s->data) {
             if (s->data->stream)
                 LZ4_freeStream(s->data->stream);
-            freez(s->data->stream_buffer);
+            freez(s->data->input_ring_buffer);
+            freez(s->data);
         }
-        freez(s->buffer);
+        freez(s->compression_result_buffer);
         freez(s);
         *state = NULL;
-        debug(D_STREAM, "STREAM_COMPRESSION: Compressor destroyed!");    
+        debug(D_STREAM, "%s: Compressor Destroyed.", STREAM_COMPRESSION_MSG);
     }
 }
 
 /*
  * Compress the given block of data
- * Comprecced data will remain in the internal buffer until the next invocation
- * Return the size of compressed data block as result and the pointer to internal buffer  using the last argument
+ * Compressed data will remain in the internal buffer until the next invocation
+ * Return the size of compressed data block as result and the pointer to internal buffer using the last argument
  * or 0 in case of error
  */
 static size_t lz4_compressor_compress(struct compressor_state *state, const char *data, size_t size, char **out)
 {
-    if (!state || !size || !out)
+    if(unlikely(!state || !size || !out))
         return 0;
-    if (size > LZ4_MAX_MSG_SIZE) {
-        error("Message size above limit: %lu", size);
+
+    if(unlikely(size > COMPRESSION_MAX_MSG_SIZE)) {
+        error("%s: Compression Failed - Message size %lu above compression buffer limit: %d", STREAM_COMPRESSION_MSG, (long unsigned int)size, COMPRESSION_MAX_MSG_SIZE);
         return 0;
     }
+
     size_t max_dst_size = LZ4_COMPRESSBOUND(size);
     size_t data_size = max_dst_size + SIGNATURE_SIZE;
 
-    if (!state->buffer) {
-        state->buffer = mallocz(data_size);
-        state->buffer_size = data_size;
-    } else if (state->buffer_size < data_size) {
-        state->buffer = reallocz(state->buffer, data_size);
-        state->buffer_size = data_size;
+    if (!state->compression_result_buffer) {
+        state->compression_result_buffer = mallocz(data_size);
+        state->compression_result_buffer_size = data_size;
+    }
+    else if(unlikely(state->compression_result_buffer_size < data_size)) {
+        state->compression_result_buffer = reallocz(state->compression_result_buffer, data_size);
+        state->compression_result_buffer_size = data_size;
     }
 
-    memcpy(state->data->stream_buffer + state->data->stream_buffer_pos, data, size);
-    long int compressed_data_size = LZ4_compress_fast_continue(state->data->stream,
-            state->data->stream_buffer + state->data->stream_buffer_pos,
-            state->buffer + SIGNATURE_SIZE, size, max_dst_size, 1);
+    // the ring buffer always has space for LZ4_MAX_MSG_SIZE
+    memcpy(state->data->input_ring_buffer + state->data->input_ring_buffer_pos, data, size);
+
+    // this call needs the last 64K of our previous data
+    // they are available in the ring buffer
+    long int compressed_data_size = LZ4_compress_fast_continue(
+        state->data->stream,
+        state->data->input_ring_buffer + state->data->input_ring_buffer_pos,
+        state->compression_result_buffer + SIGNATURE_SIZE,
+        size,
+        max_dst_size,
+        1);
+
     if (compressed_data_size < 0) {
-        error("Date compression error: %ld", compressed_data_size);
+        error("Data compression error: %ld", compressed_data_size);
         return 0;
     }
-    state->data->stream_buffer_pos += size;
-    if (state->data->stream_buffer_pos >= LZ4_STREAM_BUFFER_SIZE - LZ4_MAX_MSG_SIZE)
-        state->data->stream_buffer_pos = 0;
+
+    // update the next writing position of the ring buffer
+    state->data->input_ring_buffer_pos += size;
+    if(unlikely(state->data->input_ring_buffer_pos >= state->data->input_ring_buffer_size - COMPRESSION_MAX_MSG_SIZE))
+        state->data->input_ring_buffer_pos = 0;
+
+    // update the signature header
     uint32_t len = ((compressed_data_size & 0x7f) | 0x80 | (((compressed_data_size & (0x7f << 7)) << 1) | 0x8000)) << 8;
-    *(uint32_t *)state->buffer = len | SIGNATURE;
-    *out = state->buffer;
-    debug(D_STREAM, "STREAM: Compressed data header: %ld", compressed_data_size);
+    *(uint32_t *)state->compression_result_buffer = len | SIGNATURE;
+    *out = state->compression_result_buffer;
+    debug(D_STREAM, "%s: Compressed data header: %ld", STREAM_COMPRESSION_MSG, compressed_data_size);
     return compressed_data_size + SIGNATURE_SIZE;
 }
 
@@ -111,10 +128,11 @@ struct compressor_state *create_compressor()
 
     state->data = callocz(1, sizeof(struct compressor_data));
     state->data->stream = LZ4_createStream();
-    state->data->stream_buffer = callocz(1, LZ4_DECODER_RING_BUFFER_SIZE(LZ4_MAX_MSG_SIZE));
-    state->buffer_size = LZ4_STREAM_BUFFER_SIZE;
+    state->data->input_ring_buffer_size = LZ4_DECODER_RING_BUFFER_SIZE(COMPRESSION_MAX_MSG_SIZE * 2);
+    state->data->input_ring_buffer = callocz(1, state->data->input_ring_buffer_size);
+    state->compression_result_buffer_size = 0;
     state->reset(state);
-    debug(D_STREAM, "STREAM_COMPRESSION: Initialize streaming compression!");
+    debug(D_STREAM, "%s: Initialize streaming compression!", STREAM_COMPRESSION_MSG);
     return state;
 }
 
@@ -150,10 +168,11 @@ static void lz4_decompressor_destroy(struct decompressor_state **state)
     if (state && *state) {
         struct decompressor_state *s = *state;
         if (s->data) {
-            debug(D_STREAM, "STREAM_COMPRESSION: Destroying decompressor.");
+            debug(D_STREAM, "%s: Destroying decompressor.", STREAM_COMPRESSION_MSG);
             if (s->data->stream)
                 LZ4_freeStreamDecode(s->data->stream);
             freez(s->data->stream_buffer);
+            freez(s->data);
         }
         freez(s->buffer);
         freez(s);
@@ -220,7 +239,8 @@ static size_t lz4_decompressor_put(struct decompressor_state *state, const char 
 
     if (state->buffer_pos + size > state->buffer_len) {
         error("STREAM: Decompressor buffer overflow %lu + %lu > %lu",
-                    state->buffer_pos, size, state->buffer_len);
+                    (long unsigned int) state->buffer_pos, (long unsigned int) size,
+                    (long unsigned int) state->buffer_len);
         size = state->buffer_len - state->buffer_pos;
     }
     memcpy(state->buffer + state->buffer_pos, data, size);
@@ -246,7 +266,7 @@ static size_t lz4_decompressor_decompress(struct decompressor_state *state)
     if (!state)
         return 0;
     if (!state->buffer) {
-        error("STREAM: No decompressor buffer allocated");
+        error("%s: No decompressor buffer allocated", STREAM_COMPRESSION_MSG);
         return 0;
     }
     
@@ -254,13 +274,13 @@ static size_t lz4_decompressor_decompress(struct decompressor_state *state)
             state->data->stream_buffer + state->data->stream_buffer_pos,
             state->buffer_len, state->data->stream_buffer_size - state->data->stream_buffer_pos);
     if (decompressed_size < 0) {
-        error("STREAM: Decompressor error %ld", decompressed_size);
+        error("%s: Decompressor error %ld", STREAM_COMPRESSION_MSG, decompressed_size);
         return 0;
     }
 
     state->out_buffer = state->data->stream_buffer + state->data->stream_buffer_pos;
     state->data->stream_buffer_pos += decompressed_size;
-    if (state->data->stream_buffer_pos >= state->data->stream_buffer_size - LZ4_MAX_MSG_SIZE)
+    if (state->data->stream_buffer_pos >= state->data->stream_buffer_size - COMPRESSION_MAX_MSG_SIZE)
         state->data->stream_buffer_pos = 0;
     state->out_buffer_len = decompressed_size;
     state->out_buffer_pos = 0;
@@ -277,8 +297,11 @@ static size_t lz4_decompressor_decompress(struct decompressor_state *state)
     size_t avg_saving = saving_percent(state->total_compressed, state->total_uncompressed);
     size_t avg_size = state->total_uncompressed / state->packet_count;
 
+    (void)saving;
+
     if (old_avg_saving != avg_saving || old_avg_size != avg_size){
-        debug(D_STREAM, "STREAM: Saving: %lu%% (avg. %lu%%), avg.size: %lu", saving, avg_saving, avg_size);
+        debug(D_STREAM, "%s: Saving: %lu%% (avg. %lu%%), avg.size: %lu", STREAM_COMPRESSION_MSG,
+              (long unsigned int) saving, (long unsigned int) avg_saving, (long unsigned int) avg_size);
     }
     return decompressed_size;
 }
@@ -301,7 +324,7 @@ static size_t lz4_decompressor_get(struct decompressor_state *state, char *data,
     if (!state || !size || !data)
         return 0;
     if (!state->out_buffer)
-        fatal("STREAM: No decompressor output buffer allocated");
+        fatal("%s: No decompressor output buffer allocated", STREAM_COMPRESSION_MSG);
     if (state->out_buffer_pos + size > state->out_buffer_len)
         size = state->out_buffer_len - state->out_buffer_pos;
     
@@ -335,11 +358,11 @@ struct decompressor_state *create_decompressor()
     state->data = callocz(1, sizeof(struct decompressor_data));
     fatal_assert(state->data);
     state->data->stream = LZ4_createStreamDecode();
-    state->data->stream_buffer_size = LZ4_decoderRingBufferSize(LZ4_MAX_MSG_SIZE);
+    state->data->stream_buffer_size = LZ4_decoderRingBufferSize(COMPRESSION_MAX_MSG_SIZE);
     state->data->stream_buffer = mallocz(state->data->stream_buffer_size);
     fatal_assert(state->data->stream_buffer);
     state->reset(state);
-    debug(D_STREAM, "STREAM_COMPRESSION: Initialize streaming decompression!");
+    debug(D_STREAM, "%s: Initialize streaming decompression!", STREAM_COMPRESSION_MSG);
     return state;
 }
 #endif

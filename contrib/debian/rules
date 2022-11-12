@@ -23,31 +23,25 @@ HAVE_EBPF = 1
 endif
 
 %:
-	# For jessie and beyond
-	#
-	dh $@ --with autoreconf,systemd
-
-	# For wheezy or other non-systemd distributions use the following. You
-	# should also see contrib/README.md which gives details of updates to
-	# make to debian/control.
-	#
-	#dh $@ --with autoreconf
+	dh $@
 
 override_dh_installinit:
 	echo "SystemD Version: $(SYSTEMD_VERSION)"
 	echo "Using SystemD Unit: $(SYSTEMD_UNIT)"
 	cp -v $(SYSTEMD_UNIT) debian/netdata.service
 
+	dh_systemd_enable
 	dh_installinit
 
 override_dh_auto_configure:
 	if [ $(HAVE_EBPF) -eq 1 ]; then \
 		packaging/bundle-libbpf.sh . ${TOP}/usr/libexec/netdata/plugins.d; \
+		packaging/bundle-ebpf-co-re.sh . ${TOP}/usr/libexec/netdata/plugins.d; \
 	fi
 	autoreconf -ivf
 	dh_auto_configure -- --prefix=/usr --sysconfdir=/etc --localstatedir=/var --libdir=/usr/lib \
 	--libexecdir=/usr/libexec --with-user=netdata --with-math --with-zlib --with-webdir=/var/lib/netdata/www \
-	$(EBPF_CONFIG)
+	--disable-dependency-tracking $(EBPF_CONFIG)
 
 override_dh_install:
 	cp -v $(BASE_CONFIG) debian/netdata.conf

@@ -50,21 +50,26 @@ to work on these platforms with minimal user effort.
 
 | Platform | Version | Official Native Packages | Notes |
 | -------- | ------- | ------------------------ | ----- |
-| Alpine Linux | 3.15 | No | The latest release of Alpine Linux is guaranteed to remain at **Core** tier due to usage for our Docker images |
+| Alpine Linux | 3.16 | No | The latest release of Alpine Linux is guaranteed to remain at **Core** tier due to usage for our Docker images |
+| Alma Linux | 9.x | x86\_64, AArch64 | Also includes support for Rocky Linux and other ABI compatible RHEL derivatives |
+| Alma Linux | 8.x | x86\_64, AArch64 | Also includes support for Rocky Linux and other ABI compatible RHEL derivatives |
 | CentOS | 7.x | x86\_64 | |
-| CentOS | 8.x | x86\_64, AArch64 | Includes Rocky Linux 8.x support, which will be our primary platform long-term for RHEL compatiblitiy |
 | Docker | 19.03 or newer | x86\_64, i386, ARMv7, AArch64, POWER8+ | See our [Docker documentation](/packaging/docker/README.md) for more info on using Netdata on Docker |
 | Debian | 11.x | x86\_64, i386, ARMv7, AArch64 | |
 | Debian | 10.x | x86\_64, i386, ARMv7, AArch64 | |
-| Debian | 9.x | x86\_64, i386, ARMv7, AArch64 | |
+| Fedora | 37 | x86\_64, AArch64 | |
+| Fedora | 36 | x86\_64, ARMv7, AArch64 | |
 | Fedora | 35 | x86\_64, ARMv7, AArch64 | |
-| Fedora | 34 | x86\_64, ARMv7, AArch64 | |
+| openSUSE | Leap 15.4 | x86\_64, AArch64 | |
 | openSUSE | Leap 15.3 | x86\_64, AArch64 | |
+| Oracle Linux | 9.x | x86\_64, AArch64 | |
 | Oracle Linux | 8.x | x86\_64, AArch64 | |
-| Red Hat Enterprise Linux | 7.x | x86\_64 | |
+| Red Hat Enterprise Linux | 9.x | x86\_64, AArch64 | |
 | Red Hat Enterprise Linux | 8.x | x86\_64, AArch64 | |
-| Ubuntu | 21.10 | x86\_64, i386, ARMv7, AArch64 | |
-| Ubuntu | 20.04 | x86\_64, i386, ARMv7, AArch64 | |
+| Red Hat Enterprise Linux | 7.x | x86\_64 | |
+| Ubuntu | 22.10 | x86\_64, ARMv7, AArch64 | |
+| Ubuntu | 22.04 | x86\_64, ARMv7, AArch64 | |
+| Ubuntu | 20.04 | x86\_64, ARMv7, AArch64 | |
 | Ubuntu | 18.04 | x86\_64, i386, ARMv7, AArch64 | |
 
 ### Intermediate
@@ -78,9 +83,8 @@ with minimal user effort.
 
 | Platform | Version | Official Native Packages | Notes |
 | -------- | ------- | ------------------------ | ----- |
+| Alpine Linux | 3.15 | No | |
 | Alpine Linux | 3.14 | No | |
-| Alpine Linux | 3.13 | No | |
-| Alpine Linux | 3.12 | No | |
 | Arch Linux | Latest | No | We officially recommend the community packages available for Arch Linux |
 | Manjaro Linux | Latest | No | We officially recommend the community packages available for Arch Linux |
 
@@ -101,9 +105,9 @@ platforms, but may require some extra effort from users.
 | FreeBSD | 13-STABLE | No | Netdata is included in the FreeBSD Ports Tree, and this is the recommended installation method on FreeBSD |
 | FreeBSD | 12-STABLE | No | Netdata is included in the FreeBSD Ports Tree, and this is the recommended installation method on FreeBSD |
 | Gentoo | Latest | No | |
-| macOS | 12 | No | Planned for **Core** tier support. Currently only works for Intel-based hardware. Requires Homebrew for dependencies |
-| macOS | 11 | No | Planned for **Core** tier support. Currently only works for Intel-based hardware. Requires Homebrew for dependencies.  |
-| macOS | 10.15 | No | Planned for **Core** tier support. Requires Homebrew for dependencies.  |
+| macOS | 12 | No | Currently only works for Intel-based hardware. Requires Homebrew for dependencies |
+| macOS | 11 | No | Currently only works for Intel-based hardware. Requires Homebrew for dependencies.  |
+| macOS | 10.15 | No | Requires Homebrew for dependencies.  |
 | openSUSE | Tumbleweed | No | |
 
 ## Third-party supported platforms
@@ -141,16 +145,15 @@ This is a list of platforms that we have supported in the recent past but no lon
 
 | Platform | Version | Notes |
 | -------- | ------- | ----- |
-| Alpine Linux | 3.11 | EOL as of 2021-11-01 |
-| Alpine Linux | 3.10 | EOL as of 2021-05-01 |
+| Alpine Linux | 3.13 | EOL as of 2022-11-01 |
+| Alpine Linux | 3.12 | EOL as of 2022-05-01 |
+| Debian | 9.x | EOL as of 2022-06-30 |
+| Fedora | 34 | EOL as of 2022-06-07 |
 | Fedora | 33 | EOL as of 2021-11-30 |
-| Fedora | 32 | EOL as of 2021-05-25 |
 | FreeBSD | 11-STABLE | EOL as of 2021-10-30 |
 | openSUSE | Leap 15.2 | EOL as of 2021-12-01 |
-| openSUSE | Leap 15.1 | EOL as of 2021-01-31 |
+| Ubuntu | 21.10 | EOL as of 2022-07-31 |
 | Ubuntu | 21.04 | EOL as of 2022-01-01 |
-| Ubuntu | 20.10 | EOL as of 2021-07-22 |
-| Ubuntu | 16.04 | EOL as of 2021-04-02 |
 
 ## Static builds
 

@@ -61,7 +61,7 @@ static inline void registry_json_header(RRDHOST *host, struct web_client *w, con
     buffer_flush(w->response.data);
     w->response.data->contenttype = CT_APPLICATION_JSON;
     buffer_sprintf(w->response.data, "{\n\t\"action\": \"%s\",\n\t\"status\": \"%s\",\n\t\"hostname\": \"%s\",\n\t\"machine_guid\": \"%s\"",
-            action, status, host->registry_hostname, host->machine_guid);
+            action, status, rrdhost_registry_hostname(host), host->machine_guid);
 }
 
 static inline void registry_json_footer(struct web_client *w) {
@@ -108,7 +108,7 @@ static int registry_json_person_url_callback(void *entry, void *data) {
 }
 
 // callback for rendering MACHINE_URLs
-static int registry_json_machine_url_callback(void *entry, void *data) {
+static int registry_json_machine_url_callback(const DICTIONARY_ITEM *item __maybe_unused, void *entry, void *data) {
     REGISTRY_MACHINE_URL *mu = (REGISTRY_MACHINE_URL *)entry;
     struct registry_json_walk_person_urls_callback *c = (struct registry_json_walk_person_urls_callback *)data;
     struct web_client *w = c->w;
@@ -164,10 +164,12 @@ void registry_update_cloud_base_url()
 int registry_request_hello_json(RRDHOST *host, struct web_client *w) {
     registry_json_header(host, w, "hello", REGISTRY_STATUS_OK);
 
+    const char *cloud_ui_url = appconfig_get(&cloud_config, CONFIG_SECTION_GLOBAL, "cloud ui url", DEFAULT_CLOUD_UI_URL);
+
     buffer_sprintf(w->response.data,
             ",\n\t\"registry\": \"%s\",\n\t\"cloud_base_url\": \"%s\",\n\t\"anonymous_statistics\": %s",
             registry.registry_to_announce,
-            registry.cloud_base_url, netdata_anonymous_statistics_enabled?"true":"false");
+            cloud_ui_url, netdata_anonymous_statistics_enabled?"true":"false");
 
     registry_json_footer(w);
     return 200;
@@ -272,7 +274,7 @@ int registry_request_search_json(RRDHOST *host, struct web_client *w, char *pers
 
     buffer_strcat(w->response.data, ",\n\t\"urls\": [");
     struct registry_json_walk_person_urls_callback c = { NULL, m, w, 0 };
-    dictionary_get_all(m->machine_urls, registry_json_machine_url_callback, &c);
+    dictionary_walkthrough_read(m->machine_urls, registry_json_machine_url_callback, &c);
     buffer_strcat(w->response.data, "\n\t]\n");
 
     registry_json_footer(w);
@@ -441,10 +443,10 @@ void registry_statistics(void) {
     }
     else rrdset_next(stm);
 
-    rrddim_set(stm, "persons",       registry.persons_memory + registry.persons_count * sizeof(NAME_VALUE) + sizeof(DICTIONARY));
-    rrddim_set(stm, "machines",      registry.machines_memory + registry.machines_count * sizeof(NAME_VALUE) + sizeof(DICTIONARY));
+    rrddim_set(stm, "persons",       registry.persons_memory + dictionary_stats_for_registry(registry.persons));
+    rrddim_set(stm, "machines",      registry.machines_memory + dictionary_stats_for_registry(registry.machines));
     rrddim_set(stm, "urls",          registry.urls_memory);
     rrddim_set(stm, "persons_urls",  registry.persons_urls_memory);
-    rrddim_set(stm, "machines_urls", registry.machines_urls_memory + registry.machines_count * sizeof(DICTIONARY) + registry.machines_urls_count * sizeof(NAME_VALUE));
+    rrddim_set(stm, "machines_urls", registry.machines_urls_memory);
     rrdset_done(stm);
 }

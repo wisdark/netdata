@@ -102,7 +102,7 @@ int json_callback_print(JSON_ENTRY *e)
 
         case JSON_ARRAY:
             e->callback_function = json_callback_print;
-            sprintf(txt,"ARRAY[%lu]", e->data.items);
+            sprintf(txt,"ARRAY[%lu]", (long unsigned int) e->data.items);
             buffer_strcat(wb, txt);
             break;
 
@@ -111,7 +111,7 @@ int json_callback_print(JSON_ENTRY *e)
             break;
 
         case JSON_NUMBER:
-            sprintf(txt,"%Lf", e->data.number);
+            sprintf(txt, NETDATA_DOUBLE_FORMAT_AUTO, e->data.number);
             buffer_strcat(wb,txt);
 
             break;
@@ -168,7 +168,7 @@ static inline void json_jsonc_set_integer(JSON_ENTRY *e, char *key, int64_t valu
     e->type = JSON_NUMBER;
     memcpy(e->name, key, len);
     e->name[len] = 0;
-    e->data.number = value;
+    e->data.number = (NETDATA_DOUBLE)value;
 }
 
 /**
@@ -554,3 +554,4 @@ int json_test(char *str)
     return json_parse(str, NULL, json_callback_print);
 }
  */
+

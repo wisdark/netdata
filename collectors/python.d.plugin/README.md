@@ -16,7 +16,6 @@ custom_edit_url: https://github.com/netdata/netdata/edit/master/collectors/pytho
 
 ## Disclaimer
 
-Every module should be compatible with python2 and python3.
 All third party libraries should be installed system-wide or in `python_modules` directory.
 Module configurations are written in YAML and **pyYAML is required**.
 
@@ -77,7 +76,6 @@ Writing new python module is simple. You just need to remember to include 5 majo
 -   **CHART** global dictionary
 -   **Service** class
 -   **\_get_data** method
--   all code needs to be compatible with Python 2 (**≥ 2.7**) *and* 3 (**≥ 3.1**)
 
 If you plan to submit the module in a PR, make sure and go through the [PR checklist for new modules](#pull-request-checklist-for-python-plugins) beforehand to make sure you have updated all the files you need to. 
 
@@ -229,8 +227,7 @@ For additional security it uses python `subprocess.Popen` (without `shell=True` 
 
 _Examples: `apache`, `nginx`, `tomcat`_
 
-_Multiple Endpoints (urls) Examples: [`rabbitmq`](/collectors/python.d.plugin/rabbitmq/README.md) (simpler) ,
-[`elasticsearch`](/collectors/python.d.plugin/elasticsearch/README.md) (threaded)_
+_Multiple Endpoints (urls) Examples: [`rabbitmq`](/collectors/python.d.plugin/rabbitmq/README.md) (simpler).
 
 
 _Variables from config file_: `url`, `user`, `pass`.

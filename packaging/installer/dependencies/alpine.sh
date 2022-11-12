@@ -16,12 +16,12 @@ package_tree="
   autoconf
   cmake
   make
+  libatomic
   libtool
   pkgconfig
   tar
   curl
   gzip
-  netcat-openbsd
   libuv-dev
   lz4-dev
   openssl-dev

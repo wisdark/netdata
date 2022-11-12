@@ -17,7 +17,6 @@
 #include "rrdenginelib.h"
 #include "datafile.h"
 #include "journalfile.h"
-#include "metadata_log/metadatalog.h"
 #include "rrdengineapi.h"
 #include "pagecache.h"
 #include "rrdenglocking.h"
@@ -25,6 +24,8 @@
 #ifdef NETDATA_RRD_INTERNALS
 
 #endif /* NETDATA_RRD_INTERNALS */
+
+extern unsigned rrdeng_pages_per_extent;
 
 /* Forward declarations */
 struct rrdengine_instance;
@@ -34,6 +35,27 @@ struct rrdengine_instance;
 #define RRDENG_FILE_NUMBER_SCAN_TMPL "%1u-%10u"
 #define RRDENG_FILE_NUMBER_PRINT_TMPL "%1.1u-%10.10u"
 
+struct rrdeng_collect_handle {
+    struct pg_cache_page_index *page_index;
+    struct rrdeng_page_descr *descr;
+    unsigned long page_correlation_id;
+    // set to 1 when this dimension is not page aligned with the other dimensions in the chart
+    uint8_t unaligned_page;
+};
+
+struct rrdeng_query_handle {
+    struct rrdeng_page_descr *descr;
+    struct rrdengine_instance *ctx;
+    struct pg_cache_page_index *page_index;
+    time_t wanted_start_time_s;
+    time_t now_s;
+    unsigned position;
+    unsigned entries;
+    storage_number *page;
+    usec_t page_end_time_ut;
+    uint32_t page_length;
+    time_t dt_s;
+};
 
 typedef enum {
     RRDENGINE_STATUS_UNINITIALIZED = 0,
@@ -83,8 +105,12 @@ struct rrdeng_cmdqueue {
 
 struct extent_io_descriptor {
     uv_fs_t req;
+    uv_work_t req_worker;
     uv_buf_t iov;
+    uv_file file;
     void *buf;
+    void *map_base;
+    size_t map_length;
     uint64_t pos;
     unsigned bytes;
     struct completion *completion;
@@ -203,8 +229,16 @@ extern rrdeng_stats_t global_flushing_pressure_page_deletions; /* number of dele
 #define SET_QUIESCE (1) /* set it before shutting down the instance, quiesce long running operations */
 #define QUIESCED    (2) /* is set after all threads have finished running */
 
+typedef enum {
+    LOAD_ERRORS_PAGE_FLIPPED_TIME = 0,
+    LOAD_ERRORS_PAGE_EQUAL_TIME = 1,
+    LOAD_ERRORS_PAGE_ZERO_ENTRIES = 2,
+    LOAD_ERRORS_PAGE_UPDATE_ZERO = 3,
+    LOAD_ERRORS_PAGE_FLEXY_TIME = 4,
+    LOAD_ERRORS_DROPPED_EXTENT = 5,
+} INVALID_PAGE_ID;
+
 struct rrdengine_instance {
-    struct metalog_instance *metalog_ctx;
     struct rrdengine_worker_config worker_config;
     struct completion rrdengine_completion;
     struct page_cache pg_cache;
@@ -217,21 +251,31 @@ struct rrdengine_instance {
     char machine_guid[GUID_LEN + 1]; /* the unique ID of the corresponding host, or localhost for multihost DB */
     uint64_t disk_space;
     uint64_t max_disk_space;
+    int tier;
     unsigned last_fileno; /* newest index of datafile and journalfile */
     unsigned long max_cache_pages;
     unsigned long cache_pages_low_watermark;
     unsigned long metric_API_max_producers;
 
     uint8_t quiesce; /* set to SET_QUIESCE before shutdown of the engine */
+    uint8_t page_type; /* Default page type for this context */
 
     struct rrdengine_statistics stats;
+
+    struct {
+        size_t counter;
+        usec_t latest_end_time_ut;
+    } load_errors[6];
 };
 
-extern int init_rrd_files(struct rrdengine_instance *ctx);
-extern void finalize_rrd_files(struct rrdengine_instance *ctx);
-extern void rrdeng_test_quota(struct rrdengine_worker_config* wc);
-extern void rrdeng_worker(void* arg);
-extern void rrdeng_enq_cmd(struct rrdengine_worker_config* wc, struct rrdeng_cmd *cmd);
-extern struct rrdeng_cmd rrdeng_deq_cmd(struct rrdengine_worker_config* wc);
+void *dbengine_page_alloc(void);
+void dbengine_page_free(void *page);
+
+int init_rrd_files(struct rrdengine_instance *ctx);
+void finalize_rrd_files(struct rrdengine_instance *ctx);
+void rrdeng_test_quota(struct rrdengine_worker_config* wc);
+void rrdeng_worker(void* arg);
+void rrdeng_enq_cmd(struct rrdengine_worker_config* wc, struct rrdeng_cmd *cmd);
+struct rrdeng_cmd rrdeng_deq_cmd(struct rrdengine_worker_config* wc);
 
 #endif /* NETDATA_RRDENGINE_H */

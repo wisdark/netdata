@@ -127,7 +127,9 @@ BuildRequires: git-core
 BuildRequires: autoconf
 %if 0%{?fedora} || 0%{?rhel} >= 7 || 0%{?suse_version} >= 1140
 BuildRequires: autoconf-archive
+%if 0%{?rhel} <= 8
 BuildRequires: autogen
+%endif
 %endif
 BuildRequires: automake
 BuildRequires: cmake
@@ -141,14 +143,12 @@ BuildRequires: openssl-devel
 %if 0%{?suse_version}
 BuildRequires: protobuf-devel
 BuildRequires: libprotobuf-c-devel
-BuildRequires: judy-devel
 BuildRequires: liblz4-devel
 BuildRequires: libjson-c-devel
 %else
 %if 0%{?fedora}
 BuildRequires: protobuf-devel
 BuildRequires: protobuf-c-devel
-BuildRequires: Judy-devel
 BuildRequires: lz4-devel
 BuildRequires: json-c-devel
 %else
@@ -225,10 +225,6 @@ happened, on your systems and applications.
 
 %prep
 %setup -q -n %{name}-%{version}
-# Only bundle libJudy if this isn't Fedora or SUSE
-%if 0%{!?fedora:1} && 0%{!?suse_version:1}
-export CFLAGS="${CFLAGS} -fPIC" && ${RPM_BUILD_DIR}/%{name}-%{version}/packaging/bundle-judy.sh ${RPM_BUILD_DIR}/%{name}-%{version}
-%endif
 # Only bundle protobuf on CentOS 7 or earlier
 %if 0%{?centos_ver:1}
 %if %{centos_ver} < 8
@@ -239,11 +235,14 @@ export CFLAGS="${CFLAGS} -fPIC" && ${RPM_BUILD_DIR}/%{name}-%{version}/packaging
 %if 0%{?centos_ver:1}
 %if %{centos_ver} < 8
 export CFLAGS="${CFLAGS} -fPIC" && ${RPM_BUILD_DIR}/%{name}-%{version}/packaging/bundle-libbpf.sh ${RPM_BUILD_DIR}/%{name}-%{version} centos7
+export CFLAGS="${CFLAGS} -fPIC" && ${RPM_BUILD_DIR}/%{name}-%{version}/packaging/bundle-ebpf-co-re.sh ${RPM_BUILD_DIR}/%{name}-%{version}
 %else
 export CFLAGS="${CFLAGS} -fPIC" && ${RPM_BUILD_DIR}/%{name}-%{version}/packaging/bundle-libbpf.sh ${RPM_BUILD_DIR}/%{name}-%{version} centos8
+export CFLAGS="${CFLAGS} -fPIC" && ${RPM_BUILD_DIR}/%{name}-%{version}/packaging/bundle-ebpf-co-re.sh ${RPM_BUILD_DIR}/%{name}-%{version}
 %endif
 %else
 export CFLAGS="${CFLAGS} -fPIC" && ${RPM_BUILD_DIR}/%{name}-%{version}/packaging/bundle-libbpf.sh ${RPM_BUILD_DIR}/%{name}-%{version} other
+export CFLAGS="${CFLAGS} -fPIC" && ${RPM_BUILD_DIR}/%{name}-%{version}/packaging/bundle-ebpf-co-re.sh ${RPM_BUILD_DIR}/%{name}-%{version}
 %endif
 %endif
 
@@ -253,9 +252,6 @@ autoreconf -ivf
 %configure \
 	%if 0%{!?_have_ebpf}
 	--disable-ebpf
-	%endif
-	%if 0%{!?fedora:1} && 0%{!?suse_version:1}
-	--with-bundled-libJudy \
 	%endif
 	%if 0%{?centos_ver:1}
 	%if %{centos_ver} < 8
@@ -269,7 +265,8 @@ autoreconf -ivf
 	--libdir="%{_libdir}" \
 	--with-zlib \
 	--with-math \
-	--with-user=netdata
+	--with-user=netdata \
+	--disable-dependency-tracking
 
 # Build step
 %{__make} %{?_smp_mflags}
@@ -441,12 +438,20 @@ ${RPM_BUILD_DIR}/%{name}-%{version}/packaging/bundle-ebpf.sh ${RPM_BUILD_DIR}/%{
 
 %pre
 
-# User/Group creations, as needed
-getent group netdata >/dev/null || groupadd -r netdata
-getent group docker >/dev/null || groupadd -r docker
-getent passwd netdata >/dev/null || \
-  useradd -r -g netdata -G docker -s /sbin/nologin \
-    -d %{contentdir} -c "netdata" netdata
+if ! getent group netdata > /dev/null; then
+  groupadd --system netdata
+fi
+
+if ! getent passwd netdata > /dev/null; then
+  useradd --system -g netdata --home %{contentdir} --no-create-home -s /sbin/nologin -c "Netdata pseudo user" netdata
+fi
+
+# I am not sure that the corresponding group names are exactly the same as in Debian, but we should start somewhere, shouldn't we?
+for item in docker nginx varnish haproxy adm nsd proxy squid ceph nobody I2C; do
+  if getent group $item > /dev/null 2>&1; then
+    usermod -a -G $item netdata
+  fi
+done
 
 %post
 %{netdata_init_post}
@@ -485,11 +490,9 @@ rm -rf "${RPM_BUILD_ROOT}"
 %dir %{_libexecdir}/%{name}/python.d
 %dir %{_libexecdir}/%{name}/charts.d
 %dir %{_libexecdir}/%{name}/plugins.d
-%dir %{_libexecdir}/%{name}/node.d
 
 %{_libexecdir}/%{name}/python.d
 %{_libexecdir}/%{name}/plugins.d
-%{_libexecdir}/%{name}/node.d
 
 %caps(cap_dac_read_search,cap_sys_ptrace=ep) %attr(0750,root,netdata) %{_libexecdir}/%{name}/plugins.d/apps.plugin
 
@@ -512,9 +515,12 @@ rm -rf "${RPM_BUILD_ROOT}"
 # freeipmi files
 %attr(4750,root,netdata) %{_libexecdir}/%{name}/plugins.d/freeipmi.plugin
 
+# go.d.plugin (the capability required for wireguard module)
+%caps(cap_net_admin,cap_net_raw=eip) %{_libexecdir}/%{name}/plugins.d/go.d.plugin
+
 # Enforce 0644 for files and 0755 for directories
 # for the netdata web directory
-%defattr(0644,root,netdata,0755)
+%defattr(0644,root,root,0755)
 %{_datadir}/%{name}/web
 
 # Enforce 0660 for files and 0770 for directories

@@ -25,9 +25,6 @@ and other operating systems and is regularly tested. You can find this tool [her
 -   **Alpine** Linux and its derivatives
     -   You have to install `bash` yourself, before using the installer.
 
--   **Arch** Linux and its derivatives
-    -   You need arch/aur for package Judy.
-
 -   **Gentoo** Linux and its derivatives
 
 -   **Debian** Linux and its derivatives (including **Ubuntu**, **Mint**)
@@ -44,7 +41,7 @@ and other operating systems and is regularly tested. You can find this tool [her
 -   **SLE12** Must have your system registered with SUSE Customer Center or have the DVD. See
     [#1162](https://github.com/netdata/netdata/issues/1162)
 
-Install the packages for having a **basic Netdata installation** (system monitoring and many applications, without  `mysql` / `mariadb`, `postgres`, `named`, hardware sensors and `SNMP`):
+Install the packages for having a **basic Netdata installation** (system monitoring and many applications, without  `mysql` / `mariadb`, `named`, hardware sensors and `SNMP`):
 
 ```sh
 curl -Ss 'https://raw.githubusercontent.com/netdata/netdata/master/packaging/installer/install-required-packages.sh' >/tmp/install-required-packages.sh && bash /tmp/install-required-packages.sh -i netdata
@@ -67,16 +64,16 @@ This is how to do it by hand:
 
 ```sh
 # Debian / Ubuntu
-apt-get install zlib1g-dev uuid-dev libuv1-dev liblz4-dev libjudy-dev libssl-dev libelf-dev libmnl-dev libprotobuf-dev protobuf-compiler gcc g++ make git autoconf autoconf-archive autogen automake pkg-config curl python cmake
+apt-get install zlib1g-dev uuid-dev libuv1-dev liblz4-dev libssl-dev libelf-dev libmnl-dev libprotobuf-dev protobuf-compiler gcc g++ make git autoconf autoconf-archive autogen automake pkg-config curl python cmake
 
 # Fedora
-dnf install zlib-devel libuuid-devel libuv-devel lz4-devel Judy-devel openssl-devel elfutils-libelf-devel libmnl-devel protobuf-devel protobuf-compiler gcc gcc-c++ make git autoconf autoconf-archive autogen automake pkgconfig curl findutils python cmake
+dnf install zlib-devel libuuid-devel libuv-devel lz4-devel openssl-devel elfutils-libelf-devel libmnl-devel protobuf-devel protobuf-compiler gcc gcc-c++ make git autoconf autoconf-archive autogen automake pkgconfig curl findutils python cmake
 
 # CentOS / Red Hat Enterprise Linux
-yum install autoconf automake curl gcc gcc-c++ git libmnl-devel libuuid-devel openssl-devel libuv-devel lz4-devel Judy-devel elfutils-libelf-devel protobuf protobuf-devel protobuf-compiler make nc pkgconfig python zlib-devel cmake
+yum install autoconf automake curl gcc gcc-c++ git libmnl-devel libuuid-devel openssl-devel libuv-devel lz4-devel elfutils-libelf-devel protobuf protobuf-devel protobuf-compiler make nc pkgconfig python zlib-devel cmake
 
 # openSUSE
-zypper install zlib-devel libuuid-devel libuv-devel liblz4-devel judy-devel libopenssl-devel libelf-devel libmnl-devel protobuf-devel gcc gcc-c++ make git autoconf autoconf-archive autogen automake pkgconfig curl findutils python cmake
+zypper install zlib-devel libuuid-devel libuv-devel liblz4-devel libopenssl-devel libelf-devel libmnl-devel protobuf-devel gcc gcc-c++ make git autoconf autoconf-archive autogen automake pkgconfig curl findutils python cmake
 ```
 
 Once Netdata is compiled, to run it the following packages are required (already installed using the above commands):
@@ -102,7 +99,6 @@ Netdata plugins and various aspects of Netdata can be enabled or benefit when th
 | `python-dnspython`|used for monitoring DNS query time|
 | `python-ipaddress`|used for monitoring **DHCPd**<br/>this package is required only if the system has python v2. python v3 has this functionality embedded|
 | `python-mysqldb`<br/>or<br/>`python-pymysql`|used for monitoring **mysql** or **mariadb** databases<br/>`python-mysqldb` is a lot faster and thus preferred|
-| `python-psycopg2`|used for monitoring **postgresql** databases|
 | `python-pymongo`|used for monitoring **mongodb** databases|
 | `nodejs`|used for `node.js` plugins for monitoring **named** and **SNMP** devices|
 | `lm-sensors`|for monitoring **hardware sensors**|
@@ -117,7 +113,6 @@ Netdata DB engine can be enabled when these are installed (they are optional):
 | package  | description|
 |:-----:|-----------|
 | `liblz4` | Extremely fast compression algorithm, version r129 or greater|
-| `Judy`   | General purpose dynamic array|
 | `openssl`| Cryptography and SSL/TLS toolkit|
 
 *Netdata will greatly benefit if you have the above packages installed, but it will still work without them.*
@@ -175,8 +170,6 @@ yum install -y http://repo.okay.com.mx/centos/8/x86_64/release/okay-release-1-3.
 # Install Devel Packages
 yum install autoconf automake curl gcc git cmake libuuid-devel openssl-devel libuv-devel lz4-devel make nc pkgconfig python3 zlib-devel
 
-# Install Judy-Devel directly
-yum install -y http://mirror.centos.org/centos/8/PowerTools/x86_64/os/Packages/Judy-devel-1.0.5-18.module_el8.1.0+217+4d875839.x86_64.rpm
 ```
 
 ## Install Netdata

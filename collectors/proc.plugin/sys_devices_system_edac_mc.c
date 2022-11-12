@@ -74,12 +74,12 @@ int do_proc_sys_devices_system_edac_mc(int update_every, usec_t dt) {
     }
 
     static int do_ce = -1, do_ue = -1;
-    calculated_number ce_sum = 0, ue_sum = 0;
+    NETDATA_DOUBLE ce_sum = 0, ue_sum = 0;
     struct mc *m;
 
     if(unlikely(do_ce == -1)) {
-        do_ce = config_get_boolean_ondemand("plugin:proc:/sys/devices/system/edac/mc", "enable ECC memory correctable errors", CONFIG_BOOLEAN_AUTO);
-        do_ue = config_get_boolean_ondemand("plugin:proc:/sys/devices/system/edac/mc", "enable ECC memory uncorrectable errors", CONFIG_BOOLEAN_AUTO);
+        do_ce = config_get_boolean_ondemand("plugin:proc:/sys/devices/system/edac/mc", "enable ECC memory correctable errors", CONFIG_BOOLEAN_YES);
+        do_ue = config_get_boolean_ondemand("plugin:proc:/sys/devices/system/edac/mc", "enable ECC memory uncorrectable errors", CONFIG_BOOLEAN_YES);
     }
 
     if(do_ce != CONFIG_BOOLEAN_NO) {

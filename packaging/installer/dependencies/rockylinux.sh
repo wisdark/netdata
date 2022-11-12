@@ -15,10 +15,10 @@ declare -a package_tree=(
   autoconf-archive
   autogen
   automake
+  libatomic
   libtool
   pkgconfig
   cmake
-  nmap-ncat
   zlib-devel
   libuuid-devel
   libmnl-devel

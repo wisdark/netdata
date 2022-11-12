@@ -312,7 +312,7 @@ Everything is the same with [badges](/web/api/badges/README.md). In short:
      above too).
 
 -   `OPTIONS` is a space separated list of `percentage`, `absolute`, `min2max`, `unaligned`,
-     `match-ids`, `match-names`. Check the badges documentation for more info.
+     `match-ids`, `match-names`. Check the [badges](/web/api/badges/README.md) documentation for more info.
 
 -   `of DIMENSIONS` is optional and has to be the last parameter. Dimensions have to be separated
      by `,` or `|`. The space characters found in dimensions will be kept as-is (a few dimensions
@@ -536,11 +536,47 @@ See our [simple patterns docs](/libnetdata/simple_pattern/README.md) for more ex
 
 #### Alarm line `info`
 
-The info field can contain a small piece of text describing the alarm or template. This will be rendered in notifications and UI elements whenever the specific alarm is in focus. An example for the `ram_available` alarm is:
+The info field can contain a small piece of text describing the alarm or template. This will be rendered in
+notifications and UI elements whenever the specific alarm is in focus. An example for the `ram_available` alarm is:
 
 ```yaml
 info: percentage of estimated amount of RAM available for userspace processes, without causing swapping
 ```
+
+info fields can contain special variables in their text that will be replaced during run-time to provide more specific
+alert information. Current variables supported are:
+
+| variable | description |
+| ---------| ----------- |
+| $family  | Will be replaced by the family instance for the alert (e.g. eth0) |
+| $label:  | Followed by a chart label name, this will replace the variable with the chart label's value |
+
+For example, an info field like the following:
+
+```yaml
+info: average inbound utilization for the network interface $family over the last minute
+```
+
+Will be rendered on the alert acting on interface `eth0` as:
+
+```yaml
+info: average inbound utilization for the network interface eth0 over the last minute
+```
+
+An alert acting on a chart that has a chart label named e.g. `target`, with a value of `https://netdata.cloud/`,
+can be enriched as follows:
+
+```yaml
+info: average ratio of HTTP responses with unexpected status over the last 5 minutes for the site $label:target
+```
+
+Will become:
+
+```yaml
+info: average ratio of HTTP responses with unexpected status over the last 5 minutes for the site https://netdata.cloud/
+```
+
+> Please note that variable names are case sensitive.
 
 ## Expressions
 
@@ -894,6 +930,68 @@ lookup: mean -10s of user
 ```
 
 Since [`z = (x - mean) / stddev`](https://en.wikipedia.org/wiki/Standard_score) we create two input alarms, one for `mean` and one for `stddev` and then use them both as inputs in our final `cpu_user_zscore` alarm.
+
+### Example 8 - [Anomaly rate](https://learn.netdata.cloud/docs/agent/ml#anomaly-rate) based CPU dimensions alarm
+
+Warning if 5 minute rolling [anomaly rate](https://learn.netdata.cloud/docs/agent/ml#anomaly-rate) for any CPU dimension is above 5%, critical if it goes above 20%:
+
+```yaml
+template: ml_5min_cpu_dims
+      on: system.cpu
+      os: linux
+   hosts: *
+  lookup: average -5m anomaly-bit foreach *
+    calc: $this
+   units: %
+   every: 30s
+    warn: $this > (($status >= $WARNING)  ? (5) : (20))
+    crit: $this > (($status == $CRITICAL) ? (20) : (100))
+    info: rolling 5min anomaly rate for each system.cpu dimension
+```
+
+The `lookup` line will calculate the average anomaly rate of each `system.cpu` dimension over the last 5 minues. In this case
+Netdata will create alarms for all dimensions of the chart.
+
+### Example 9 - [Anomaly rate](https://learn.netdata.cloud/docs/agent/ml#anomaly-rate) based CPU chart alarm
+
+Warning if 5 minute rolling [anomaly rate](https://learn.netdata.cloud/docs/agent/ml#anomaly-rate) averaged across all CPU dimensions is above 5%, critical if it goes above 20%:
+
+```yaml
+template: ml_5min_cpu_chart
+      on: system.cpu
+      os: linux
+   hosts: *
+  lookup: average -5m anomaly-bit of *
+    calc: $this
+   units: %
+   every: 30s
+    warn: $this > (($status >= $WARNING)  ? (5) : (20))
+    crit: $this > (($status == $CRITICAL) ? (20) : (100))
+    info: rolling 5min anomaly rate for system.cpu chart
+```
+
+The `lookup` line will calculate the average anomaly rate across all `system.cpu` dimensions over the last 5 minues. In this case
+Netdata will create one alarm for the chart.
+
+### Example 10 - [Anomaly rate](https://learn.netdata.cloud/docs/agent/ml#anomaly-rate) based node level alarm
+
+Warning if 5 minute rolling [anomaly rate](https://learn.netdata.cloud/docs/agent/ml#anomaly-rate) averaged across all ML enabled dimensions is above 5%, critical if it goes above 20%:
+
+```yaml
+template: ml_5min_node
+      on: anomaly_detection.anomaly_rate
+      os: linux
+   hosts: *
+  lookup: average -5m of anomaly_rate
+    calc: $this
+   units: %
+   every: 30s
+    warn: $this > (($status >= $WARNING)  ? (5) : (20))
+    crit: $this > (($status == $CRITICAL) ? (20) : (100))
+    info: rolling 5min anomaly rate for all ML enabled dims
+```
+
+The `lookup` line will use the `anomaly_rate` dimension of the `anomaly_detection.anomaly_rate` ML chart to calculate the average [node level anomaly rate](https://learn.netdata.cloud/docs/agent/ml#node-anomaly-rate) over the last 5 minues.
 
 ## Troubleshooting
 

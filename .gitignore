@@ -72,6 +72,7 @@ cgroup-network
 ebpf.plugin
 collectors/ebpf.plugin/reset_netdata_trace.sh
 !ebpf.plugin/
+collectors/ebpf.plugin/includes/
 
 # protoc generated files
 *.pb.cc
@@ -127,16 +128,15 @@ system/netdata.plist
 system/netdata-freebsd
 system/edit-config
 system/netdata.crontab
+system/install-service.sh
 
 daemon/anonymous-statistics.sh
 daemon/get-kubernetes-labels.sh
 
 health/notifications/alarm-notify.sh
 claim/netdata-claim.sh
-collectors/cgroups.plugin/cgroup-name.sh
 collectors/tc.plugin/tc-qos-helper.sh
 collectors/charts.d.plugin/charts.d.plugin
-collectors/node.d.plugin/node.d.plugin
 collectors/python.d.plugin/python.d.plugin
 collectors/fping.plugin/fping.plugin
 collectors/ioping.plugin/ioping.plugin
@@ -226,3 +226,10 @@ Session.*.vim
 
 # Special exceptions
 !packaging/repoconfig/Makefile
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints
+
+# Judy stuff
+JudyLTables.c
+judyltablesgen

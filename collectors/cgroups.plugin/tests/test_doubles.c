@@ -44,22 +44,6 @@ void mountinfo_free_all(struct mountinfo *mi)
     UNUSED(mi);
 }
 
-struct label *__wrap_add_label_to_list(struct label *l, char *key, char *value, LABEL_SOURCE label_source)
-{
-    function_called();
-    check_expected_ptr(l);
-    check_expected_ptr(key);
-    check_expected_ptr(value);
-    check_expected(label_source);
-    return l;
-}
-
-void rrdset_update_labels(RRDSET *st, struct label *labels)
-{
-    UNUSED(st);
-    UNUSED(labels);
-}
-
 RRDSET *rrdset_create_custom(
     RRDHOST *host, const char *type, const char *id, const char *name, const char *family, const char *context,
     const char *title, const char *units, const char *plugin, const char *module, long priority, int update_every,
@@ -117,7 +101,7 @@ collected_number rrddim_set_by_pointer(RRDSET *st, RRDDIM *rd, collected_number 
     return 0;
 }
 
-RRDSETVAR *rrdsetvar_custom_chart_variable_create(RRDSET *st, const char *name)
+const RRDSETVAR_ACQUIRED *rrdsetvar_custom_chart_variable_add_and_acquire(RRDSET *st, const char *name)
 {
     UNUSED(st);
     UNUSED(name);
@@ -125,9 +109,10 @@ RRDSETVAR *rrdsetvar_custom_chart_variable_create(RRDSET *st, const char *name)
     return NULL;
 }
 
-void rrdsetvar_custom_chart_variable_set(RRDSETVAR *rs, calculated_number value)
+void rrdsetvar_custom_chart_variable_set(RRDSET *st, const RRDSETVAR_ACQUIRED *rsa, NETDATA_DOUBLE value)
 {
-    UNUSED(rs);
+    UNUSED(st);
+    UNUSED(rsa);
     UNUSED(value);
 }
 
@@ -142,21 +127,31 @@ void rrdset_done(RRDSET *st)
     UNUSED(st);
 }
 
-void update_pressure_chart(struct pressure_chart *chart)
+void update_pressure_charts(struct pressure_charts *charts)
 {
-    UNUSED(chart);
+    UNUSED(charts);
 }
 
 void netdev_rename_device_add(
-    const char *host_device, const char *container_device, const char *container_name, struct label *labels)
+    const char *host_device, const char *container_device, const char *container_name, DICTIONARY *labels, const char *ctx_prefix)
 {
     UNUSED(host_device);
     UNUSED(container_device);
     UNUSED(container_name);
     UNUSED(labels);
+    UNUSED(ctx_prefix);
 }
 
 void netdev_rename_device_del(const char *host_device)
 {
     UNUSED(host_device);
+}
+
+void rrdcalc_update_rrdlabels(RRDSET *st) {
+    (void)st;
+}
+
+void db_execute(const char *cmd)
+{
+    UNUSED(cmd);
 }

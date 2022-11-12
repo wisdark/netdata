@@ -10,6 +10,7 @@
 #define MOUNTINFO_NO_STAT       0x00000010
 #define MOUNTINFO_NO_SIZE       0x00000020
 #define MOUNTINFO_READONLY      0x00000040
+#define MOUNTINFO_IS_IN_SYSD_PROTECTED_LIST 0x00000080
 
 struct mountinfo {
     long id;                // mount ID: unique identifier of the mount (may be reused after umount(2)).
@@ -50,11 +51,11 @@ struct mountinfo {
     struct mountinfo *next;
 };
 
-extern struct mountinfo *mountinfo_find(struct mountinfo *root, unsigned long major, unsigned long minor, char *device);
-extern struct mountinfo *mountinfo_find_by_filesystem_mount_source(struct mountinfo *root, const char *filesystem, const char *mount_source);
-extern struct mountinfo *mountinfo_find_by_filesystem_super_option(struct mountinfo *root, const char *filesystem, const char *super_options);
+struct mountinfo *mountinfo_find(struct mountinfo *root, unsigned long major, unsigned long minor, char *device);
+struct mountinfo *mountinfo_find_by_filesystem_mount_source(struct mountinfo *root, const char *filesystem, const char *mount_source);
+struct mountinfo *mountinfo_find_by_filesystem_super_option(struct mountinfo *root, const char *filesystem, const char *super_options);
 
-extern void mountinfo_free_all(struct mountinfo *mi);
-extern struct mountinfo *mountinfo_read(int do_statvfs);
+void mountinfo_free_all(struct mountinfo *mi);
+struct mountinfo *mountinfo_read(int do_statvfs);
 
 #endif /* NETDATA_PROC_SELF_MOUNTINFO_H */

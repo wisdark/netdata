@@ -48,12 +48,18 @@ The `kickstart.sh` script accepts a number of optional parameters to control how
 - `--non-interactive`: Don’t prompt for anything and assume yes whenever possible, overriding any automatic detection of an interactive run.
 - `--interactive`: Act as if running interactively, even if automatic detection indicates a run is non-interactive.
 - `--dont-wait`: Synonym for `--non-interactive`
+- `--dry-run`: Show what the installer would do, but don’t actually do any of it.
 - `--dont-start-it`: Don’t auto-start the daemon after installing. This parameter is not guaranteed to work.
-- `--nightly-channel`: Use a nightly build instead of a stable release (this is the default).
-- `--stable-channel`: Use a stable release instead of a nightly build.
+- `--release-channel`: Specify a particular release channel to install from. Currently supported release channels are:
+    - `nightly`: Installs a nightly build (this is currently the default).
+    - `stable`: Installs a stable release.
+    - `default`: Explicitly request whatever the current default is.
+- `--nightly-channel`: Synonym for `--release-channel nightly`.
+- `--stable-channel`: Synonym for `--release-channel stable`.
 - `--auto-update`: Enable automatic updates (this is the default).
 - `--no-updates`: Disable automatic updates.
 - `--disable-telemetry`: Disable anonymous statistics.
+- `--repositories-only`: Only install appropriate repository configuration packages (only for native install).
 - `--native-only`: Only install if native binary packages are available.
 - `--static-only`: Only install if a static build is available.
 - `--build-only`: Only install using a local build.
@@ -62,7 +68,15 @@ The `kickstart.sh` script accepts a number of optional parameters to control how
 - `--disable-cloud`: For local builds, don’t build any of the cloud code at all. For native packages and static builds,
     use runtime configuration to disable cloud support.
 - `--require-cloud`: Only install if Netdata Cloud can be enabled. Overrides `--disable-cloud`.
-- `--install`: Specify an installation prefix for local builds (by default, we use a sane prefix based on the type of system).
+- `--install`: Specify an installation prefix for local builds (by default, we use a sane prefix based on the type of system), this option is deprecated and will be removed in a future version, please use `--install-prefix` instead.
+- `--install-prefix`: Specify an installation prefix for local builds (by default, we use a sane prefix based on the type of system).
+- `--install-version`: Specify the version of Netdata to install.
+- `--old-install-prefix`: Specify the custom local build's installation prefix that should be removed.
+- `--uninstall`: Uninstall an existing installation of Netdata.
+- `--reinstall-clean`: Performs an uninstall of Netdata and clean installation.
+- `--local-build-options`: Specify additional options to pass to the installer code when building locally. Only valid if `--build-only` is also specified.
+- `--static-install-options`: Specify additional options to pass to the static installer code. Only valid if --static-only is also specified.
+- `--prepare-offline-install-source`: Instead of insallling the agent, prepare a directory that can be used to install on another system without needing to download anything. See our [offline installation documentation](/packaging/installer/methods/offline.md) for more info.
 
 Additionally, the following environment variables may be used to further customize how the script runs (most users
 should not need to use special values for any of these):
@@ -74,7 +88,6 @@ should not need to use special values for any of these):
   we try to use sudo, doas, or pkexec (in that order of preference), but if you need special options for one of
   those to work, or have a different tool to do the same thing on your system, you can specify it here.
 - `DISABLE_TELEMETRY`: If set to a value other than 0, behave as if `--disable-telemetry` was specified.
-- `NETDATA_INSTALLER_OPTIONS`: Specifies extra options to pass to the static installer or local build script.
 
 ### Connect node to Netdata Cloud during installation
 
@@ -94,7 +107,7 @@ To automatically claim nodes after installation:
 - `--claim-rooms`: Specify a comma-separated list of tokens for each War Room this node should appear in.
 - `--claim-proxy`: Specify a proxy to use when connecting to the cloud in the form of `http://[user:pass@]host:ip` for an HTTP(S) proxy.
   See [connecting through a proxy](/claim/README.md#connect-through-a-proxy) for details.
-- `--claim-url`: Specify a URL to use when connecting to the cloud. Defaults to `https://app.netdata.cloud`.
+- `--claim-url`: Specify a URL to use when connecting to the cloud. Defaults to `https://api.netdata.cloud`.
 
 For example:
 

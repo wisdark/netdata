@@ -2,7 +2,8 @@
 
 #include "claim.h"
 #include "registry/registry_internals.h"
-#include "aclk/aclk_api.h"
+#include "aclk/aclk.h"
+#include "aclk/aclk_proxy.h"
 
 char *claiming_pending_arguments = NULL;
 
@@ -31,7 +32,7 @@ static char *claiming_errors[] = {
 /* Retrieve the claim id for the agent.
  * Caller owns the string.
 */
-char *is_agent_claimed()
+char *get_agent_claimid()
 {
     char *result;
     rrdhost_aclk_state_lock(localhost);
@@ -57,7 +58,7 @@ void claim_agent(char *claiming_arguments)
     int exit_code;
     pid_t command_pid;
     char command_buffer[CLAIMING_COMMAND_LENGTH + 1];
-    FILE *fp;
+    FILE *fp_child_output, *fp_child_input;
 
     // This is guaranteed to be set early in main via post_conf_load()
     char *cloud_base_url = appconfig_get(&cloud_config, CONFIG_SECTION_GLOBAL, "cloud base url", NULL);
@@ -83,14 +84,14 @@ void claim_agent(char *claiming_arguments)
               claiming_arguments);
 
     info("Executing agent claiming command 'netdata-claim.sh'");
-    fp = mypopen(command_buffer, &command_pid);
-    if(!fp) {
+    fp_child_output = netdata_popen(command_buffer, &command_pid, &fp_child_input);
+    if(!fp_child_output) {
         error("Cannot popen(\"%s\").", command_buffer);
         return;
     }
     info("Waiting for claiming command to finish.");
-    while (fgets(command_buffer, CLAIMING_COMMAND_LENGTH, fp) != NULL) {;}
-    exit_code = mypclose(fp, command_pid);
+    while (fgets(command_buffer, CLAIMING_COMMAND_LENGTH, fp_child_output) != NULL) {;}
+    exit_code = netdata_pclose(fp_child_input, fp_child_output, command_pid);
     info("Agent claiming command returned with code %d", exit_code);
     if (0 == exit_code) {
         load_claiming_state();
@@ -134,6 +135,10 @@ void load_claiming_state(void)
     netdata_cloud_setting = 0;
 #else
     uuid_t uuid;
+
+    // Propagate into aclk and registry. Be kind of atomic...
+    appconfig_get(&cloud_config, CONFIG_SECTION_GLOBAL, "cloud base url", DEFAULT_CLOUD_BASE_URL);
+
     rrdhost_aclk_state_lock(localhost);
     if (localhost->aclk_state.claimed_id) {
         if (aclk_connected)
@@ -148,9 +153,6 @@ void load_claiming_state(void)
     }
     aclk_disable_runtime = 0;
 
-    // Propagate into aclk and registry. Be kind of atomic...
-    appconfig_get(&cloud_config, CONFIG_SECTION_GLOBAL, "cloud base url", DEFAULT_CLOUD_BASE_URL);
-
     char filename[FILENAME_MAX + 1];
     snprintfz(filename, FILENAME_MAX, "%s/cloud.d/claimed_id", netdata_configured_varlib_dir);
 
@@ -161,16 +163,22 @@ void load_claiming_state(void)
         freez(claimed_id);
         claimed_id = NULL;
     }
-    localhost->aclk_state.claimed_id = claimed_id;
+
+    if(claimed_id) {
+        localhost->aclk_state.claimed_id = mallocz(UUID_STR_LEN);
+        uuid_unparse_lower(uuid, localhost->aclk_state.claimed_id);
+    }
 
     invalidate_node_instances(&localhost->host_uuid, claimed_id ? &uuid : NULL);
-    store_claim_id(&localhost->host_uuid, claimed_id ? &uuid : NULL);
+    metaqueue_store_claim_id(&localhost->host_uuid, claimed_id ? &uuid : NULL);
 
     rrdhost_aclk_state_unlock(localhost);
     if (!claimed_id) {
         info("Unable to load '%s', setting state to AGENT_UNCLAIMED", filename);
         return;
     }
+
+    freez(claimed_id);
 
     info("File '%s' was found. Setting state to AGENT_CLAIMED.", filename);
     netdata_cloud_setting = appconfig_get_boolean(&cloud_config, CONFIG_SECTION_GLOBAL, "enabled", 1);

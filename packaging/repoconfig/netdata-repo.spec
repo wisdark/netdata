@@ -2,7 +2,7 @@
 
 Name:           netdata-repo
 Version:        1
-Release:        1
+Release:        2
 Summary:        Netdata stable repositories configuration.
 
 Group:          System Environment/Base
@@ -18,6 +18,10 @@ Source6:        netdata.repo.ol
 Source7:        netdata-edge.repo.ol
 
 BuildArch:      noarch
+
+%if 0%{?centos_ver} && 0%{?centos_ver} < 8
+Requires:       yum-plugin-priorities
+%endif
 
 # Overlapping file installs
 Conflicts:      netdata-repo-edge
@@ -92,5 +96,7 @@ This package contains the official Netdata package repository configuration for 
 %endif
 
 %changelog
+* Mon Jun 6 2022 Austin Hemmelgarn <austin@netdata.cloud> 1-2
+- Bump release to keep in sync with DEB package.
 * Mon Jun 14 2021 Austin Hemmelgarn <austin@netdata.cloud> 1-1
 - Initial revision

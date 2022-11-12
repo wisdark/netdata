@@ -1,10 +1,16 @@
+<!-- 
+title: Configure machine learning (ML) powered anomaly detection
+custom_edit_url: https://github.com/netdata/netdata/edit/master/ml/README.md
+description: This is an in-depth look at how Netdata uses ML to detect anomalies.
+keywords: [machine learning, anomaly detection, Netdata ML]
+-->
 # Machine learning (ML) powered anomaly detection
 
 ## Overview
 
-As of [`v1.32.0`](https://github.com/netdata/netdata/releases/tag/v1.32.0), Netdata comes with some ML powered [anomaly detection](https://en.wikipedia.org/wiki/Anomaly_detection) capabilities built into it and available to use out of the box, with minimal configuration required.
+As of [`v1.32.0`](https://github.com/netdata/netdata/releases/tag/v1.32.0), Netdata comes with some ML powered [anomaly detection](https://en.wikipedia.org/wiki/Anomaly_detection) capabilities built into it and available to use out of the box, with zero configuration required (ML was enabled by default in `v1.35.0-29-nightly` in [this PR](https://github.com/netdata/netdata/pull/13158), previously it required a one line config change).
 
-🚧 **Note**: This functionality is still under active development and considered experimental. Changes might cause the feature to break. We dogfood it internally and among early adopters within the Netdata community to build the feature. If you would like to get involved and help us with some feedback, email us at analytics-ml-team@netdata.cloud or come join us in the [🤖-ml-powered-monitoring](https://discord.gg/4eRSEUpJnc) channel of the Netdata discord.
+🚧 **Note**: If you would like to get involved and help us with some feedback, email us at analytics-ml-team@netdata.cloud, comment on the [beta launch post](https://community.netdata.cloud/t/anomaly-advisor-beta-launch/2717) in the Netdata community, or come join us in the [🤖-ml-powered-monitoring](https://discord.gg/4eRSEUpJnc) channel of the Netdata discord.
 
 Once ML is enabled, Netdata will begin training a model for each dimension. By default this model is a [k-means clustering](https://en.wikipedia.org/wiki/K-means_clustering) model trained on the most recent 4 hours of data. Rather than just using the most recent value of each raw metric, the model works on a preprocessed ["feature vector"](#feature-vector) of recent smoothed and differenced values. This should enable the model to detect a wider range of potentially anomalous patterns in recent observations as opposed to just point anomalies like big spikes or drops. ([This infographic](https://user-images.githubusercontent.com/2178292/144414415-275a3477-5b47-43d6-8959-509eb48ebb20.png) shows some different types of anomalies.) 
 
@@ -139,9 +145,11 @@ The query returns a list of dimension anomaly rates for all dimensions that were
 
 ## Configuration
 
-To enable anomaly detection:
+If you are running a netdata version after `v1.35.0-29-nightly` then ML will be enabled by default. 
+
+To enable or disable anomaly detection:
 1. Find and open the Netdata configuration file `netdata.conf`.
-2. In the `[ml]` section, set `enabled = yes`.
+2. In the `[ml]` section, set `enabled = yes` to enable or `enabled = no` to disable.
 3. Restart netdata (typically `sudo systemctl restart netdata`).
 
 **Note**: If you would like to learn more about configuring Netdata please see [the configuration guide](https://learn.netdata.cloud/guides/step-by-step/step-04).
@@ -150,13 +158,15 @@ Below is a list of all the available configuration params and their default valu
 
 ```
 [ml]
-	# enabled = no
+	# enabled = yes
 	# maximum num samples to train = 14400
 	# minimum num samples to train = 3600
 	# train every = 3600
+	# dbengine anomaly rate every = 30
 	# num samples to diff = 1
 	# num samples to smooth = 3
 	# num samples to lag = 5
+	# random sampling ratio = 0.2
 	# maximum number of k-means iterations = 1000
 	# dimension anomaly score threshold = 0.99
 	# host anomaly rate threshold = 0.01000
@@ -166,18 +176,56 @@ Below is a list of all the available configuration params and their default valu
 	# window minimum anomaly rate = 0.25000
 	# anomaly event min dimension rate threshold = 0.05000
 	# hosts to skip from training = !*
-	# charts to skip from training = !system.* !cpu.* !mem.* !disk.* !disk_* !ip.* !ipv4.* !ipv6.* !net.* !net_* !netfilter.* !services.* !apps.* !groups.* !user.* !ebpf.* !netdata.* *
+	# charts to skip from training = netdata.*
+```
+
+### Configuration Examples
+
+If you would like to run ML on a parent instead of at the edge, some configuration options are illustrated below.
+
+This example assumes 3 child nodes [streaming](https://learn.netdata.cloud/docs/agent/streaming) to 1 parent node and illustrates the main ways you might want to configure running ML for the children on the parent, running ML on the children themselves, or even a mix of approaches.
+
+![parent_child_options](https://user-images.githubusercontent.com/2178292/164439761-8fb7dddd-c4d8-4329-9f44-9a794937a086.png)
+
+```
+# parent will run ML for itself and child 1,2, it will skip running ML for child 0.
+# child 0 will run its own ML at the edge.
+# child 1 will run its own ML at the edge, even though parent will also run ML for it, a bit wasteful potentially to run ML in both places but is possible (Netdata Cloud will essentially average any overlapping models).
+# child 2 will not run ML at the edge, it will be run in the parent only.
+
+# parent-ml-enabled
+# run ML on all hosts apart from child-ml-enabled
+[ml]
+        enabled = yes
+        hosts to skip from training = child-0-ml-enabled
+
+# child-0-ml-enabled
+# run ML on child-0-ml-enabled
+[ml]
+        enabled = yes
+
+# child-1-ml-enabled
+# run ML on child-1-ml-enabled
+[ml]
+        enabled = yes
+
+# child-2-ml-disabled
+# do not run ML on child-2-ml-disabled
+[ml]
+        enabled = no
 ```
 
 ### Descriptions (min/max)
 
 - `enabled`: `yes` to enable, `no` to disable.
-- `maximum num samples to train`: (`3600`/`21600`) This is the maximum amount of time you would like to train each model on. For example, the default of `14400` trains on the preceding 4 hours of data, assuming an `update every` of 1 second.
-- `minimum num samples to train`: (`900`/`21600`) This is the minimum amount of data required to be able to train a model. For example, the default of `3600` implies that once at least 1 hour of data is available for training, a model is trained, otherwise it is skipped and checked again at the next training run.
+- `maximum num samples to train`: (`3600`/`86400`) This is the maximum amount of time you would like to train each model on. For example, the default of `14400` trains on the preceding 4 hours of data, assuming an `update every` of 1 second.
+- `minimum num samples to train`: (`900`/`21600`) This is the minimum amount of data required to be able to train a model. For example, the default of `900` implies that once at least 15 minutes of data is available for training, a model is trained, otherwise it is skipped and checked again at the next training run.
 - `train every`: (`1800`/`21600`) This is how often each model will be retrained. For example, the default of `3600` means that each model is retrained every hour. Note: The training of all models is spread out across the `train every` period for efficiency, so in reality, it means that each model will be trained in a staggered manner within each `train every` period.
+- `dbengine anomaly rate every`: (`30`/`900`) This is how often netdata will aggregate all the anomaly bits into a single chart (`anomaly_detection.anomaly_rates`). The aggregation into a single chart allows enabling anomaly rate ranking over _all_ metrics with one API call as opposed to a call per chart.
 - `num samples to diff`: (`0`/`1`) This is a `0` or `1` to determine if you want the model to operate on differences of the raw data or just the raw data. For example, the default of `1` means that we take differences of the raw values. Using differences is more general and works on dimensions that might naturally tend to have some trends or cycles in them that is normal behavior to which we don't want to be too sensitive.
 - `num samples to smooth`: (`0`/`5`) This is a small integer that controls the amount of smoothing applied as part of the feature processing used by the model. For example, the default of `3` means that the rolling average of the last 3 values is used. Smoothing like this helps the model be a little more robust to spiky types of dimensions that naturally "jump" up or down as part of their normal behavior.
 - `num samples to lag`: (`0`/`5`) This is a small integer that determines how many lagged values of the dimension to include in the feature vector. For example, the default of `5` means that in addition to the most recent (by default, differenced and smoothed) value of the dimension, the feature vector will also include the 5 previous values too. Using lagged values in our feature representation allows the model to work over strange patterns over recent values of a dimension as opposed to just focusing on if the most recent value itself is big or small enough to be anomalous.
+- `random sampling ratio`: (`0.2`/`1.0`) This parameter determines how much of the available training data is randomly sampled when training a model. The default of `0.2` means that Netdata will train on a random 20% of training data. This parameter influences cost efficiency. At `0.2` the model is still reasonably trained while minimizing system overhead costs caused by the training. 
 - `maximum number of k-means iterations`: This is a parameter that can be passed to the model to limit the number of iterations in training the k-means model. Vast majority of cases can ignore and leave as default.
 - `dimension anomaly score threshold`: (`0.01`/`5.00`) This is the threshold at which an individual dimension at a specific timestep is considered anomalous or not. For example, the default of `0.99` means that a dimension with an anomaly score of 99% or higher is flagged as anomalous. This is a normalized probability based on the training data, so the default of 99% means that anything that is as strange (based on distance measure) or more strange as the most strange 1% of data observed during training will be flagged as anomalous. If you wanted to make the anomaly detection on individual dimensions more sensitive you could try a value like `0.90` (90%) or to make it less sensitive you could try `1.5` (150%).
 - `host anomaly rate threshold`: (`0.0`/`1.0`) This is the percentage of dimensions (based on all those enabled for anomaly detection) that need to be considered anomalous at specific timestep for the host itself to be considered anomalous. For example, the default value of `0.01` means that if more than 1% of dimensions are anomalous at the same time then the host itself is considered in an anomalous state.
@@ -186,7 +234,7 @@ Below is a list of all the available configuration params and their default valu
 - `window minimum anomaly rate`: (`0.0`/`1.0`) This parameter corresponds to a threshold on the percentage of time in the rolling window that the host was considered in an anomalous state. For example, the default of `0.25` means that if the host is in an anomalous state for 25% of more of the rolling window then and anomaly event will be triggered or extended if one is already active. Note: If you want to make the anomaly detector itself less sensitive, you can adjust this value to something like `0.75` which would mean the host needs to be much more consistently in an anomalous state to trigger an anomaly detection event. Likewise, a lower value like `0.1` would make the anomaly detector more sensitive.
 - `anomaly event min dimension rate threshold`: (`0.0`/`1.0`) This is a parameter that helps filter out irrelevant dimensions from anomaly events. For example, the default of `0.05` means that only dimensions that were considered anomalous for at least 5% of the anomaly event itself will be included in that anomaly event. The idea here is to just include dimensions that were consistently anomalous as opposed to those that may have just randomly happened to be anomalous at the same time.
 - `hosts to skip from training`: This parameter allows you to turn off anomaly detection for any child hosts on a parent host by defining those you would like to skip from training here. For example, a value like `dev-*` skips all hosts on a parent that begin with the "dev-" prefix. The default value of `!*` means "don't skip any".
-- `charts to skip from training`: This parameter allows you to exclude certain charts from anomaly detection by defining them here. By default, all charts, apart from a specific allow list of the typical basic Netdata charts, are excluded. If you have additional charts you would like to include for anomaly detection, you can add them here. **Note**: It is recommended to add charts in small groups and then measure any impact on performance before adding additional ones.
+- `charts to skip from training`: This parameter allows you to exclude certain charts from anomaly detection. By default, only netdata related charts are excluded. This is to avoid the scenario where accessing the netdata dashboard could itself tigger some anomalies if you don't access them regularly. If you want to include charts that are excluded by default, add them in small groups and then measure any impact on performance before adding additional ones. Example: If you want to include system, apps, and user charts:`!system.* !apps.* !user.* *`. 
 
 ## Charts
 
@@ -200,8 +248,6 @@ In terms of anomaly detection, the most interesting charts would be the `anomaly
 - `anomaly_detection.dimensions`: Percentage of anomalous dimensions.
 - `anomaly_detection.detector_window`: The length of the active window used by the detector.
 - `anomaly_detection.detector_events`: Flags (0 or 1) to show when an anomaly event has been triggered by the detector.
-- `anomaly_detection.prediction_stats`: Diagnostic metrics relating to prediction time of anomaly detection.
-- `anomaly_detection.training_stats`: Diagnostic metrics relating to training time of anomaly detection.
 
 Below is an example of how these charts may look in the presence of an anomaly event.
 

@@ -65,9 +65,9 @@ void buffer_char_replace(BUFFER *wb, char from, char to)
 }
 
 // This trick seems to give an 80% speed increase in 32bit systems
-// print_calculated_number_llu_r() will just print the digits up to the
+// print_number_llu_r() will just print the digits up to the
 // point the remaining value fits in 32 bits, and then calls
-// print_calculated_number_lu_r() to print the rest with 32 bit arithmetic.
+// print_number_lu_r() to print the rest with 32 bit arithmetic.
 
 inline char *print_number_lu_r(char *str, unsigned long uvalue) {
     char *wstr = str;
@@ -136,6 +136,84 @@ void buffer_print_llu(BUFFER *wb, unsigned long long uvalue)
     wb->len += wstr - str;
 }
 
+void buffer_print_ll(BUFFER *wb, long long value)
+{
+    buffer_need_bytes(wb, 50);
+
+    if(value < 0) {
+        buffer_fast_strcat(wb, "-", 1);
+        value = -value;
+    }
+
+    buffer_print_llu(wb, value);
+}
+
+static unsigned char bits03_to_hex[16] = {
+    [0] = '0',
+    [1] = '1',
+    [2] = '2',
+    [3] = '3',
+    [4] = '4',
+    [5] = '5',
+    [6] = '6',
+    [7] = '7',
+    [8] = '8',
+    [9] = '9',
+    [10] = 'A',
+    [11] = 'B',
+    [12] = 'C',
+    [13] = 'D',
+    [14] = 'E',
+    [15] = 'F'
+};
+
+void buffer_print_llu_hex(BUFFER *wb, unsigned long long value)
+{
+    unsigned char buffer[sizeof(unsigned long long) * 2 + 2 + 1];   // 8 bytes * 2 + '0x' + '\0'
+    unsigned char *e = &buffer[sizeof(unsigned long long) * 2 + 2];
+    unsigned char *p = e;
+
+    *p-- = '\0';
+    *p-- = bits03_to_hex[value & 0xF];
+    value >>= 4;
+    if(value) {
+        *p-- = bits03_to_hex[value & 0xF];
+        value >>= 4;
+
+        while(value) {
+            *p-- = bits03_to_hex[value & 0xF];
+            value >>= 4;
+
+            if(value) {
+                *p-- = bits03_to_hex[value & 0xF];
+                value >>= 4;
+            }
+        }
+    }
+    *p-- = 'x';
+    *p   = '0';
+
+    buffer_fast_strcat(wb, (char *)p, e - p);
+}
+
+void buffer_fast_strcat(BUFFER *wb, const char *txt, size_t len) {
+    if(unlikely(!txt || !*txt)) return;
+
+    buffer_need_bytes(wb, len + 1);
+
+    char *s = &wb->buffer[wb->len];
+    const char *end = &txt[len + 1];
+
+    while(txt != end)
+        *s++ = *txt++;
+
+    wb->len += len;
+
+    // keep it NULL terminating
+    // not counting it at wb->len
+    wb->buffer[wb->len] = '\0';
+}
+
 void buffer_strcat(BUFFER *wb, const char *txt)
 {
     // buffer_sprintf(wb, "%s", txt);
@@ -159,8 +237,7 @@ void buffer_strcat(BUFFER *wb, const char *txt)
     if(*txt) {
         debug(D_WEB_BUFFER, "strcat(): increasing web_buffer at position %zu, size = %zu\n", wb->len, wb->size);
         len = strlen(txt);
-        buffer_increase(wb, len);
-        buffer_strcat(wb, txt);
+        buffer_fast_strcat(wb, txt, len);
     }
     else {
         // terminate the string
@@ -236,15 +313,23 @@ void buffer_vsprintf(BUFFER *wb, const char *fmt, va_list args)
 {
     if(unlikely(!fmt || !*fmt)) return;
 
-    buffer_need_bytes(wb, 2);
+    size_t wrote = 0, need = 2, space_remaining = 0;
 
-    size_t len = wb->size - wb->len - 1;
+    do {
+        need += space_remaining * 2;
 
-    wb->len += vsnprintfz(&wb->buffer[wb->len], len, fmt, args);
+        debug(D_WEB_BUFFER, "web_buffer_sprintf(): increasing web_buffer at position %zu, size = %zu, by %zu bytes (wrote = %zu)\n", wb->len, wb->size, need, wrote);
+        buffer_need_bytes(wb, need);
 
-    buffer_overflow_check(wb);
+        space_remaining = wb->size - wb->len - 1;
 
-    // the buffer is \0 terminated by vsnprintfz
+        wrote = (size_t) vsnprintfz(&wb->buffer[wb->len], space_remaining, fmt, args);
+
+    } while(wrote >= space_remaining);
+
+    wb->len += wrote;
+
+    // the buffer is \0 terminated by vsnprintf
 }
 
 void buffer_sprintf(BUFFER *wb, const char *fmt, ...)
@@ -252,22 +337,21 @@ void buffer_sprintf(BUFFER *wb, const char *fmt, ...)
     if(unlikely(!fmt || !*fmt)) return;
 
     va_list args;
-    size_t wrote = 0, need = 2, multiplier = 0, len;
+    size_t wrote = 0, need = 2, space_remaining = 0;
 
     do {
-        need += wrote + multiplier * WEB_DATA_LENGTH_INCREASE_STEP;
-        multiplier++;
+        need += space_remaining * 2;
 
         debug(D_WEB_BUFFER, "web_buffer_sprintf(): increasing web_buffer at position %zu, size = %zu, by %zu bytes (wrote = %zu)\n", wb->len, wb->size, need, wrote);
         buffer_need_bytes(wb, need);
 
-        len = wb->size - wb->len - 1;
+        space_remaining = wb->size - wb->len - 1;
 
         va_start(args, fmt);
-        wrote = (size_t) vsnprintfz(&wb->buffer[wb->len], len, fmt, args);
+        wrote = (size_t) vsnprintfz(&wb->buffer[wb->len], space_remaining, fmt, args);
         va_end(args);
 
-    } while(wrote >= len);
+    } while(wrote >= space_remaining);
 
     wb->len += wrote;
 
@@ -275,7 +359,7 @@ void buffer_sprintf(BUFFER *wb, const char *fmt, ...)
 }
 
 
-void buffer_rrd_value(BUFFER *wb, calculated_number value)
+void buffer_rrd_value(BUFFER *wb, NETDATA_DOUBLE value)
 {
     buffer_need_bytes(wb, 50);
 
@@ -284,7 +368,7 @@ void buffer_rrd_value(BUFFER *wb, calculated_number value)
         return;
     }
     else
-        wb->len += print_calculated_number(&wb->buffer[wb->len], value);
+        wb->len += print_netdata_double(&wb->buffer[wb->len], value);
 
     // terminate it
     buffer_need_bytes(wb, 1);
@@ -420,16 +504,21 @@ void buffer_increase(BUFFER *b, size_t free_size_required) {
     buffer_overflow_check(b);
 
     size_t left = b->size - b->len;
-
     if(left >= free_size_required) return;
 
-    size_t increase = free_size_required - left;
-    if(increase < WEB_DATA_LENGTH_INCREASE_STEP) increase = WEB_DATA_LENGTH_INCREASE_STEP;
+    size_t wanted = free_size_required - left;
+    size_t minimum = WEB_DATA_LENGTH_INCREASE_STEP;
+    if(minimum > wanted) wanted = minimum;
 
-    debug(D_WEB_BUFFER, "Increasing data buffer from size %zu to %zu.", b->size, b->size + increase);
+    size_t optimal = b->size;
+    if(b->size > 5*1024*1024) optimal = b->size / 2;
 
-    b->buffer = reallocz(b->buffer, b->size + increase + sizeof(BUFFER_OVERFLOW_EOF) + 2);
-    b->size += increase;
+    if(optimal > wanted) wanted = optimal;
+
+    debug(D_WEB_BUFFER, "Increasing data buffer from size %zu to %zu.", b->size, b->size + wanted);
+
+    b->buffer = reallocz(b->buffer, b->size + wanted + sizeof(BUFFER_OVERFLOW_EOF) + 2);
+    b->size += wanted;
 
     buffer_overflow_init(b);
     buffer_overflow_check(b);

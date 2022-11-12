@@ -6,57 +6,13 @@
 
 using namespace ml;
 
-/*
- * Copy of the unpack_storage_number which allows us to convert
- * a storage_number to double.
- */
-static CalculatedNumber unpack_storage_number_dbl(storage_number value) {
-    if(!value)
-        return 0;
-
-    int sign = 0, exp = 0;
-    int factor = 10;
-
-    // bit 32 = 0:positive, 1:negative
-    if(unlikely(value & (1 << 31)))
-        sign = 1;
-
-    // bit 31 = 0:divide, 1:multiply
-    if(unlikely(value & (1 << 30)))
-        exp = 1;
-
-    // bit 27 SN_EXISTS_100
-    if(unlikely(value & (1 << 26)))
-        factor = 100;
-
-    // bit 26 SN_EXISTS_RESET
-    // bit 25 SN_ANOMALY_BIT
-
-    // bit 30, 29, 28 = (multiplier or divider) 0-7 (8 total)
-    int mul = (value & ((1<<29)|(1<<28)|(1<<27))) >> 27;
-
-    // bit 24 to bit 1 = the value, so remove all other bits
-    value ^= value & ((1<<31)|(1<<30)|(1<<29)|(1<<28)|(1<<27)|(1<<26)|(1<<25)|(1<<24));
-
-    CalculatedNumber CN = value;
-
-    if(exp) {
-        for(; mul; mul--)
-            CN *= factor;
-    }
-    else {
-        for( ; mul ; mul--)
-            CN /= 10;
-    }
-
-    if(sign)
-        CN = -CN;
-
-    return CN;
+bool Dimension::isActive() const {
+    bool SetObsolete = rrdset_flag_check(RD->rrdset, RRDSET_FLAG_OBSOLETE);
+    bool DimObsolete = rrddim_flag_check(RD, RRDDIM_FLAG_OBSOLETE);
+    return !SetObsolete && !DimObsolete;
 }
 
-std::pair<CalculatedNumber *, size_t>
-TrainableDimension::getCalculatedNumbers() {
+std::pair<CalculatedNumber *, size_t> Dimension::getCalculatedNumbers() {
     size_t MinN = Cfg.MinTrainSamples;
     size_t MaxN = Cfg.MaxTrainSamples;
 
@@ -89,10 +45,10 @@ TrainableDimension::getCalculatedNumbers() {
             break;
 
         auto P = Q.nextMetric();
-        storage_number SN = P.second;
+        CalculatedNumber Value = P.second;
 
-        if (does_storage_number_exist(SN)) {
-            CNs[Idx] = unpack_storage_number_dbl(SN);
+        if (netdata_double_isnumber(Value)) {
+            CNs[Idx] = Value;
             LastValue = CNs[Idx];
             CollectedValues++;
         } else
@@ -117,7 +73,7 @@ TrainableDimension::getCalculatedNumbers() {
     return { CNs, TotalValues };
 }
 
-MLResult TrainableDimension::trainModel() {
+MLResult Dimension::trainModel() {
     auto P = getCalculatedNumbers();
     CalculatedNumber *CNs = P.first;
     unsigned N = P.second;
@@ -125,8 +81,21 @@ MLResult TrainableDimension::trainModel() {
     if (!CNs)
         return MLResult::MissingData;
 
-    SamplesBuffer SB = SamplesBuffer(CNs, N, 1, Cfg.DiffN, Cfg.SmoothN, Cfg.LagN);
-    KM.train(SB, Cfg.MaxKMeansIters);
+    unsigned TargetNumSamples = Cfg.MaxTrainSamples * Cfg.RandomSamplingRatio;
+    double SamplingRatio = std::min(static_cast<double>(TargetNumSamples) / N, 1.0);
+
+    SamplesBuffer SB = SamplesBuffer(CNs, N, 1, Cfg.DiffN, Cfg.SmoothN, Cfg.LagN,
+                                     SamplingRatio, Cfg.RandomNums);
+    std::vector<DSample> Samples = SB.preprocess();
+
+    KMeans KM;
+    KM.train(Samples, Cfg.MaxKMeansIters);
+
+    {
+        std::lock_guard<std::mutex> Lock(Mutex);
+        Models[0] = KM;
+    }
+
     Trained = true;
     ConstantModel = true;
 
@@ -134,16 +103,25 @@ MLResult TrainableDimension::trainModel() {
     return MLResult::Success;
 }
 
-void PredictableDimension::addValue(CalculatedNumber Value, bool Exists) {
+bool Dimension::shouldTrain(const TimePoint &TP) const {
+    if (ConstantModel)
+        return false;
+
+    return (LastTrainedAt + Seconds(Cfg.TrainEvery * updateEvery())) < TP;
+}
+
+bool Dimension::predict(CalculatedNumber Value, bool Exists) {
     if (!Exists) {
         CNs.clear();
-        return;
+        AnomalyBit = false;
+        return false;
     }
 
     unsigned N = Cfg.DiffN + Cfg.SmoothN + Cfg.LagN;
     if (CNs.size() < N) {
         CNs.push_back(Value);
-        return;
+        AnomalyBit = false;
+        return false;
     }
 
     std::rotate(std::begin(CNs), std::begin(CNs) + 1, std::end(CNs));
@@ -152,23 +130,44 @@ void PredictableDimension::addValue(CalculatedNumber Value, bool Exists) {
         ConstantModel = false;
 
     CNs[N - 1] = Value;
-}
 
-std::pair<MLResult, bool> PredictableDimension::predict() {
-    unsigned N = Cfg.DiffN + Cfg.SmoothN + Cfg.LagN;
-    if (CNs.size() != N)
-        return { MLResult::MissingData, AnomalyBit };
+    if (!isTrained() || ConstantModel) {
+        AnomalyBit = false;
+        return false;
+    }
 
     CalculatedNumber *TmpCNs = new CalculatedNumber[N * (Cfg.LagN + 1)]();
     std::memcpy(TmpCNs, CNs.data(), N * sizeof(CalculatedNumber));
-
-    SamplesBuffer SB = SamplesBuffer(TmpCNs, N, 1, Cfg.DiffN, Cfg.SmoothN, Cfg.LagN);
-    AnomalyScore = computeAnomalyScore(SB);
+    SamplesBuffer SB = SamplesBuffer(TmpCNs, N, 1,
+                                     Cfg.DiffN, Cfg.SmoothN, Cfg.LagN,
+                                     1.0, Cfg.RandomNums);
+    const DSample Sample = SB.preprocess().back();
     delete[] TmpCNs;
 
-    if (AnomalyScore == std::numeric_limits<CalculatedNumber>::quiet_NaN())
-        return { MLResult::NaN, AnomalyBit };
+    std::unique_lock<std::mutex> Lock(Mutex, std::defer_lock);
+    if (!Lock.try_lock()) {
+        AnomalyBit = false;
+        return false;
+    }
 
-    AnomalyBit = AnomalyScore >= (100 * Cfg.DimensionAnomalyScoreThreshold);
-    return { MLResult::Success, AnomalyBit };
+    for (const auto &KM : Models) {
+        double AnomalyScore = KM.anomalyScore(Sample);
+        if (AnomalyScore == std::numeric_limits<CalculatedNumber>::quiet_NaN()) {
+            AnomalyBit = false;
+            continue;
+        }
+
+        if (AnomalyScore < (100 * Cfg.DimensionAnomalyScoreThreshold)) {
+            AnomalyBit = false;
+            return false;
+        }
+    }
+
+    AnomalyBit = true;
+    return true;
+}
+
+std::array<KMeans, 1> Dimension::getModels() {
+    std::unique_lock<std::mutex> Lock(Mutex);
+    return Models;
 }

@@ -3,22 +3,39 @@
 #include <daemon/main.h>
 #include "../libnetdata.h"
 
+#ifdef HAVE_BACKTRACE
+#include <execinfo.h>
+#endif
+
 int web_server_is_multithreaded = 1;
 
 const char *program_name = "";
-uint64_t debug_flags = DEBUG;
+uint64_t debug_flags = 0;
 
 int access_log_syslog = 1;
 int error_log_syslog = 1;
 int output_log_syslog = 1;  // debug log
+int health_log_syslog = 1;
 
 int stdaccess_fd = -1;
 FILE *stdaccess = NULL;
+
+int stdhealth_fd = -1;
+FILE *stdhealth = NULL;
 
 const char *stdaccess_filename = NULL;
 const char *stderr_filename = NULL;
 const char *stdout_filename = NULL;
 const char *facility_log = NULL;
+const char *stdhealth_filename = NULL;
+
+#ifdef ENABLE_ACLK
+const char *aclklog_filename = NULL;
+int aclklog_fd = -1;
+FILE *aclklog = NULL;
+int aclklog_syslog = 1;
+int aclklog_enabled = 0;
+#endif
 
 // ----------------------------------------------------------------------------
 // Log facility(https://tools.ietf.org/html/rfc5424)
@@ -443,16 +460,13 @@ void syslog_init() {
     }
 }
 
-#define LOG_DATE_LENGTH 26
-
-static inline void log_date(char *buffer, size_t len) {
+void log_date(char *buffer, size_t len, time_t now) {
     if(unlikely(!buffer || !len))
         return;
 
-    time_t t;
+    time_t t = now;
     struct tm *tmp, tmbuf;
 
-    t = now_realtime_sec();
     tmp = localtime_r(&t, &tmbuf);
 
     if (tmp == NULL) {
@@ -562,8 +576,16 @@ void reopen_all_log_files() {
     if(stderr_filename)
         open_log_file(STDERR_FILENO, stderr, stderr_filename, &error_log_syslog, 0, NULL);
 
+#ifdef ENABLE_ACLK
+    if (aclklog_enabled)
+        aclklog = open_log_file(aclklog_fd, aclklog, aclklog_filename, NULL, 0, &aclklog_fd);
+#endif
+
     if(stdaccess_filename)
-         stdaccess = open_log_file(stdaccess_fd, stdaccess, stdaccess_filename, &access_log_syslog, 1, &stdaccess_fd);
+        stdaccess = open_log_file(stdaccess_fd, stdaccess, stdaccess_filename, &access_log_syslog, 1, &stdaccess_fd);
+
+    if(stdhealth_filename)
+        stdhealth = open_log_file(stdhealth_fd, stdhealth, stdhealth_filename, &health_log_syslog, 1, &stdhealth_fd);
 }
 
 void open_all_log_files() {
@@ -572,7 +594,15 @@ void open_all_log_files() {
 
     open_log_file(STDOUT_FILENO, stdout, stdout_filename, &output_log_syslog, 0, NULL);
     open_log_file(STDERR_FILENO, stderr, stderr_filename, &error_log_syslog, 0, NULL);
+
+#ifdef ENABLE_ACLK
+    if(aclklog_enabled)
+        aclklog = open_log_file(aclklog_fd, aclklog, aclklog_filename, NULL, 0, &aclklog_fd);
+#endif
+
     stdaccess = open_log_file(stdaccess_fd, stdaccess, stdaccess_filename, &access_log_syslog, 1, &stdaccess_fd);
+
+    stdhealth = open_log_file(stdhealth_fd, stdhealth, stdhealth_filename, &health_log_syslog, 1, &stdhealth_fd);
 }
 
 // ----------------------------------------------------------------------------
@@ -606,7 +636,7 @@ int error_log_limit(int reset) {
     if(reset) {
         if(prevented) {
             char date[LOG_DATE_LENGTH];
-            log_date(date, LOG_DATE_LENGTH);
+            log_date(date, LOG_DATE_LENGTH, now_realtime_sec());
             fprintf(
                 stderr,
                 "%s: %s LOG FLOOD PROTECTION reset for process '%s' "
@@ -629,7 +659,7 @@ int error_log_limit(int reset) {
     if(now - start > error_log_throttle_period) {
         if(prevented) {
             char date[LOG_DATE_LENGTH];
-            log_date(date, LOG_DATE_LENGTH);
+            log_date(date, LOG_DATE_LENGTH, now_realtime_sec());
             fprintf(
                 stderr,
                 "%s: %s LOG FLOOD PROTECTION resuming logging from process '%s' "
@@ -653,7 +683,7 @@ int error_log_limit(int reset) {
     if(counter > error_log_errors_per_period) {
         if(!prevented) {
             char date[LOG_DATE_LENGTH];
-            log_date(date, LOG_DATE_LENGTH);
+            log_date(date, LOG_DATE_LENGTH, now_realtime_sec());
             fprintf(
                 stderr,
                 "%s: %s LOG FLOOD PROTECTION too many logs (%lu logs in %"PRId64" seconds, threshold is set to %lu logs "
@@ -681,6 +711,26 @@ int error_log_limit(int reset) {
     return 0;
 }
 
+void error_log_limit_reset(void) {
+    log_lock();
+
+    error_log_errors_per_period = error_log_errors_per_period_backup;
+    error_log_limit(1);
+
+    log_unlock();
+}
+
+void error_log_limit_unlimited(void) {
+    log_lock();
+
+    error_log_errors_per_period = error_log_errors_per_period_backup;
+    error_log_limit(1);
+
+    error_log_errors_per_period = ((error_log_errors_per_period_backup * 10) < 10000) ? 10000 : (error_log_errors_per_period_backup * 10);
+
+    log_unlock();
+}
+
 // ----------------------------------------------------------------------------
 // debug log
 
@@ -688,10 +738,10 @@ void debug_int( const char *file, const char *function, const unsigned long line
     va_list args;
 
     char date[LOG_DATE_LENGTH];
-    log_date(date, LOG_DATE_LENGTH);
+    log_date(date, LOG_DATE_LENGTH, now_realtime_sec());
 
     va_start( args, fmt );
-    printf("%s: %s DEBUG : %s : (%04lu@%-10.10s:%-15.15s): ", date, program_name, netdata_thread_tag(), line, file, function);
+    printf("%s: %s DEBUG : %s : (%04lu@%-20.20s:%-15.15s): ", date, program_name, netdata_thread_tag(), line, file, function);
     vprintf(fmt, args);
     va_end( args );
     putchar('\n');
@@ -708,12 +758,17 @@ void debug_int( const char *file, const char *function, const unsigned long line
 // ----------------------------------------------------------------------------
 // info log
 
-void info_int( const char *file, const char *function, const unsigned long line, const char *fmt, ... )
+void info_int( const char *file __maybe_unused, const char *function __maybe_unused, const unsigned long line __maybe_unused, const char *fmt, ... )
 {
     va_list args;
 
+    log_lock();
+
     // prevent logging too much
-    if(error_log_limit(0)) return;
+    if (error_log_limit(0)) {
+        log_unlock();
+        return;
+    }
 
     if(error_log_syslog) {
         va_start( args, fmt );
@@ -722,13 +777,14 @@ void info_int( const char *file, const char *function, const unsigned long line,
     }
 
     char date[LOG_DATE_LENGTH];
-    log_date(date, LOG_DATE_LENGTH);
-
-    log_lock();
+    log_date(date, LOG_DATE_LENGTH, now_realtime_sec());
 
     va_start( args, fmt );
-    if(debug_flags) fprintf(stderr, "%s: %s INFO  : %s : (%04lu@%-10.10s:%-15.15s): ", date, program_name, netdata_thread_tag(), line, file, function);
-    else            fprintf(stderr, "%s: %s INFO  : %s : ", date, program_name, netdata_thread_tag());
+#ifdef NETDATA_INTERNAL_CHECKS
+    fprintf(stderr, "%s: %s INFO  : %s : (%04lu@%-20.20s:%-15.15s): ", date, program_name, netdata_thread_tag(), line, file, function);
+#else
+    fprintf(stderr, "%s: %s INFO  : %s : ", date, program_name, netdata_thread_tag());
+#endif
     vfprintf( stderr, fmt, args );
     va_end( args );
 
@@ -762,14 +818,29 @@ static const char *strerror_result_string(const char *a, const char *b) { (void)
 #error "cannot detect the format of function strerror_r()"
 #endif
 
-void error_int( const char *prefix, const char *file, const char *function, const unsigned long line, const char *fmt, ... ) {
+void error_limit_int(ERROR_LIMIT *erl, const char *prefix, const char *file __maybe_unused, const char *function __maybe_unused, const unsigned long line __maybe_unused, const char *fmt, ... ) {
+    if(erl->sleep_ut)
+        sleep_usec(erl->sleep_ut);
+
     // save a copy of errno - just in case this function generates a new error
     int __errno = errno;
 
     va_list args;
 
+    log_lock();
+
+    erl->count++;
+    time_t now = now_boottime_sec();
+    if(now - erl->last_logged < erl->log_every) {
+        log_unlock();
+        return;
+    }
+
     // prevent logging too much
-    if(error_log_limit(0)) return;
+    if (error_log_limit(0)) {
+        log_unlock();
+        return;
+    }
 
     if(error_log_syslog) {
         va_start( args, fmt );
@@ -778,13 +849,66 @@ void error_int( const char *prefix, const char *file, const char *function, cons
     }
 
     char date[LOG_DATE_LENGTH];
-    log_date(date, LOG_DATE_LENGTH);
+    log_date(date, LOG_DATE_LENGTH, now_realtime_sec());
+
+    va_start( args, fmt );
+#ifdef NETDATA_INTERNAL_CHECKS
+    fprintf(stderr, "%s: %s %-5.5s : %s : (%04lu@%-20.20s:%-15.15s): ", date, program_name, prefix, netdata_thread_tag(), line, file, function);
+#else
+    fprintf(stderr, "%s: %s %-5.5s : %s : ", date, program_name, prefix, netdata_thread_tag());
+#endif
+    vfprintf( stderr, fmt, args );
+    va_end( args );
+
+    if(erl->count > 1)
+        fprintf(stderr, " (repeated %zu times in the last %llu secs)", erl->count, (unsigned long long)(erl->last_logged ? now - erl->last_logged : 0));
+
+    if(erl->sleep_ut)
+        fprintf(stderr, " (sleeping for %llu microseconds every time this happens)", erl->sleep_ut);
+
+    if(__errno) {
+        char buf[1024];
+        fprintf(stderr, " (errno %d, %s)\n", __errno, strerror_result(strerror_r(__errno, buf, 1023), buf));
+        errno = 0;
+    }
+    else
+        fputc('\n', stderr);
+
+    erl->last_logged = now;
+    erl->count = 0;
+
+    log_unlock();
+}
+
+void error_int(const char *prefix, const char *file __maybe_unused, const char *function __maybe_unused, const unsigned long line __maybe_unused, const char *fmt, ... ) {
+    // save a copy of errno - just in case this function generates a new error
+    int __errno = errno;
+
+    va_list args;
 
     log_lock();
 
+    // prevent logging too much
+    if (error_log_limit(0)) {
+        log_unlock();
+        return;
+    }
+
+    if(error_log_syslog) {
+        va_start( args, fmt );
+        vsyslog(LOG_ERR,  fmt, args );
+        va_end( args );
+    }
+
+    char date[LOG_DATE_LENGTH];
+    log_date(date, LOG_DATE_LENGTH, now_realtime_sec());
+
     va_start( args, fmt );
-    if(debug_flags) fprintf(stderr, "%s: %s %-5.5s : %s : (%04lu@%-10.10s:%-15.15s): ", date, program_name, prefix, netdata_thread_tag(), line, file, function);
-    else            fprintf(stderr, "%s: %s %-5.5s : %s : ", date, program_name, prefix, netdata_thread_tag());
+#ifdef NETDATA_INTERNAL_CHECKS
+    fprintf(stderr, "%s: %s %-5.5s : %s : (%04lu@%-20.20s:%-15.15s): ", date, program_name, prefix, netdata_thread_tag(), line, file, function);
+#else
+    fprintf(stderr, "%s: %s %-5.5s : %s : ", date, program_name, prefix, netdata_thread_tag());
+#endif
     vfprintf( stderr, fmt, args );
     va_end( args );
 
@@ -798,6 +922,25 @@ void error_int( const char *prefix, const char *file, const char *function, cons
 
     log_unlock();
 }
+
+#ifdef NETDATA_INTERNAL_CHECKS
+static void crash_netdata(void) {
+    // make Netdata core dump
+    abort();
+}
+#endif
+
+#ifdef HAVE_BACKTRACE
+#define BT_BUF_SIZE 100
+static void print_call_stack(void) {
+    int nptrs;
+    void *buffer[BT_BUF_SIZE];
+
+    nptrs = backtrace(buffer, BT_BUF_SIZE);
+    if(nptrs)
+        backtrace_symbols_fd(buffer, nptrs, fileno(stderr));
+}
+#endif
 
 void fatal_int( const char *file, const char *function, const unsigned long line, const char *fmt, ... ) {
     // save a copy of errno - just in case this function generates a new error
@@ -821,13 +964,16 @@ void fatal_int( const char *file, const char *function, const unsigned long line
     }
 
     char date[LOG_DATE_LENGTH];
-    log_date(date, LOG_DATE_LENGTH);
+    log_date(date, LOG_DATE_LENGTH, now_realtime_sec());
 
     log_lock();
 
     va_start( args, fmt );
-    if(debug_flags) fprintf(stderr, "%s: %s FATAL : %s : (%04lu@%-10.10s:%-15.15s): ", date, program_name, thread_tag, line, file, function);
-    else            fprintf(stderr, "%s: %s FATAL : %s : ", date, program_name, thread_tag);
+#ifdef NETDATA_INTERNAL_CHECKS
+    fprintf(stderr, "%s: %s FATAL : %s : (%04lu@%-20.20s:%-15.15s): ", date, program_name, thread_tag, line, file, function);
+#else
+    fprintf(stderr, "%s: %s FATAL : %s : ", date, program_name, thread_tag);
+#endif
     vfprintf( stderr, fmt, args );
     va_end( args );
 
@@ -842,6 +988,14 @@ void fatal_int( const char *file, const char *function, const unsigned long line
 
     snprintfz(action_result, 60, "%s:%s", program_name, strncmp(thread_tag, "STREAM_RECEIVER", strlen("STREAM_RECEIVER")) ? thread_tag : "[x]");
     send_statistics("FATAL", action_result, action_data);
+
+#ifdef HAVE_BACKTRACE
+    print_call_stack();
+#endif
+
+#ifdef NETDATA_INTERNAL_CHECKS
+    crash_netdata();
+#endif
 
     netdata_cleanup_and_exit(1);
 }
@@ -865,7 +1019,7 @@ void log_access( const char *fmt, ... ) {
             netdata_mutex_lock(&access_mutex);
 
         char date[LOG_DATE_LENGTH];
-        log_date(date, LOG_DATE_LENGTH);
+        log_date(date, LOG_DATE_LENGTH, now_realtime_sec());
         fprintf(stdaccess, "%s: ", date);
 
         va_start( args, fmt );
@@ -877,3 +1031,54 @@ void log_access( const char *fmt, ... ) {
             netdata_mutex_unlock(&access_mutex);
     }
 }
+
+// ----------------------------------------------------------------------------
+// health log
+
+void log_health( const char *fmt, ... ) {
+    va_list args;
+
+    if(health_log_syslog) {
+        va_start( args, fmt );
+        vsyslog(LOG_INFO,  fmt, args );
+        va_end( args );
+    }
+
+    if(stdhealth) {
+        static netdata_mutex_t health_mutex = NETDATA_MUTEX_INITIALIZER;
+
+        if(web_server_is_multithreaded)
+            netdata_mutex_lock(&health_mutex);
+
+        char date[LOG_DATE_LENGTH];
+        log_date(date, LOG_DATE_LENGTH, now_realtime_sec());
+        fprintf(stdhealth, "%s: ", date);
+
+        va_start( args, fmt );
+        vfprintf( stdhealth, fmt, args );
+        va_end( args );
+        fputc('\n', stdhealth);
+
+        if(web_server_is_multithreaded)
+            netdata_mutex_unlock(&health_mutex);
+    }
+}
+
+#ifdef ENABLE_ACLK
+void log_aclk_message_bin( const char *data, const size_t data_len, int tx, const char *mqtt_topic, const char *message_name) {
+    if (aclklog) {
+        static netdata_mutex_t aclklog_mutex = NETDATA_MUTEX_INITIALIZER;
+        netdata_mutex_lock(&aclklog_mutex);
+
+        char date[LOG_DATE_LENGTH];
+        log_date(date, LOG_DATE_LENGTH, now_realtime_sec());
+        fprintf(aclklog, "%s: %s Msg:\"%s\", MQTT-topic:\"%s\": ", date, tx ? "OUTGOING" : "INCOMING", message_name, mqtt_topic);
+
+        fwrite(data, data_len, 1, aclklog);
+
+        fputc('\n', aclklog);
+
+        netdata_mutex_unlock(&aclklog_mutex);
+    }
+}
+#endif

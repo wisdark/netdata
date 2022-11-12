@@ -6,6 +6,7 @@
 #include "ebpf_cgroup.h"
 
 ebpf_cgroup_target_t *ebpf_cgroup_pids = NULL;
+int send_cgroup_chart = 0;
 
 // --------------------------------------------------------------------------------------------------------------------
 // Map shared memory
@@ -99,24 +100,6 @@ void ebpf_map_cgroup_shared_memory()
 // Close and Cleanup
 
 /**
- * Close shared memory
- */
-void ebpf_close_cgroup_shm()
-{
-    if (shm_sem_ebpf_cgroup != SEM_FAILED) {
-        sem_close(shm_sem_ebpf_cgroup);
-        sem_unlink(NETDATA_NAMED_SEMAPHORE_EBPF_CGROUP_NAME);
-        shm_sem_ebpf_cgroup = SEM_FAILED;
-    }
-
-    if (shm_fd_ebpf_cgroup > 0) {
-        close(shm_fd_ebpf_cgroup);
-        shm_unlink(NETDATA_SHARED_MEMORY_EBPF_CGROUP_NAME);
-        shm_fd_ebpf_cgroup = -1;
-    }
-}
-
-/**
  * Clean Specific cgroup pid
  *
  * Clean all PIDs associated with cgroup.
@@ -131,26 +114,6 @@ static inline void ebpf_clean_specific_cgroup_pids(struct pid_on_target2 *pt)
         freez(pt);
         pt = next_pid;
     }
-}
-
-/**
- * Cleanup link list
- */
-void ebpf_clean_cgroup_pids()
-{
-    if (!ebpf_cgroup_pids)
-        return;
-
-    ebpf_cgroup_target_t *ect = ebpf_cgroup_pids;
-    while (ect) {
-        ebpf_cgroup_target_t *next_cgroup = ect->next;
-
-        ebpf_clean_specific_cgroup_pids(ect->pids);
-        freez(ect);
-
-        ect = next_cgroup;
-    }
-    ebpf_cgroup_pids = NULL;
 }
 
 /**
@@ -242,7 +205,7 @@ static ebpf_cgroup_target_t * ebpf_cgroup_find_or_create(netdata_ebpf_cgroup_shm
  */
 static void ebpf_update_pid_link_list(ebpf_cgroup_target_t *ect, char *path)
 {
-    procfile *ff = procfile_open(path, " \t:", PROCFILE_FLAG_DEFAULT);
+    procfile *ff = procfile_open_no_log(path, " \t:", PROCFILE_FLAG_DEFAULT);
     if (!ff)
         return;
 
@@ -279,7 +242,7 @@ static void ebpf_update_pid_link_list(ebpf_cgroup_target_t *ect, char *path)
  *
  * Set variable remove. If this variable is not reset, the structure will be removed from link list.
  */
- void ebpf_reset_updated_var()
+void ebpf_reset_updated_var()
  {
      ebpf_cgroup_target_t *ect;
      for (ect = ebpf_cgroup_pids; ect; ect = ect->next) {
@@ -294,6 +257,7 @@ static void ebpf_update_pid_link_list(ebpf_cgroup_target_t *ect, char *path)
  */
 void ebpf_parse_cgroup_shm_data()
 {
+    static int previous = 0;
     if (shm_ebpf_cgroup.header) {
         sem_wait(shm_sem_ebpf_cgroup);
         int i, end = shm_ebpf_cgroup.header->cgroup_root_count;
@@ -311,6 +275,11 @@ void ebpf_parse_cgroup_shm_data()
                 ebpf_update_pid_link_list(ect, ptr->path);
             }
         }
+        send_cgroup_chart = previous != shm_ebpf_cgroup.header->cgroup_root_count;
+        previous = shm_ebpf_cgroup.header->cgroup_root_count;
+#ifdef NETDATA_DEV_MODE
+        error("Updating cgroup %d (Previous: %d, Current: %d)", send_cgroup_chart, previous, shm_ebpf_cgroup.header->cgroup_root_count);
+#endif
         pthread_mutex_unlock(&mutex_cgroup_shm);
 
         sem_post(shm_sem_ebpf_cgroup);

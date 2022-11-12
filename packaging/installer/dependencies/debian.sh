@@ -17,12 +17,12 @@ package_tree="
   autoconf
   autoconf-archive
   autogen
+  libatomic1
   libtool
   pkg-config
   tar
   curl
   gzip
-  netcat
   zlib1g-dev
   uuid-dev
   libmnl-dev
@@ -30,7 +30,6 @@ package_tree="
   libuv1-dev
   liblz4-dev
   libssl-dev
-  libjudy-dev
   libelf-dev
   python
   python3

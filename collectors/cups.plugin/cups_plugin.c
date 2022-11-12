@@ -137,9 +137,7 @@ getIntegerOption(
   return ((int)intvalue);
 }
 
-int reset_job_metrics(void *entry, void *data) {
-    (void)data;
-
+static int reset_job_metrics(const DICTIONARY_ITEM *item __maybe_unused, void *entry, void *data __maybe_unused) {
     struct job_metrics *jm = (struct job_metrics *)entry;
 
     jm->is_collected = 0;
@@ -158,15 +156,15 @@ struct job_metrics *get_job_metrics(char *dest) {
 
     if (unlikely(!jm)) {
         struct job_metrics new_job_metrics;
-        reset_job_metrics(&new_job_metrics, NULL);
+        reset_job_metrics(NULL, &new_job_metrics, NULL);
         jm = dictionary_set(dict_dest_job_metrics, dest, &new_job_metrics, sizeof(struct job_metrics));
 
-        printf("CHART cups.job_num_%s '' 'Active job number of destination %s' jobs '%s' job_num stacked %i %i\n", dest, dest, dest, netdata_priority++, netdata_update_every);
+        printf("CHART cups.job_num_%s '' 'Active jobs of %s' jobs '%s' cups.job_num stacked %i %i\n", dest, dest, dest, netdata_priority++, netdata_update_every);
         printf("DIMENSION pending '' absolute 1 1\n");
         printf("DIMENSION held '' absolute 1 1\n");
         printf("DIMENSION processing '' absolute 1 1\n");
 
-        printf("CHART cups.job_size_%s '' 'Active job size of destination %s' KB '%s' job_size stacked %i %i\n", dest, dest, dest, netdata_priority++, netdata_update_every);
+        printf("CHART cups.job_size_%s '' 'Active jobs size of %s' KB '%s' cups.job_size stacked %i %i\n", dest, dest, dest, netdata_priority++, netdata_update_every);
         printf("DIMENSION pending '' absolute 1 1\n");
         printf("DIMENSION held '' absolute 1 1\n");
         printf("DIMENSION processing '' absolute 1 1\n");
@@ -174,8 +172,8 @@ struct job_metrics *get_job_metrics(char *dest) {
     return jm;
 }
 
-int collect_job_metrics(char *name, void *entry, void *data) {
-    (void)data;
+int collect_job_metrics(const DICTIONARY_ITEM *item, void *entry, void *data __maybe_unused) {
+    const char *name = dictionary_acquired_item_name(item);
 
     struct job_metrics *jm = (struct job_metrics *)entry;
 
@@ -195,12 +193,12 @@ int collect_job_metrics(char *name, void *entry, void *data) {
             "END\n",
             name, jm->size_pending, jm->size_held, jm->size_processing);
     } else {
-        printf("CHART cups.job_num_%s '' 'Active job number of destination %s' jobs '%s' job_num stacked 1 %i 'obsolete'\n", name, name, name, netdata_update_every);
+        printf("CHART cups.job_num_%s '' 'Active jobs of %s' jobs '%s' cups.job_num stacked 1 %i 'obsolete'\n", name, name, name, netdata_update_every);
         printf("DIMENSION pending '' absolute 1 1\n");
         printf("DIMENSION held '' absolute 1 1\n");
         printf("DIMENSION processing '' absolute 1 1\n");
 
-        printf("CHART cups.job_size_%s '' 'Active job size of destination %s' KB '%s' job_size stacked 1 %i 'obsolete'\n", name, name, name, netdata_update_every);
+        printf("CHART cups.job_size_%s '' 'Active jobs size of %s' KB '%s' cups.job_size stacked 1 %i 'obsolete'\n", name, name, name, netdata_update_every);
         printf("DIMENSION pending '' absolute 1 1\n");
         printf("DIMENSION held '' absolute 1 1\n");
         printf("DIMENSION processing '' absolute 1 1\n");
@@ -219,11 +217,12 @@ void reset_metrics() {
     num_dest_printing = 0;
     num_dest_stopped = 0;
 
-    reset_job_metrics(&global_job_metrics, NULL);
-    dictionary_get_all(dict_dest_job_metrics, reset_job_metrics, NULL);
+    reset_job_metrics(NULL, &global_job_metrics, NULL);
+    dictionary_walkthrough_write(dict_dest_job_metrics, reset_job_metrics, NULL);
 }
 
 int main(int argc, char **argv) {
+    clocks_init();
 
     // ------------------------------------------------------------------------
     // initialization of netdata plugin
@@ -241,7 +240,7 @@ int main(int argc, char **argv) {
 
     errno = 0;
 
-    dict_dest_job_metrics = dictionary_create(DICTIONARY_FLAG_SINGLE_THREADED);
+    dict_dest_job_metrics = dictionary_create(DICT_OPTION_SINGLE_THREADED);
 
     // ------------------------------------------------------------------------
     // the main loop
@@ -369,28 +368,28 @@ int main(int argc, char **argv) {
         }
         cupsFreeJobs(num_jobs, jobs);
 
-        dictionary_get_all_name_value(dict_dest_job_metrics, collect_job_metrics, NULL);
+        dictionary_walkthrough_write(dict_dest_job_metrics, collect_job_metrics, NULL);
 
         static int cups_printer_by_option_created = 0;
         if (unlikely(!cups_printer_by_option_created))
         {
             cups_printer_by_option_created = 1;
-            printf("CHART cups.dest_state '' 'Destinations by state' dests overview dests stacked 100000 %i\n", netdata_update_every);
+            printf("CHART cups.dest_state '' 'Destinations by state' dests overview cups.dests_state stacked 100000 %i\n", netdata_update_every);
             printf("DIMENSION idle '' absolute 1 1\n");
             printf("DIMENSION printing '' absolute 1 1\n");
             printf("DIMENSION stopped '' absolute 1 1\n");
 
-            printf("CHART cups.dest_option '' 'Destinations by option' dests overview dests line 100001 %i\n", netdata_update_every);
+            printf("CHART cups.dest_option '' 'Destinations by option' dests overview cups.dests_option line 100001 %i\n", netdata_update_every);
             printf("DIMENSION total '' absolute 1 1\n");
             printf("DIMENSION acceptingjobs '' absolute 1 1\n");
             printf("DIMENSION shared '' absolute 1 1\n");
 
-            printf("CHART cups.job_num '' 'Total active job number' jobs overview job_num stacked 100002 %i\n", netdata_update_every);
+            printf("CHART cups.job_num '' 'Active jobs' jobs overview cups.job_num stacked 100002 %i\n", netdata_update_every);
             printf("DIMENSION pending '' absolute 1 1\n");
             printf("DIMENSION held '' absolute 1 1\n");
             printf("DIMENSION processing '' absolute 1 1\n");
 
-            printf("CHART cups.job_size '' 'Total active job size' KB overview job_size stacked 100003 %i\n", netdata_update_every);
+            printf("CHART cups.job_size '' 'Active jobs size' KB overview cups.job_size stacked 100003 %i\n", netdata_update_every);
             printf("DIMENSION pending '' absolute 1 1\n");
             printf("DIMENSION held '' absolute 1 1\n");
             printf("DIMENSION processing '' absolute 1 1\n");

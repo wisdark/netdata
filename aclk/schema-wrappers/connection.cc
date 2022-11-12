@@ -28,8 +28,17 @@ char *generate_update_agent_connection(size_t *len, const update_agent_connectio
     timestamp->set_seconds(tv.tv_sec);
     timestamp->set_nanos(tv.tv_usec * 1000);
 
+    if (data->capabilities) {
+        struct capability *capa = data->capabilities;
+        while (capa->name) {
+            aclk_lib::v1::Capability *proto_capa = connupd.add_capabilities();
+            capability_set(proto_capa, capa);
+            capa++;
+        }
+    }
+
     *len = PROTO_COMPAT_MSG_SIZE(connupd);
-    char *msg = (char*)malloc(*len);
+    char *msg = (char*)mallocz(*len);
     if (msg)
         connupd.SerializeToArray(msg, *len);
 
@@ -43,7 +52,7 @@ struct disconnect_cmd *parse_disconnect_cmd(const char *data, size_t len) {
     if (!req.ParseFromArray(data, len))
         return NULL;
 
-    res = (struct disconnect_cmd *)calloc(1, sizeof(struct disconnect_cmd));
+    res = (struct disconnect_cmd *)callocz(1, sizeof(struct disconnect_cmd));
 
     if (!res)
         return NULL;
@@ -52,9 +61,9 @@ struct disconnect_cmd *parse_disconnect_cmd(const char *data, size_t len) {
     res->permaban = req.permaban();
     res->error_code = req.error_code();
     if (req.error_description().c_str()) {
-        res->error_description = strdup(req.error_description().c_str());
+        res->error_description = strdupz(req.error_description().c_str());
         if (!res->error_description) {
-            free(res);
+            freez(res);
             return NULL;
         }
     }

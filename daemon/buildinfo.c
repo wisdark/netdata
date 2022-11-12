@@ -20,12 +20,6 @@
 #endif
 #endif
 
-#ifdef ENABLE_NEW_CLOUD_PROTOCOL
-#define NEW_CLOUD_PROTO 1
-#else
-#define NEW_CLOUD_PROTO 0
-#endif
-
 #ifdef ENABLE_DBENGINE
 #define FEAT_DBENGINE 1
 #else
@@ -203,6 +197,11 @@
 
 #define FEAT_YES_NO(x) ((x) ? "YES" : "NO")
 
+#ifdef NETDATA_TRACE_ALLOCATIONS
+#define FEAT_TRACE_ALLOC 1
+#else
+#define FEAT_TRACE_ALLOC 0
+#endif
 
 char *get_value_from_key(char *buffer, char *key) {
     char *s = NULL, *t = NULL;
@@ -272,9 +271,7 @@ void print_build_info(void) {
     printf("    dbengine:                   %s\n", FEAT_YES_NO(FEAT_DBENGINE));
     printf("    Native HTTPS:               %s\n", FEAT_YES_NO(FEAT_NATIVE_HTTPS));
     printf("    Netdata Cloud:              %s %s\n", FEAT_YES_NO(FEAT_CLOUD), FEAT_CLOUD_MSG);
-    printf("    ACLK Next Generation:       %s\n", FEAT_YES_NO(FEAT_CLOUD));
-    printf("    ACLK-NG New Cloud Protocol: %s\n", FEAT_YES_NO(NEW_CLOUD_PROTO));
-    printf("    ACLK Legacy:                %s\n", FEAT_YES_NO(0));
+    printf("    ACLK:                       %s\n", FEAT_YES_NO(FEAT_CLOUD));
     printf("    TLS Host Verification:      %s\n", FEAT_YES_NO(FEAT_TLS_HOST_VERIFY));
     printf("    Machine Learning:           %s\n", FEAT_YES_NO(FEAT_ML));
     printf("    Stream Compression:         %s\n", FEAT_YES_NO(FEAT_STREAM_COMPRESSION));
@@ -306,6 +303,9 @@ void print_build_info(void) {
     printf("    GCP PubSub:              %s\n", FEAT_YES_NO(FEAT_PUBSUB));
     printf("    MongoDB:                 %s\n", FEAT_YES_NO(FEAT_MONGO));
     printf("    Prometheus Remote Write: %s\n", FEAT_YES_NO(FEAT_REMOTE_WRITE));
+
+    printf("Debug/Developer Features:\n");
+    printf("    Trace Allocations:       %s\n", FEAT_YES_NO(FEAT_TRACE_ALLOC));
 };
 
 #define FEAT_JSON_BOOL(x) ((x) ? "true" : "false")
@@ -324,9 +324,7 @@ void print_build_info_json(void) {
 #else
     printf("    \"cloud-disabled\": false,\n");
 #endif
-    printf("    \"aclk-ng\": %s,\n", FEAT_JSON_BOOL(FEAT_CLOUD));
-    printf("    \"aclk-ng-new-cloud-proto\": %s,\n", FEAT_JSON_BOOL(NEW_CLOUD_PROTO));
-    printf("    \"aclk-legacy\": %s,\n", FEAT_JSON_BOOL(0));
+    printf("    \"aclk\": %s,\n", FEAT_JSON_BOOL(FEAT_CLOUD));
 
     printf("    \"tls-host-verify\": %s,\n",   FEAT_JSON_BOOL(FEAT_TLS_HOST_VERIFY));
     printf("    \"machine-learning\": %s\n",   FEAT_JSON_BOOL(FEAT_ML));
@@ -364,44 +362,109 @@ void print_build_info_json(void) {
     printf("    \"mongodb\": %s,\n",          FEAT_JSON_BOOL(FEAT_MONGO));
     printf("    \"prom-remote-write\": %s\n", FEAT_JSON_BOOL(FEAT_REMOTE_WRITE));
     printf("  }\n");
+    printf("  \"debug-n-devel\": {\n");
+    printf("    \"trace-allocations\": %s\n  }\n",FEAT_JSON_BOOL(FEAT_TRACE_ALLOC));
     printf("}\n");
 };
 
-//return a list of enabled features for use in analytics
-//find a way to have proper |
+#define add_to_bi(buffer, str)       \
+    { if(first) {                    \
+        buffer_strcat (b, str);      \
+        first = 0;                   \
+    } else                           \
+        buffer_strcat (b, "|" str); }
+
 void analytics_build_info(BUFFER *b) {
-    if(FEAT_DBENGINE)        buffer_strcat (b, "dbengine");
-    if(FEAT_NATIVE_HTTPS)    buffer_strcat (b, "|Native HTTPS");
-    if(FEAT_CLOUD)           buffer_strcat (b, "|Netdata Cloud");
-    if(FEAT_CLOUD)           buffer_strcat (b, "|ACLK Next Generation");
-    if(NEW_CLOUD_PROTO)      buffer_strcat (b, "|New Cloud Protocol Support");
-    if(FEAT_TLS_HOST_VERIFY) buffer_strcat (b, "|TLS Host Verification");
-    if(FEAT_ML)              buffer_strcat (b, "|Machine Learning");
-    if(FEAT_STREAM_COMPRESSION) buffer_strcat (b, "|Stream Compression");
+    int first = 1;
+#ifdef ENABLE_DBENGINE
+    add_to_bi(b, "dbengine");
+#endif
+#ifdef ENABLE_HTTPS
+    add_to_bi(b, "Native HTTPS");
+#endif
+#ifdef ENABLE_ACLK
+    add_to_bi(b, "Netdata Cloud");
+#endif
+#if (FEAT_TLS_HOST_VERIFY!=0)
+    add_to_bi(b, "TLS Host Verification");
+#endif
+#ifdef ENABLE_ML
+    add_to_bi(b, "Machine Learning");
+#endif
+#ifdef ENABLE_COMPRESSION
+    add_to_bi(b, "Stream Compression");
+#endif
 
-    if(FEAT_PROTOBUF)        buffer_strcat (b, "|protobuf");
-    if(FEAT_JEMALLOC)        buffer_strcat (b, "|jemalloc");
-    if(FEAT_JSONC)           buffer_strcat (b, "|JSON-C");
-    if(FEAT_LIBCAP)          buffer_strcat (b, "|libcap");
-    if(FEAT_CRYPTO)          buffer_strcat (b, "|libcrypto");
-    if(FEAT_LIBM)            buffer_strcat (b, "|libm");
+#ifdef HAVE_PROTOBUF
+    add_to_bi(b, "protobuf");
+#endif
+#ifdef ENABLE_JEMALLOC
+    add_to_bi(b, "jemalloc");
+#endif
+#ifdef ENABLE_JSONC
+    add_to_bi(b, "JSON-C");
+#endif
+#ifdef HAVE_CAPABILITY
+    add_to_bi(b, "libcap");
+#endif
+#ifdef HAVE_CRYPTO
+    add_to_bi(b, "libcrypto");
+#endif
+#ifdef STORAGE_WITH_MATH
+    add_to_bi(b, "libm");
+#endif
 
-    if(FEAT_TCMALLOC)       buffer_strcat(b, "|tcalloc");
-    if(FEAT_ZLIB)           buffer_strcat(b, "|zlib");
+#ifdef ENABLE_TCMALLOC
+    add_to_bi(b, "tcalloc");
+#endif
+#ifdef NETDATA_WITH_ZLIB
+    add_to_bi(b, "zlib");
+#endif
 
-    if(FEAT_APPS_PLUGIN)    buffer_strcat(b, "|apps");
-    if(FEAT_CGROUP_NET)     buffer_strcat(b, "|cgroup Network Tracking");
-    if(FEAT_CUPS)           buffer_strcat(b, "|CUPS");
-    if(FEAT_EBPF)           buffer_strcat(b, "|EBPF");
-    if(FEAT_IPMI)           buffer_strcat(b, "|IPMI");
-    if(FEAT_NFACCT)         buffer_strcat(b, "|NFACCT");
-    if(FEAT_PERF)           buffer_strcat(b, "|perf");
-    if(FEAT_SLABINFO)       buffer_strcat(b, "|slabinfo");
-    if(FEAT_XEN)            buffer_strcat(b, "|Xen");
-    if(FEAT_XEN_VBD_ERROR)  buffer_strcat(b, "|Xen VBD Error Tracking");
+#ifdef ENABLE_APPS_PLUGIN
+    add_to_bi(b, "apps");
+#endif
+#ifdef HAVE_SETNS
+    add_to_bi(b, "cgroup Network Tracking");
+#endif
+#ifdef HAVE_CUPS
+    add_to_bi(b, "CUPS");
+#endif
+#ifdef HAVE_LIBBPF
+    add_to_bi(b, "EBPF");
+#endif
+#ifdef HAVE_FREEIPMI
+    add_to_bi(b, "IPMI");
+#endif
+#ifdef HAVE_NFACCT
+    add_to_bi(b, "NFACCT");
+#endif
+#ifdef ENABLE_PERF_PLUGIN
+    add_to_bi(b, "perf");
+#endif
+#ifdef ENABLE_SLABINFO
+    add_to_bi(b, "slabinfo");
+#endif
+#ifdef HAVE_LIBXENSTAT
+    add_to_bi(b, "Xen");
+#endif
+#ifdef HAVE_XENSTAT_VBD_ERROR
+    add_to_bi(b, "Xen VBD Error Tracking");
+#endif
 
-    if(FEAT_KINESIS)        buffer_strcat(b, "|AWS Kinesis");
-    if(FEAT_PUBSUB)         buffer_strcat(b, "|GCP PubSub");
-    if(FEAT_MONGO)          buffer_strcat(b, "|MongoDB");
-    if(FEAT_REMOTE_WRITE)   buffer_strcat(b, "|Prometheus Remote Write");
+#ifdef HAVE_KINESIS
+    add_to_bi(b, "AWS Kinesis");
+#endif
+#ifdef ENABLE_EXPORTING_PUBSUB
+    add_to_bi(b, "GCP PubSub");
+#endif
+#ifdef HAVE_MONGOC
+    add_to_bi(b, "MongoDB");
+#endif
+#ifdef ENABLE_PROMETHEUS_REMOTE_WRITE
+    add_to_bi(b, "Prometheus Remote Write");
+#endif
+#ifdef NETDATA_TRACE_ALLOCATIONS
+    add_to_bi(b, "DebugTraceAlloc");
+#endif
 }

@@ -9,7 +9,6 @@ DONT_WAIT=0
 
 package_tree="
   git
-  gcc
   autoconf
   autoconf-archive
   autogen
@@ -19,14 +18,12 @@ package_tree="
   cmake
   curl
   gzip
-  netcat
   lzlib
   e2fsprogs-libuuid
   json-c
   libuv
   liblz4
   openssl
-  Judy
   python3
   "
 

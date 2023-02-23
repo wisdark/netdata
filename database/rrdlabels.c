@@ -533,7 +533,9 @@ static bool rrdlabel_conflict_callback(const DICTIONARY_ITEM *item __maybe_unuse
 }
 
 DICTIONARY *rrdlabels_create(void) {
-    DICTIONARY *dict = dictionary_create(DICT_OPTION_DONT_OVERWRITE_VALUE);
+    DICTIONARY *dict = dictionary_create_advanced(DICT_OPTION_DONT_OVERWRITE_VALUE | DICT_OPTION_FIXED_SIZE,
+                                                  &dictionary_stats_category_rrdlabels, sizeof(RRDLABEL));
+
     dictionary_register_insert_callback(dict, rrdlabel_insert_callback, dict);
     dictionary_register_delete_callback(dict, rrdlabel_delete_callback, dict);
     dictionary_register_conflict_callback(dict, rrdlabel_conflict_callback, dict);
@@ -649,16 +651,70 @@ void rrdlabels_get_value_to_buffer_or_null(DICTIONARY *labels, BUFFER *wb, const
     dictionary_acquired_item_release(labels, acquired_item);
 }
 
+void rrdlabels_value_to_buffer_array_item_or_null(DICTIONARY *labels, BUFFER *wb, const char *key) {
+    if(!labels) return;
+
+    const DICTIONARY_ITEM *acquired_item = dictionary_get_and_acquire_item(labels, key);
+    RRDLABEL *lb = dictionary_acquired_item_value(acquired_item);
+
+    if(lb && lb->label_value)
+        buffer_json_add_array_item_string(wb, string2str(lb->label_value));
+    else
+        buffer_json_add_array_item_string(wb, NULL);
+
+    dictionary_acquired_item_release(labels, acquired_item);
+}
+
 // ----------------------------------------------------------------------------
 // rrdlabels_get_value_to_char_or_null()
 
-void rrdlabels_get_value_to_char_or_null(DICTIONARY *labels, char **value, const char *key) {
+void rrdlabels_get_value_strdup_or_null(DICTIONARY *labels, char **value, const char *key) {
     const DICTIONARY_ITEM *acquired_item = dictionary_get_and_acquire_item(labels, key);
     RRDLABEL *lb = dictionary_acquired_item_value(acquired_item);
 
     *value = (lb && lb->label_value) ? strdupz(string2str(lb->label_value)) : NULL;
 
     dictionary_acquired_item_release(labels, acquired_item);
+}
+
+void rrdlabels_get_value_strcpyz(DICTIONARY *labels, char *dst, size_t dst_len, const char *key) {
+    const DICTIONARY_ITEM *acquired_item = dictionary_get_and_acquire_item(labels, key);
+    RRDLABEL *lb = dictionary_acquired_item_value(acquired_item);
+
+    if(lb && lb->label_value)
+        strncpyz(dst, string2str(lb->label_value), dst_len);
+    else
+        dst[0] = '\0';
+
+    dictionary_acquired_item_release(labels, acquired_item);
+}
+
+STRING *rrdlabels_get_value_string_dup(DICTIONARY *labels, const char *key) {
+    const DICTIONARY_ITEM *acquired_item = dictionary_get_and_acquire_item(labels, key);
+    RRDLABEL *lb = dictionary_acquired_item_value(acquired_item);
+
+    STRING *ret = NULL;
+    if(lb && lb->label_value)
+        ret = string_dup(lb->label_value);
+
+    dictionary_acquired_item_release(labels, acquired_item);
+
+    return ret;
+}
+
+STRING *rrdlabels_get_value_to_buffer_or_unset(DICTIONARY *labels, BUFFER *wb, const char *key, const char *unset) {
+    const DICTIONARY_ITEM *acquired_item = dictionary_get_and_acquire_item(labels, key);
+    RRDLABEL *lb = dictionary_acquired_item_value(acquired_item);
+
+    STRING *ret = NULL;
+    if(lb && lb->label_value)
+        buffer_strcat(wb, string2str(lb->label_value));
+    else
+        buffer_strcat(wb, unset);
+
+    dictionary_acquired_item_release(labels, acquired_item);
+
+    return ret;
 }
 
 // ----------------------------------------------------------------------------
@@ -957,6 +1013,14 @@ int rrdlabels_to_buffer(DICTIONARY *labels, BUFFER *wb, const char *before_each,
     return dictionary_walkthrough_read(labels, label_to_buffer_callback, (void *)&tmp);
 }
 
+void rrdlabels_to_buffer_json_members(DICTIONARY *labels, BUFFER *wb) {
+    RRDLABEL *lb;
+    dfe_start_read(labels, lb) {
+        buffer_json_member_add_string(wb, lb_dfe.name, string2str(lb->label_value));
+    }
+    dfe_done(lb);
+}
+
 void rrdset_update_rrdlabels(RRDSET *st, DICTIONARY *new_rrdlabels) {
     if(!st->rrdlabels)
         st->rrdlabels = rrdlabels_create();
@@ -964,7 +1028,8 @@ void rrdset_update_rrdlabels(RRDSET *st, DICTIONARY *new_rrdlabels) {
     if (new_rrdlabels)
         rrdlabels_migrate_to_these(st->rrdlabels, new_rrdlabels);
 
-    metaqueue_chart_labels(st);
+    rrdset_flag_set(st, RRDSET_FLAG_METADATA_UPDATE);
+    rrdhost_flag_set(st->rrdhost, RRDHOST_FLAG_METADATA_UPDATE);
 }
 
 

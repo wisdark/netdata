@@ -1,6 +1,9 @@
 <!--
 title: "Alarms"
-custom_edit_url: https://github.com/netdata/netdata/edit/master/collectors/python.d.plugin/alarms/README.md
+custom_edit_url: "https://github.com/netdata/netdata/edit/master/collectors/python.d.plugin/alarms/README.md"
+sidebar_label: "Alarms"
+learn_status: "Published"
+learn_rel_path: "Integrations/Monitor/Netdata"
 -->
 
 # Alarms - graphing Netdata alarm states over time
@@ -23,7 +26,7 @@ Below is an example of the chart produced when running `stress-ng --all 2` for a
 
 ## Configuration
 
-Enable the collector and [restart Netdata](/docs/configure/start-stop-restart.md).
+Enable the collector and [restart Netdata](https://github.com/netdata/netdata/blob/master/docs/configure/start-stop-restart.md).
 
 ```bash
 cd /etc/netdata/
@@ -33,7 +36,7 @@ sudo systemctl restart netdata
 ```
 
 If needed, edit the `python.d/alarms.conf` configuration file using `edit-config` from the your agent's [config
-directory](/docs/configure/nodes.md), which is usually at `/etc/netdata`.
+directory](https://github.com/netdata/netdata/blob/master/docs/configure/nodes.md), which is usually at `/etc/netdata`.
 
 ```bash
 cd /etc/netdata   # Replace this path with your Netdata config directory, if different
@@ -64,3 +67,23 @@ local:
 ```
 
 It will default to pulling all alarms at each time step from the Netdata rest api at `http://127.0.0.1:19999/api/v1/alarms?all`
+### Troubleshooting
+
+To troubleshoot issues with the `alarms` module, run the `python.d.plugin` with the debug option enabled. The 
+output will give you the output of the data collection job or error messages on why the collector isn't working.
+
+First, navigate to your plugins directory, usually they are located under `/usr/libexec/netdata/plugins.d/`. If that's 
+not the case on your system, open `netdata.conf` and look for the setting `plugins directory`. Once you're in the 
+plugin's directory, switch to the `netdata` user.
+
+```bash
+cd /usr/libexec/netdata/plugins.d/
+sudo su -s /bin/bash netdata
+```
+
+Now you can manually run the `alarms` module in debug mode:
+
+```bash
+./python.d.plugin alarms debug trace
+```
+

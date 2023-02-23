@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Next unused error code: F050D
+# Next unused error code: F050F
 
 # ======================================================================
 # Constants
@@ -28,8 +28,10 @@ KICKSTART_SOURCE="$(
 PACKAGES_SCRIPT="https://raw.githubusercontent.com/netdata/netdata/master/packaging/installer/install-required-packages.sh"
 PATH="${PATH}:/usr/local/bin:/usr/local/sbin"
 PUBLIC_CLOUD_URL="https://app.netdata.cloud"
-REPOCONFIG_URL_PREFIX="https://packagecloud.io/netdata/netdata-repoconfig/packages"
-REPOCONFIG_VERSION="1-2"
+REPOCONFIG_DEB_URL_PREFIX="https://repo.netdata.cloud/repos/repoconfig"
+REPOCONFIG_DEB_VERSION="2-1"
+REPOCONFIG_RPM_URL_PREFIX="https://repo.netdata.cloud/repos/repoconfig"
+REPOCONFIG_RPM_VERSION="2-1"
 START_TIME="$(date +%s)"
 STATIC_INSTALL_ARCHES="x86_64 armv7l aarch64 ppc64le"
 TELEMETRY_URL="https://posthog.netdata.cloud/capture/"
@@ -43,9 +45,10 @@ INSTALL_TYPE="unknown"
 INSTALL_PREFIX=""
 NETDATA_AUTO_UPDATES="default"
 NETDATA_CLAIM_ONLY=0
-NETDATA_CLAIM_URL="api.netdata.cloud"
+NETDATA_CLAIM_URL="https://api.netdata.cloud"
 NETDATA_COMMAND="default"
 NETDATA_DISABLE_CLOUD=0
+NETDATA_INSTALLER_OPTIONS=""
 NETDATA_ONLY_BUILD=0
 NETDATA_ONLY_NATIVE=0
 NETDATA_ONLY_STATIC=0
@@ -62,8 +65,7 @@ else
   NETDATA_DISABLE_TELEMETRY=0
 fi
 
-NETDATA_TARBALL_BASEURL="${NETDATA_TARBALL_BASEURL:-https://storage.googleapis.com/netdata-nightlies}"
-NETDATA_INSTALLER_OPTIONS="${NETDATA_INSTALLER_OPTIONS:-""}"
+NETDATA_TARBALL_BASEURL="${NETDATA_TARBALL_BASEURL:-https://github.com/netdata/netdata-nightlies/releases}"
 TELEMETRY_API_KEY="${NETDATA_POSTHOG_API_KEY:-mqkwGT0JNFqO-zX2t0mW6Tec9yooaVu7xCBlXtHnt5Y}"
 
 if echo "${0}" | grep -q 'kickstart-static64'; then
@@ -75,6 +77,8 @@ if [ ! -t 1 ]; then
 else
   INTERACTIVE=1
 fi
+
+CURL="$(PATH="${PATH}:/opt/netdata/bin" command -v curl 2>/dev/null && true)"
 
 # ======================================================================
 # Shared messages used in multiple places throughout the script.
@@ -181,7 +185,6 @@ USAGE: kickstart.sh [options]
   --reinstall-even-if-unsafe       Even try to reinstall if we don't think we can do so safely (implies --reinstall).
   --disable-cloud                  Disable support for Netdata Cloud (default: detect)
   --require-cloud                  Only install if Netdata Cloud can be enabled. Overrides --disable-cloud.
-  --install <path>                 This option is deprecated and will be removed in a future version, use --install-prefix instead.
   --install-prefix <path>          Specify an installation prefix for local builds (default: autodetect based on system type).
   --old-install-prefix <path>      Specify an old local builds installation prefix for uninstall/reinstall (if it's not default).
   --install-version <version>      Specify the version of Netdata to install.
@@ -298,15 +301,24 @@ telemetry_event() {
 EOF
 )"
 
-  if command -v curl > /dev/null 2>&1; then
-    curl --silent -o /dev/null -X POST --max-time 2 --header "Content-Type: application/json" -d "${REQ_BODY}" "${TELEMETRY_URL}" > /dev/null
+  if [ -n "${CURL}" ]; then
+    "${CURL}" --silent -o /dev/null -X POST --max-time 2 --header "Content-Type: application/json" -d "${REQ_BODY}" "${TELEMETRY_URL}" > /dev/null
   elif command -v wget > /dev/null 2>&1; then
-    wget -q -O - --no-check-certificate \
-    --method POST \
-    --timeout=1 \
-    --header 'Content-Type: application/json' \
-    --body-data "${REQ_BODY}" \
-     "${TELEMETRY_URL}" > /dev/null
+    if wget --help 2>&1 | grep BusyBox > /dev/null 2>&1; then
+      # BusyBox-compatible version of wget, there is no --no-check-certificate option
+      wget -q -O - \
+      -T 1 \
+      --header 'Content-Type: application/json' \
+      --post-data "${REQ_BODY}" \
+      "${TELEMETRY_URL}" > /dev/null
+    else
+      wget -q -O - --no-check-certificate \
+      --method POST \
+      --timeout=1 \
+      --header 'Content-Type: application/json' \
+      --body-data "${REQ_BODY}" \
+      "${TELEMETRY_URL}" > /dev/null
+    fi
   fi
 }
 
@@ -396,7 +408,7 @@ success_banner() {
 cleanup() {
   if [ -z "${NO_CLEANUP}" ] && [ -n "${tmpdir}" ]; then
     cd || true
-    ${ROOTCMD} rm -rf "${tmpdir}"
+    run_as_root rm -rf "${tmpdir}"
   fi
 }
 
@@ -487,6 +499,16 @@ run() {
   return ${ret}
 }
 
+run_as_root() {
+  confirm_root_support
+
+  if [ "$(id -u)" -ne "0" ]; then
+    printf >&2 "Root privileges required to run %s\n" "${*}"
+  fi
+
+  run ${ROOTCMD} "${@}"
+}
+
 run_script() {
   set_tmpdir
 
@@ -561,8 +583,8 @@ check_for_remote_file() {
 
   if echo "${url}" | grep -Eq "^file:///"; then
     [ -e "${url#file://}" ] || return 1
-  elif command -v curl > /dev/null 2>&1; then
-    curl --output /dev/null --silent --head --fail "${url}" || return 1
+  elif [ -n "${CURL}" ]; then
+    "${CURL}" --output /dev/null --silent --head --fail "${url}" || return 1
   elif command -v wget > /dev/null 2>&1; then
     wget -S --spider "${url}" 2>&1 | grep -q 'HTTP/1.1 200 OK' || return 1
   else
@@ -576,8 +598,8 @@ download() {
 
   if echo "${url}" | grep -Eq "^file:///"; then
     run cp "${url#file://}" "${dest}" || return 1
-  elif command -v curl > /dev/null 2>&1; then
-    run curl --fail -q -sSL --connect-timeout 10 --retry 3 --output "${dest}" "${url}" || return 1
+  elif [ -n "${CURL}" ]; then
+    run "${CURL}" --fail -q -sSL --connect-timeout 10 --retry 3 --output "${dest}" "${url}" || return 1
   elif command -v wget > /dev/null 2>&1; then
     run wget -T 15 -O "${dest}" "${url}" || return 1
   else
@@ -588,10 +610,10 @@ download() {
 get_redirect() {
   url="${1}"
 
-  if command -v curl > /dev/null 2>&1; then
-    run sh -c "curl ${url} -s -L -I -o /dev/null -w '%{url_effective}' | grep -o '[^/]*$'" || return 1
+  if [ -n "${CURL}" ]; then
+    run sh -c "${CURL} ${url} -s -L -I -o /dev/null -w '%{url_effective}' | grep -o '[^/]*$'" || return 1
   elif command -v wget > /dev/null 2>&1; then
-    run sh -c "wget --max-redirect=0 ${url} 2>&1 | grep Location | cut -d ' ' -f2  | grep -o '[^/]*$'" || return 1
+    run sh -c "wget -S -O /dev/null ${url} 2>&1 | grep -m 1 Location | grep -o '[^/]*$'" || return 1
   else
     fatal "${ERROR_F0003}" F0003
   fi
@@ -790,6 +812,7 @@ uninstall() {
       return 0
     else
       progress "Found existing netdata-uninstaller. Running it.."
+      # shellcheck disable=SC2086
       if ! run_script "${uninstaller}" ${FLAGS}; then
         warning "Uninstaller failed. Some parts of Netdata may still be present on the system."
       fi
@@ -803,6 +826,7 @@ uninstall() {
       progress "Downloading netdata-uninstaller ..."
       download "${uninstaller_url}" "${tmpdir}/netdata-uninstaller.sh"
       chmod +x "${tmpdir}/netdata-uninstaller.sh"
+      # shellcheck disable=SC2086
       if ! run_script "${tmpdir}/netdata-uninstaller.sh" ${FLAGS}; then
         warning "Uninstaller failed. Some parts of Netdata may still be present on the system."
       fi
@@ -848,7 +872,7 @@ detect_existing_install() {
   if [ -n "${ndprefix}" ]; then
     typefile="${ndprefix}/etc/netdata/.install-type"
     if [ -r "${typefile}" ]; then
-      ${ROOTCMD} sh -c "cat \"${typefile}\" > \"${tmpdir}/install-type\""
+      run_as_root sh -c "cat \"${typefile}\" > \"${tmpdir}/install-type\""
       # shellcheck disable=SC1090,SC1091
       . "${tmpdir}/install-type"
     else
@@ -858,7 +882,7 @@ detect_existing_install() {
     envfile="${ndprefix}/etc/netdata/.environment"
     if [ "${INSTALL_TYPE}" = "unknown" ] || [ "${INSTALL_TYPE}" = "custom" ]; then
       if [ -r "${envfile}" ]; then
-        ${ROOTCMD} sh -c "cat \"${envfile}\" > \"${tmpdir}/environment\""
+        run_as_root sh -c "cat \"${envfile}\" > \"${tmpdir}/environment\""
         # shellcheck disable=SC1091
         . "${tmpdir}/environment"
         if [ -n "${NETDATA_IS_STATIC_INSTALL}" ]; then
@@ -1012,30 +1036,30 @@ soft_disable_cloud() {
 
   cloud_prefix="${INSTALL_PREFIX}/var/lib/netdata/cloud.d"
 
-  run ${ROOTCMD} mkdir -p "${cloud_prefix}"
+  run_as_root mkdir -p "${cloud_prefix}"
 
   cat > "${tmpdir}/cloud.conf" << EOF
 [global]
   enabled = no
 EOF
 
-  run ${ROOTCMD} cp "${tmpdir}/cloud.conf" "${cloud_prefix}/cloud.conf"
+  run_as_root cp "${tmpdir}/cloud.conf" "${cloud_prefix}/cloud.conf"
 
   if [ -z "${NETDATA_NO_START}" ]; then
     case "${SYSTYPE}" in
-      Darwin) run ${ROOTCMD} launchctl kickstart -k com.github.netdata ;;
-      FreeBSD) run ${ROOTCMD} service netdata restart ;;
+      Darwin) run_as_root launchctl kickstart -k com.github.netdata ;;
+      FreeBSD) run_as_root service netdata restart ;;
       Linux)
-        initpath="$(${ROOTCMD} readlink /proc/1/exe)"
+        initpath="$(run_as_root readlink /proc/1/exe)"
 
         if command -v service > /dev/null 2>&1; then
-          run ${ROOTCMD} service netdata restart
+          run_as_root service netdata restart
         elif command -v rc-service > /dev/null 2>&1; then
-          run ${ROOTCMD} rc-service netdata restart
+          run_as_root rc-service netdata restart
         elif [ "$(basename "${initpath}" 2> /dev/null)" = "systemd" ]; then
-          run ${ROOTCMD} systemctl restart netdata
+          run_as_root systemctl restart netdata
         elif [ -f /etc/init.d/netdata ]; then
-          run ${ROOTCMD} /etc/init.d/netdata restart
+          run_as_root /etc/init.d/netdata restart
         fi
         ;;
     esac
@@ -1044,7 +1068,7 @@ EOF
 
 confirm_install_prefix() {
   if [ -n "${INSTALL_PREFIX}" ] && [ "${NETDATA_ONLY_BUILD}" -ne 1 ]; then
-    fatal "The --install-prefix and --install options are only supported together with the --build-only option." F0204
+    fatal "The --install-prefix option is only supported together with the --build-only option." F0204
   fi
 
   if [ -n "${INSTALL_PREFIX}" ]; then
@@ -1134,7 +1158,7 @@ claim() {
   fi
 
   # shellcheck disable=SC2086
-  run ${ROOTCMD} "${NETDATA_CLAIM_PATH}" -token="${NETDATA_CLAIM_TOKEN}" -rooms="${NETDATA_CLAIM_ROOMS}" -url="${NETDATA_CLAIM_URL}" ${NETDATA_CLAIM_EXTRA}
+  run_as_root "${NETDATA_CLAIM_PATH}" -token="${NETDATA_CLAIM_TOKEN}" -rooms="${NETDATA_CLAIM_ROOMS}" -url="${NETDATA_CLAIM_URL}" ${NETDATA_CLAIM_EXTRA}
   case $? in
     0)
       progress "Successfully claimed node"
@@ -1214,16 +1238,16 @@ set_auto_updates() {
     if [ "${DRY_RUN}" -eq 1 ]; then
       progress "Would have attempted to enable automatic updates."
     # This first case is for catching using a new kickstart script with an old build. It can be safely removed after v1.34.0 is released.
-    elif ! grep -q '\-\-enable-auto-updates' ${updater}; then
+    elif ! grep -q '\-\-enable-auto-updates' "${updater}"; then
       echo
-    elif ! ${ROOTCMD} ${updater} --enable-auto-updates "${NETDATA_AUTO_UPDATE_TYPE}"; then
+    elif ! run_as_root "${updater}" --enable-auto-updates "${NETDATA_AUTO_UPDATE_TYPE}"; then
       warning "Failed to enable auto updates. Netdata will still work, but you will need to update manually."
     fi
   else
     if [ "${DRY_RUN}" -eq 1 ]; then
       progress "Would have attempted to disable automatic updates."
     else
-      ${ROOTCMD} ${updater} --disable-auto-updates
+      run_as_root "${updater}" --disable-auto-updates
     fi
   fi
 }
@@ -1282,7 +1306,7 @@ pkg_installed() {
 netdata_avail_check() {
   case "${DISTRO_COMPAT_NAME}" in
     debian|ubuntu)
-      env DEBIAN_FRONTEND=noninteractive apt-cache policy netdata | grep -q packagecloud.io/netdata/netdata;
+      env DEBIAN_FRONTEND=noninteractive apt-cache policy netdata | grep -q repo.netdata.cloud/repos/;
       return $?
       ;;
     centos|fedora|ol)
@@ -1313,7 +1337,7 @@ check_special_native_deps() {
         progress "EPEL is available, attempting to install so that required dependencies are available."
 
         # shellcheck disable=SC2086
-        if ! run ${ROOTCMD} env ${env} ${pm_cmd} install ${pkg_install_opts} epel-release; then
+        if ! run_as_root env ${env} ${pm_cmd} install ${pkg_install_opts} epel-release; then
           warning "Failed to install EPEL, even though it is required to install native packages on this system."
           return 1
         fi
@@ -1361,7 +1385,7 @@ try_package_install() {
       repo_subcmd="update"
       repo_prefix="debian/${SYSCODENAME}"
       pkg_type="deb"
-      pkg_suffix="_all"
+      pkg_suffix="+debian${SYSVERSION}_all"
       pkg_vsep="_"
       pkg_install_opts="${interactive_opts}"
       repo_update_opts="${interactive_opts}"
@@ -1375,7 +1399,7 @@ try_package_install() {
       repo_subcmd="update"
       repo_prefix="ubuntu/${SYSCODENAME}"
       pkg_type="deb"
-      pkg_suffix="_all"
+      pkg_suffix="+ubuntu${SYSVERSION}_all"
       pkg_vsep="_"
       pkg_install_opts="${interactive_opts}"
       repo_update_opts="${interactive_opts}"
@@ -1468,8 +1492,17 @@ try_package_install() {
   fi
 
   repoconfig_name="netdata-repo${release}"
-  repoconfig_file="${repoconfig_name}${pkg_vsep}${REPOCONFIG_VERSION}${pkg_suffix}.${pkg_type}"
-  repoconfig_url="${REPOCONFIG_URL_PREFIX}/${repo_prefix}/${repoconfig_file}/download.${pkg_type}"
+
+  case "${pkg_type}" in
+    deb)
+      repoconfig_file="${repoconfig_name}${pkg_vsep}${REPOCONFIG_DEB_VERSION}${pkg_suffix}.${pkg_type}"
+      repoconfig_url="${REPOCONFIG_DEB_URL_PREFIX}/${repo_prefix}/${repoconfig_file}"
+      ;;
+    rpm)
+      repoconfig_file="${repoconfig_name}${pkg_vsep}${REPOCONFIG_RPM_VERSION}${pkg_suffix}.${pkg_type}"
+      repoconfig_url="${REPOCONFIG_RPM_URL_PREFIX}/${repo_prefix}/${SYSARCH}/${repoconfig_file}"
+      ;;
+  esac
 
   if ! pkg_installed "${repoconfig_name}"; then
     progress "Checking for availability of repository configuration package."
@@ -1484,21 +1517,21 @@ try_package_install() {
 
     if [ -n "${needs_early_refresh}" ]; then
       # shellcheck disable=SC2086
-      if ! run ${ROOTCMD} env ${env} ${pm_cmd} ${repo_subcmd} ${repo_update_opts}; then
+      if ! run_as_root env ${env} ${pm_cmd} ${repo_subcmd} ${repo_update_opts}; then
         warning "${failed_refresh_msg}"
         return 2
       fi
     fi
 
     # shellcheck disable=SC2086
-    if ! run ${ROOTCMD} env ${env} ${pm_cmd} install ${pkg_install_opts} "${tmpdir}/${repoconfig_file}"; then
+    if ! run_as_root env ${env} ${pm_cmd} install ${pkg_install_opts} "${tmpdir}/${repoconfig_file}"; then
       warning "Failed to install repository configuration package."
       return 2
     fi
 
     if [ -n "${repo_subcmd}" ]; then
       # shellcheck disable=SC2086
-      if ! run ${ROOTCMD} env ${env} ${pm_cmd} ${repo_subcmd} ${repo_update_opts}; then
+      if ! run_as_root env ${env} ${pm_cmd} ${repo_subcmd} ${repo_update_opts}; then
         fatal "${failed_refresh_msg}" F0205
       fi
     fi
@@ -1507,7 +1540,7 @@ try_package_install() {
   fi
 
   if [ "${REPO_ACTION}" = "repositories-only" ]; then
-    progress "Successfully installed repository configuraion package."
+    progress "Successfully installed repository configuration package."
     deferred_warnings
     cleanup
     trap - EXIT
@@ -1519,7 +1552,7 @@ try_package_install() {
     if [ -z "${NO_CLEANUP}" ]; then
       progress "Attempting to uninstall repository configuration package."
       # shellcheck disable=SC2086
-      run ${ROOTCMD} env ${env} ${pm_cmd} ${uninstall_subcmd} ${pkg_install_opts} "${repoconfig_name}"
+      run_as_root env ${env} ${pm_cmd} ${uninstall_subcmd} ${pkg_install_opts} "${repoconfig_name}"
     fi
     return 2
   fi
@@ -1529,23 +1562,23 @@ try_package_install() {
     if [ -z "${NO_CLEANUP}" ]; then
       progress "Attempting to uninstall repository configuration package."
       # shellcheck disable=SC2086
-      run ${ROOTCMD} env ${env} ${pm_cmd} ${uninstall_subcmd} ${pkg_install_opts} "${repoconfig_name}"
+      run_as_root env ${env} ${pm_cmd} ${uninstall_subcmd} ${pkg_install_opts} "${repoconfig_name}"
     fi
     return 2
   fi
 
   if [ "${NETDATA_DISABLE_TELEMETRY}" -eq 1 ]; then
-    run ${ROOTCMD} mkdir -p "/etc/netdata"
-    run ${ROOTCMD} touch "/etc/netdata/.opt-out-from-anonymous-statistics"
+    run_as_root mkdir -p "/etc/netdata"
+    run_as_root touch "/etc/netdata/.opt-out-from-anonymous-statistics"
   fi
 
   # shellcheck disable=SC2086
-  if ! run ${ROOTCMD} env ${env} ${pm_cmd} install ${pkg_install_opts} "netdata${NATIVE_VERSION}"; then
+  if ! run_as_root env ${env} ${pm_cmd} install ${pkg_install_opts} "netdata${NATIVE_VERSION}"; then
     warning "Failed to install Netdata package."
     if [ -z "${NO_CLEANUP}" ]; then
       progress "Attempting to uninstall repository configuration package."
       # shellcheck disable=SC2086
-      run ${ROOTCMD} env ${env} ${pm_cmd} ${uninstall_subcmd} ${pkg_install_opts} "${repoconfig_name}"
+      run_as_root env ${env} ${pm_cmd} ${uninstall_subcmd} ${pkg_install_opts} "${repoconfig_name}"
     fi
     return 2
   fi
@@ -1564,25 +1597,33 @@ set_static_archive_urls() {
   if [ -n "${NETDATA_OFFLINE_INSTALL_SOURCE}" ]; then
     path="$(cd "${NETDATA_OFFLINE_INSTALL_SOURCE}" || exit 1; pwd)"
     export NETDATA_STATIC_ARCHIVE_URL="file://${path}/netdata-${arch}-latest.gz.run"
+    export NETDATA_STATIC_ARCHIVE_NAME="netdata-${arch}-latest.gz.run"
     export NETDATA_STATIC_ARCHIVE_CHECKSUM_URL="file://${path}/sha256sums.txt"
   elif [ "${1}" = "stable" ]; then
     if [ -n "${INSTALL_VERSION}" ]; then
-      export NETDATA_STATIC_ARCHIVE_OLD_URL="https://github.com/netdata/netdata/releases/download/v${INSTALL_VERSION}/netdata-v${INSTALL_VERSION}.gz.run"
       export NETDATA_STATIC_ARCHIVE_URL="https://github.com/netdata/netdata/releases/download/v${INSTALL_VERSION}/netdata-${arch}-v${INSTALL_VERSION}.gz.run"
+      export NETDATA_STATIC_ARCHIVE_OLD_URL="https://github.com/netdata/netdata/releases/download/v${INSTALL_VERSION}/netdata-v${INSTALL_VERSION}.gz.run"
+      export NETDATA_STATIC_ARCHIVE_NAME="netdata-${arch}-v${INSTALL_VERSION}.gz.run"
+      export NETDATA_STATIC_ARCHIVE_OLD_NAME="netdata-v${INSTALL_VERSION}.gz.run"
       export NETDATA_STATIC_ARCHIVE_CHECKSUM_URL="https://github.com/netdata/netdata/releases/download/v${INSTALL_VERSION}/sha256sums.txt"
     else
       latest="$(get_redirect "https://github.com/netdata/netdata/releases/latest")"
       export NETDATA_STATIC_ARCHIVE_URL="https://github.com/netdata/netdata/releases/download/${latest}/netdata-${arch}-latest.gz.run"
+      export NETDATA_STATIC_ARCHIVE_NAME="netdata-${arch}-latest.gz.run"
       export NETDATA_STATIC_ARCHIVE_CHECKSUM_URL="https://github.com/netdata/netdata/releases/download/${latest}/sha256sums.txt"
     fi
   else
     if [ -n "${INSTALL_VERSION}" ]; then
-      export NETDATA_STATIC_ARCHIVE_URL="${NETDATA_TARBALL_BASEURL}/netdata-${arch}-v${INSTALL_VERSION}.gz.run"
-      export NETDATA_STATIC_ARCHIVE_OLD_URL="${NETDATA_TARBALL_BASEURL}/netdata-v${INSTALL_VERSION}.gz.run"
-      export NETDATA_STATIC_ARCHIVE_CHECKSUM_URL="${NETDATA_TARBALL_BASEURL}/sha256sums.txt"
+      export NETDATA_STATIC_ARCHIVE_URL="${NETDATA_TARBALL_BASEURL}/download/v${INSTALL_VERSION}/netdata-${arch}-v${INSTALL_VERSION}.gz.run"
+      export NETDATA_STATIC_ARCHIVE_OLD_URL="${NETDATA_TARBALL_BASEURL}/download/v${INSTALL_VERSION}/netdata-v${INSTALL_VERSION}.gz.run"
+      export NETDATA_STATIC_ARCHIVE_NAME="netdata-${arch}-v${INSTALL_VERSION}.gz.run"
+      export NETDATA_STATIC_ARCHIVE_OLD_NAME="netdata-v${INSTALL_VERSION}.gz.run"
+      export NETDATA_STATIC_ARCHIVE_CHECKSUM_URL="${NETDATA_TARBALL_BASEURL}/download/v${INSTALL_VERSION}/sha256sums.txt"
     else
-      export NETDATA_STATIC_ARCHIVE_URL="${NETDATA_TARBALL_BASEURL}/netdata-${arch}-latest.gz.run"
-      export NETDATA_STATIC_ARCHIVE_CHECKSUM_URL="${NETDATA_TARBALL_BASEURL}/sha256sums.txt"
+      tag="$(get_redirect "${NETDATA_TARBALL_BASEURL}/latest")"
+      export NETDATA_STATIC_ARCHIVE_URL="${NETDATA_TARBALL_BASEURL}/download/${tag}/netdata-${arch}-latest.gz.run"
+      export NETDATA_STATIC_ARCHIVE_NAME="netdata-${arch}-latest.gz.run"
+      export NETDATA_STATIC_ARCHIVE_CHECKSUM_URL="${NETDATA_TARBALL_BASEURL}/download/${tag}/sha256sums.txt"
     fi
   fi
 }
@@ -1597,23 +1638,9 @@ try_static_install() {
 
   # Check status code first, so that we can provide nicer fallback for dry runs.
   if check_for_remote_file "${NETDATA_STATIC_ARCHIVE_URL}"; then
-    if [ -n "${NETDATA_OFFLINE_INSTALL_SOURCE}" ]; then
-      netdata_agent="$(basename "${NETDATA_STATIC_ARCHIVE_URL#"file://"}")"
-    elif [ -n "${INSTALL_VERSION}" ]; then
-      if [ "${SELECTED_RELEASE_CHANNEL}" = "stable" ]; then
-        netdata_agent="${NETDATA_STATIC_ARCHIVE_URL#"https://github.com/netdata/netdata/releases/download/v${INSTALL_VERSION}/"}"
-      else
-        netdata_agent="${NETDATA_STATIC_ARCHIVE_URL#"${NETDATA_TARBALL_BASEURL}/"}"
-      fi
-    else
-      if [ "${SELECTED_RELEASE_CHANNEL}" = "stable" ]; then
-        netdata_agent="${NETDATA_STATIC_ARCHIVE_URL#"https://github.com/netdata/netdata/releases/download/${latest}/"}"
-      else
-        netdata_agent="${NETDATA_STATIC_ARCHIVE_URL#"${NETDATA_TARBALL_BASEURL}/"}"
-      fi
-    fi
+    netdata_agent="${NETDATA_STATIC_ARCHIVE_NAME}"
   elif [ "${SYSARCH}" = "x86_64" ] && check_for_remote_file "${NETDATA_STATIC_ARCHIVE_OLD_URL}"; then
-    netdata_agent="${NETDATA_STATIC_ARCHIVE_OLD_URL#"https://github.com/netdata/netdata/releases/download/v${INSTALL_VERSION}/"}"
+    netdata_agent="${NETDATA_STATIC_ARCHIVE_OLD_NAME}"
     export NETDATA_STATIC_ARCHIVE_URL="${NETDATA_STATIC_ARCHIVE_OLD_URL}"
   else
     warning "There is no static build available for ${SYSARCH} CPUs. This usually means we simply do not currently provide static builds for ${SYSARCH} CPUs."
@@ -1644,7 +1671,7 @@ try_static_install() {
 
   progress "Installing netdata"
   # shellcheck disable=SC2086
-  if ! run ${ROOTCMD} sh "${tmpdir}/${netdata_agent}" ${opts} -- ${NETDATA_INSTALLER_OPTIONS}; then
+  if ! run_as_root sh "${tmpdir}/${netdata_agent}" ${opts} -- ${NETDATA_INSTALLER_OPTIONS}; then
     warning "Failed to install static build of Netdata on ${SYSARCH}."
     run rm -rf /opt/netdata
     return 2
@@ -1653,16 +1680,16 @@ try_static_install() {
   if [ "${DRY_RUN}" -ne 1 ]; then
   install_type_file="/opt/netdata/etc/netdata/.install-type"
     if [ -f "${install_type_file}" ]; then
-      ${ROOTCMD} sh -c "cat \"${install_type_file}\" > \"${tmpdir}/install-type\""
-      ${ROOTCMD} chown "$(id -u)":"$(id -g)" "${tmpdir}/install-type"
+      run_as_root sh -c "cat \"${install_type_file}\" > \"${tmpdir}/install-type\""
+      run_as_root chown "$(id -u)":"$(id -g)" "${tmpdir}/install-type"
       # shellcheck disable=SC1090,SC1091
       . "${tmpdir}/install-type"
       cat > "${tmpdir}/install-type" <<- EOF
 	INSTALL_TYPE='kickstart-static'
 	PREBUILT_ARCH='${PREBUILT_ARCH}'
 	EOF
-      ${ROOTCMD} chown netdata:netdata "${tmpdir}/install-type"
-      ${ROOTCMD} cp "${tmpdir}/install-type" "${install_type_file}"
+      run_as_root chown netdata:netdata "${tmpdir}/install-type"
+      run_as_root cp "${tmpdir}/install-type" "${install_type_file}"
     fi
   fi
 }
@@ -1682,11 +1709,12 @@ set_source_archive_urls() {
     fi
   else
     if [ -n "${INSTALL_VERSION}" ]; then
-      export NETDATA_SOURCE_ARCHIVE_URL="${NETDATA_TARBALL_BASEURL}/netdata-v${INSTALL_VERSION}.tar.gz"
-      export NETDATA_SOURCE_ARCHIVE_CHECKSUM_URL="${NETDATA_TARBALL_BASEURL}/sha256sums.txt"
+      export NETDATA_SOURCE_ARCHIVE_URL="${NETDATA_TARBALL_BASEURL}/download/v${INSTALL_VERSION}/netdata-latest.tar.gz"
+      export NETDATA_SOURCE_ARCHIVE_CHECKSUM_URL="${NETDATA_TARBALL_BASEURL}/download/v${INSTALL_VERSION}/sha256sums.txt"
     else
-      export NETDATA_SOURCE_ARCHIVE_URL="${NETDATA_TARBALL_BASEURL}/netdata-latest.tar.gz"
-      export NETDATA_SOURCE_ARCHIVE_CHECKSUM_URL="${NETDATA_TARBALL_BASEURL}/sha256sums.txt"
+      tag="$(get_redirect "${NETDATA_TARBALL_BASEURL}/latest")"
+      export NETDATA_SOURCE_ARCHIVE_URL="${NETDATA_TARBALL_BASEURL}/download/${tag}/netdata-latest.tar.gz"
+      export NETDATA_SOURCE_ARCHIVE_CHECKSUM_URL="${NETDATA_TARBALL_BASEURL}/download/${tag}/sha256sums.txt"
     fi
   fi
 }
@@ -1714,14 +1742,8 @@ install_local_build_dependencies() {
     opts="--dont-wait --non-interactive"
   fi
 
-  if [ "${SYSTYPE}" = "Darwin" ]; then
-    sudo=""
-  else
-    sudo="${ROOTCMD}"
-  fi
-
   # shellcheck disable=SC2086
-  if ! run ${sudo} "${bash}" "${tmpdir}/install-required-packages.sh" ${opts} netdata; then
+  if ! run_as_root "${bash}" "${tmpdir}/install-required-packages.sh" ${opts} netdata; then
     warning "Failed to install all required packages, but installation might still be possible."
   fi
 }
@@ -1842,7 +1864,7 @@ prepare_offline_install_source() {
     run mkdir -p "${1}" || fatal "Unable to create target directory for offline install preparation." F0504
   fi
 
-  run cd "${1}" || fatal "Failed to swtich to target directory for offline install preparation." F0505
+  run cd "${1}" || fatal "Failed to switch to target directory for offline install preparation." F0505
 
   if [ "${NETDATA_ONLY_NATIVE}" -ne 1 ] && [ "${NETDATA_ONLY_BUILD}" -ne 1 ]; then
     set_static_archive_urls "${SELECTED_RELEASE_CHANNEL}" "x86_64"
@@ -2088,10 +2110,6 @@ validate_args() {
 }
 
 parse_args() {
-  if [ -n "${NETDATA_INSTALLER_OPTIONS}" ]; then
-      warning "Explicitly specifying additional installer options with NETDATA_INSTALLER_OPTIONS is deprecated. Please instead pass the options to the script using either --local-build-options or --static-install-options as appropriate."
-  fi
-
   while [ -n "${1}" ]; do
     case "${1}" in
       "--help")
@@ -2104,7 +2122,20 @@ parse_args() {
       "--dont-wait"|"--non-interactive") INTERACTIVE=0 ;;
       "--interactive") INTERACTIVE=1 ;;
       "--dry-run") DRY_RUN=1 ;;
+      "--release-channel")
+        RELEASE_CHANNEL="$(echo "${2}" | tr '[:upper:]' '[:lower:]')"
+        case "${RELEASE_CHANNEL}" in
+          nightly|stable|default)
+            shift 1
+            ;;
+          *)
+            echo "Unrecognized value for --release-channel. Valid release channels are: stable, nightly, default"
+            exit 1
+            ;;
+        esac
+        ;;
       "--stable-channel") RELEASE_CHANNEL="stable" ;;
+      "--nightly-channel") RELEASE_CHANNEL="nightly" ;;
       "--no-updates") NETDATA_AUTO_UPDATES=0 ;;
       "--auto-update") NETDATA_AUTO_UPDATES="1" ;;
       "--auto-update-method")
@@ -2146,11 +2177,6 @@ parse_args() {
       "--disable-telemetry")
         NETDATA_DISABLE_TELEMETRY="1"
         NETDATA_INSTALLER_OPTIONS="${NETDATA_INSTALLER_OPTIONS} --disable-telemetry"
-        ;;
-      "--install")
-        warning "--install flag is deprecated and will be removed in a future version. Please use --install-prefix instead."
-        INSTALL_PREFIX="${2}"
-        shift 1
         ;;
       "--install-prefix")
         INSTALL_PREFIX="${2}"
@@ -2223,11 +2249,11 @@ parse_args() {
         esac
         ;;
       "--local-build-options")
-        LOCAL_BUILD_OPTIONS="${2}"
+        LOCAL_BUILD_OPTIONS="${LOCAL_BUILD_OPTIONS} ${2}"
         shift 1
         ;;
       "--static-install-options")
-        STATIC_INSTALL_OPTIONS="${2}"
+        STATIC_INSTALL_OPTIONS="${STATIC_INSTALL_OPTIONS} ${2}"
         shift 1
         ;;
       "--prepare-offline-install-source")
@@ -2249,8 +2275,7 @@ parse_args() {
         fi
         ;;
       *)
-        warning "Passing unrecognized option '${1}' to installer script. This behavior is deprecated and will be removed in the near future. If you intended to pass this option to the installer code, please use either --local-build-options or --static-install-options to specify it instead."
-        NETDATA_INSTALLER_OPTIONS="${NETDATA_INSTALLER_OPTIONS} ${1}"
+        fatal "Unrecognized option '${1}'. If you intended to pass this option to the installer code, please use either --local-build-options or --static-install-options to specify it instead." F050E
         ;;
     esac
     shift 1

@@ -919,6 +919,44 @@ int connect_to_one_of_urls(const char *destination, int default_port, struct tim
 }
 
 
+#ifdef ENABLE_HTTPS
+ssize_t netdata_ssl_read(SSL *ssl, void *buf, size_t num) {
+    error_limit_static_thread_var(erl, 1, 0);
+
+    int bytes, err;
+
+    bytes = SSL_read(ssl, buf, (int)num);
+    err = SSL_get_error(ssl, bytes);
+
+    if(unlikely(bytes <= 0)) {
+        if (err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_WANT_READ) {
+            bytes = 0;
+        } else
+            error_limit(&erl, "SSL_write() returned %d bytes, SSL error %d", bytes, err);
+    }
+
+    return bytes;
+}
+
+ssize_t netdata_ssl_write(SSL *ssl, const void *buf, size_t num) {
+    error_limit_static_thread_var(erl, 1, 0);
+
+    int bytes, err;
+
+    bytes = SSL_write(ssl, (uint8_t *)buf, (int)num);
+    err = SSL_get_error(ssl, bytes);
+
+    if(unlikely(bytes <= 0)) {
+        if (err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_WANT_READ) {
+            bytes = 0;
+        } else
+            error_limit(&erl, "SSL_write() returned %d bytes, SSL error %d", bytes, err);
+    }
+
+    return bytes;
+}
+#endif
+
 // --------------------------------------------------------------------------------------------------------------------
 // helpers to send/receive data in one call, in blocking mode, with a timeout
 
@@ -956,12 +994,10 @@ ssize_t recv_timeout(int sockfd, void *buf, size_t len, int flags, int timeout) 
     }
 
 #ifdef ENABLE_HTTPS
-    if (ssl->conn) {
-        if (!ssl->flags) {
-            return SSL_read(ssl->conn,buf,len);
-        }
-    }
+    if (ssl->conn && ssl->flags == NETDATA_SSL_HANDSHAKE_COMPLETE)
+        return netdata_ssl_read(ssl->conn, buf, len);
 #endif
+
     return recv(sockfd, buf, len, flags);
 }
 
@@ -1001,7 +1037,7 @@ ssize_t send_timeout(int sockfd, void *buf, size_t len, int flags, int timeout) 
 #ifdef ENABLE_HTTPS
     if(ssl->conn) {
         if (ssl->flags == NETDATA_SSL_HANDSHAKE_COMPLETE) {
-            return SSL_write(ssl->conn, buf, len);
+            return netdata_ssl_write(ssl->conn, buf, len);
         }
         else {
             error("cannot write to SSL connection - connection is not ready.");
@@ -1588,6 +1624,7 @@ void poll_events(LISTEN_SOCKETS *sockets
         , int   (*rcv_callback)(POLLINFO * /*pi*/, short int * /*events*/)
         , int   (*snd_callback)(POLLINFO * /*pi*/, short int * /*events*/)
         , void  (*tmr_callback)(void * /*timer_data*/)
+        , bool  (*check_to_stop_callback)(void)
         , SIMPLE_PATTERN *access_list
         , int allow_dns
         , void *data
@@ -1670,7 +1707,7 @@ void poll_events(LISTEN_SOCKETS *sockets
 
     netdata_thread_cleanup_push(poll_events_cleanup, &p);
 
-    while(!netdata_exit) {
+    while(!check_to_stop_callback()) {
         if(unlikely(timer_usec)) {
             now_usec = now_boottime_usec();
 

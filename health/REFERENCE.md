@@ -1,29 +1,159 @@
 <!--
-title: "Health configuration reference"
-custom_edit_url: https://github.com/netdata/netdata/edit/master/health/REFERENCE.md
+title: "Configure agent alerts"
+sidebar_label: "Health"
+custom_edit_url: "https://github.com/netdata/netdata/edit/master/health/REFERENCE.md"
+learn_status: "Published"
+learn_rel_path: "Configuration"
 -->
 
-# Health configuration reference
+# Configure agent alerts
 
-Welcome to the health configuration reference.
+Netdata's health watchdog is highly configurable, with support for dynamic thresholds, hysteresis, alarm templates, and
+more. You can tweak any of the existing alarms based on your infrastructure's topology or specific monitoring needs, or
+create new entities.
 
-This guide contains information about editing health configuration files to tweak existing alarms or create new health
-entities that are customized to the needs of your infrastructure.
+You can use health alarms in conjunction with any of Netdata's [collectors](https://github.com/netdata/netdata/blob/master/collectors/README.md) (see
+the [supported collector list](https://github.com/netdata/netdata/blob/master/collectors/COLLECTORS.md)) to monitor the health of your systems, containers, and
+applications in real time.
 
-To learn the basics of locating and editing health configuration files, see the [health
-quickstart](/health/QUICKSTART.md).
+While you can see active alarms both on the local dashboard and Netdata Cloud, all health alarms are configured _per
+node_ via individual Netdata Agents. If you want to deploy a new alarm across your
+[infrastructure](https://github.com/netdata/netdata/blob/master/docs/quickstart/infrastructure.md), you must configure each node with the same health configuration
+files.
 
-## Health configuration files
+## Edit health configuration files
 
 You can configure the Agent's health watchdog service by editing files in two locations:
 
 -   The `[health]` section in `netdata.conf`. By editing the daemon's behavior, you can disable health monitoring
-    altogether, run health checks more or less often, and more. See [daemon
-    configuration](/daemon/config/README.md#health-section-options) for a table of all the available settings, their
-    default values, and what they control.
+    altogether, run health checks more or less often, and more. See 
+    [daemon configuration](https://github.com/netdata/netdata/blob/master/daemon/config/README.md#health-section-options) for a table of 
+    all the available settings, their default values, and what they control.
+
 -   The individual `.conf` files in `health.d/`. These health entity files are organized by the type of metric they are
     performing calculations on or their associated collector. You should edit these files using the `edit-config`
     script. For example: `sudo ./edit-config health.d/cpu.conf`.
+
+Navigate to your [Netdata config directory](https://github.com/netdata/netdata/blob/master/docs/configure/nodes.md) and
+use `edit-config` to make changes to any of these files.
+
+For example, to edit the `cpu.conf` health configuration file, run:
+
+```bash
+sudo ./edit-config health.d/cpu.conf
+```
+
+Each health configuration file contains one or more health _entities_, which always begin with `alarm:` or `template:`.
+For example, here is the first health entity in `health.d/cpu.conf`:
+
+```yaml
+template: 10min_cpu_usage
+      on: system.cpu
+      os: linux
+   hosts: *
+  lookup: average -10m unaligned of user,system,softirq,irq,guest
+   units: %
+   every: 1m
+    warn: $this > (($status >= $WARNING)  ? (75) : (85))
+    crit: $this > (($status == $CRITICAL) ? (85) : (95))
+   delay: down 15m multiplier 1.5 max 1h
+    info: average cpu utilization for the last 10 minutes (excluding iowait, nice and steal)
+      to: sysadmin
+```
+
+To tune this alarm to trigger warning and critical alarms at a lower CPU utilization, change the `warn` and `crit` lines
+to the values of your choosing. For example:
+
+```yaml
+    warn: $this > (($status >= $WARNING)  ? (60) : (75))
+    crit: $this > (($status == $CRITICAL) ? (75) : (85))
+```
+
+Save the file and [reload Netdata's health configuration](#reload-health-configuration) to make your changes live.
+
+### Silence an individual alarm
+
+Instead of disabling an alarm altogether, or even disabling _all_ alarms, you can silence individual alarms by changing
+one line in a given health entity. To silence any single alarm, change the `to:` line in its entity to `silent`.
+
+```yaml
+      to: silent
+```
+
+## Write a new health entity
+
+While tuning existing alarms may work in some cases, you may need to write entirely new health entities based on how
+your systems, containers, and applications work.
+
+Read the [health entity reference](#health-entity-reference) for a full listing of the format,
+syntax, and functionality of health entities.
+
+To write a new health entity into a new file, navigate to your [Netdata config directory](https://github.com/netdata/netdata/blob/master/docs/configure/nodes.md),
+then use `touch` to create a new file in the `health.d/` directory. Use `edit-config` to start editing the file.
+
+As an example, let's create a `ram-usage.conf` file.
+
+```bash
+sudo touch health.d/ram-usage.conf
+sudo ./edit-config health.d/ram-usage.conf
+```
+
+For example, here is a health entity that triggers a warning alarm when a node's RAM usage rises above 80%, and a
+critical alarm above 90%:
+
+```yaml
+ alarm: ram_usage
+    on: system.ram
+lookup: average -1m percentage of used
+ units: %
+ every: 1m
+  warn: $this > 80
+  crit: $this > 90
+  info: The percentage of RAM being used by the system.
+```
+
+Let's look into each of the lines to see how they create a working health entity.
+
+-   `alarm`: The name for your new entity. The name needs to follow these requirements:
+    -   Any alphabet letter or number.
+    -   The symbols `.` and `_`.
+    -   Cannot be `chart name`, `dimension name`, `family name`, or `chart variable names`.  
+
+-   `on`: Which chart the entity listens to.
+
+-   `lookup`: Which metrics the alarm monitors, the duration of time to monitor, and how to process the metrics into a
+    usable format.
+    -   `average`: Calculate the average of all the metrics collected.
+    -   `-1m`: Use metrics from 1 minute ago until now to calculate that average.
+    -   `percentage`: Clarify that we're calculating a percentage of RAM usage.
+    -   `of used`: Specify which dimension (`used`) on the `system.ram` chart you want to monitor with this entity.
+
+-   `units`: Use percentages rather than absolute units.
+
+-   `every`: How often to perform the `lookup` calculation to decide whether or not to trigger this alarm.
+
+-   `warn`/`crit`: The value at which Netdata should trigger a warning or critical alarm. This example uses simple
+    syntax, but most pre-configured health entities use
+    [hysteresis](#special-use-of-the-conditional-operator) to avoid superfluous notifications.
+
+-   `info`: A description of the alarm, which will appear in the dashboard and notifications.
+
+In human-readable format: 
+
+> This health entity, named **ram_usage**, watches the **system.ram** chart. It looks up the last **1 minute** of
+> metrics from the **used** dimension and calculates the **average** of all those metrics in a **percentage** format,
+> using a **% unit**. The entity performs this lookup **every minute**. 
+> 
+> If the average RAM usage percentage over the last 1 minute is **more than 80%**, the entity triggers a warning alarm.
+> If the usage is **more than 90%**, the entity triggers a critical alarm.
+
+When you finish writing this new health entity, [reload Netdata's health configuration](#reload-health-configuration) to
+see it live on the local dashboard or Netdata Cloud.
+
+## Reload health configuration
+
+To make any changes to your health configuration live, you must reload Netdata's health monitoring system. To do that
+without restarting all of Netdata, run `netdatacli reload-health` or `killall -USR2 netdata`.
 
 ## Health entity reference
 
@@ -52,7 +182,7 @@ Netdata parses the following lines. Beneath the table is an in-depth explanation
 -   The `every` line is **required** if not using `lookup`.
 -   Each entity **must** have at least one of the following lines: `lookup`, `calc`, `warn`, or `crit`.
 -   A few lines use space-separated lists to define how the entity behaves. You can use `*` as a wildcard or prefix with
-    `!` for a negative match. Order is important, too! See our [simple patterns docs](/libnetdata/simple_pattern/README.md) for
+    `!` for a negative match. Order is important, too! See our [simple patterns docs](https://github.com/netdata/netdata/blob/master/libnetdata/simple_pattern/README.md) for
     more examples.
 -   Lines terminated by a `\` are spliced together with the next line. The backslash is removed and the following line is
     joined with the current one. No space is inserted, so you may split a line anywhere, even in the middle of a word.
@@ -171,31 +301,31 @@ type: Database
 <details>
 <summary>Netdata's stock alarms use the following `type` attributes by default, but feel free to adjust for your own requirements.</summary>
 
-| Type                     | Description                                                                                      |
-| ------------------------ | ------------------------------------------------------------------------------------------------ |
-| Ad Filtering             | Services related to Ad Filtering (like pi-hole)                                                  |
-| Certificates             | Certificates monitoring related                                                                  |
-| Cgroups                  | Alerts for cpu and memory usage of control groups                                                |
-| Computing                | Alerts for shared computing applications (e.g. boinc)                                            |
-| Containers               | Container related alerts (e.g. docker instances)                                                 |
-| Database                 | Database systems (e.g. MySQL, PostgreSQL, etc)                                                    |
-| Data Sharing             | Used to group together alerts for data sharing applications                                      |
-| DHCP                     | Alerts for dhcp related services                                                                 |
-| DNS                      | Alerts for dns related services                                                                  |
-| Kubernetes               | Alerts for kubernetes nodes monitoring                                                           |
-| KV Storage               | Key-Value pairs services alerts (e.g. memcached)                                                 |
-| Linux                    | Services specific to Linux (e.g. systemd)                                                        |
-| Messaging                | Alerts for message passing services (e.g. vernemq)                                               |
-| Netdata                  | Internal Netdata components monitoring                                                           |
-| Other                    | When an alert doesn't fit in other types.                                                        |
-| Power Supply             | Alerts from power supply related services (e.g. apcupsd)                                         |
-| Search engine            | Alerts for search services (e.g. elasticsearch)                                                  |
-| Storage                  | Class for alerts dealing with storage services (storage devices typically live under `System`)   |
-| System                   | General system alarms (e.g. cpu, network, etc.)                                                  |
-| Virtual Machine          | Virtual Machine software                                                                         |
-| Web Proxy                | Web proxy software (e.g. squid)                                                                  |
-| Web Server               | Web server software (e.g. Apache, ngnix, etc.)                                                   |
-| Windows                  | Alerts for monitor of wmi services                                                               |
+| Type            | Description                                                                                    |
+|-----------------|------------------------------------------------------------------------------------------------|
+| Ad Filtering    | Services related to Ad Filtering (like pi-hole)                                                |
+| Certificates    | Certificates monitoring related                                                                |
+| Cgroups         | Alerts for cpu and memory usage of control groups                                              |
+| Computing       | Alerts for shared computing applications (e.g. boinc)                                          |
+| Containers      | Container related alerts (e.g. docker instances)                                               |
+| Database        | Database systems (e.g. MySQL, PostgreSQL, etc)                                                 |
+| Data Sharing    | Used to group together alerts for data sharing applications                                    |
+| DHCP            | Alerts for dhcp related services                                                               |
+| DNS             | Alerts for dns related services                                                                |
+| Kubernetes      | Alerts for kubernetes nodes monitoring                                                         |
+| KV Storage      | Key-Value pairs services alerts (e.g. memcached)                                               |
+| Linux           | Services specific to Linux (e.g. systemd)                                                      |
+| Messaging       | Alerts for message passing services (e.g. vernemq)                                             |
+| Netdata         | Internal Netdata components monitoring                                                         |
+| Other           | When an alert doesn't fit in other types.                                                      |
+| Power Supply    | Alerts from power supply related services (e.g. apcupsd)                                       |
+| Search engine   | Alerts for search services (e.g. elasticsearch)                                                |
+| Storage         | Class for alerts dealing with storage services (storage devices typically live under `System`) |
+| System          | General system alarms (e.g. cpu, network, etc.)                                                |
+| Virtual Machine | Virtual Machine software                                                                       |
+| Web Proxy       | Web proxy software (e.g. squid)                                                                |
+| Web Server      | Web server software (e.g. Apache, ngnix, etc.)                                                 |
+| Windows         | Alerts for monitor of windows services                                                         |
 
 </details>
 
@@ -236,7 +366,7 @@ hosts: server1 server2 database* !redis3 redis*
 #### Alarm line `plugin`
 
 The `plugin` line filters which plugin within the context this alarm should apply to. The value is a space-separated
-list of [simple patterns](/libnetdata/simple_pattern/README.md). For example,
+list of [simple patterns](https://github.com/netdata/netdata/blob/master/libnetdata/simple_pattern/README.md). For example,
 you can create a filter for an alarm that applies specifically to `python.d.plugin`:
 
 ```yaml
@@ -250,7 +380,7 @@ comprehensive example using both.
 #### Alarm line `module`
 
 The `module` line filters which module within the context this alarm should apply to. The value is a space-separated
-list of [simple patterns](/libnetdata/simple_pattern/README.md). For
+list of [simple patterns](https://github.com/netdata/netdata/blob/master/libnetdata/simple_pattern/README.md). For
 example, you can create an alarm that applies only on the `isc_dhcpd` module started by `python.d.plugin`:
 
 ```yaml
@@ -262,7 +392,7 @@ module: isc_dhcpd
 
 The `charts` line filters which chart this alarm should apply to. It is only available on entities using the 
 [`template`](#alarm-line-alarm-or-template) line.
-The value is a space-separated list of [simple patterns](/libnetdata/simple_pattern/README.md). For
+The value is a space-separated list of [simple patterns](https://github.com/netdata/netdata/blob/master/libnetdata/simple_pattern/README.md). For
 example, a template that applies to `disk.svctm` (Average Service Time) context, but excludes the disk `sdb` from alarms:
 
 ```yaml
@@ -276,7 +406,7 @@ template: disk_svctm_alarm
 The `families` line, used only alongside templates, filters which families within the context this alarm should apply
 to. The value is a space-separated list.
 
-The value is a space-separate list of simple patterns. See our [simple patterns docs](/libnetdata/simple_pattern/README.md) for
+The value is a space-separate list of simple patterns. See our [simple patterns docs](https://github.com/netdata/netdata/blob/master/libnetdata/simple_pattern/README.md) for
 some examples.
 
 For example, you can create a template on the `disk.io` context, but filter it to only the `sda` and `sdb` families:
@@ -295,7 +425,7 @@ The format is:
 lookup: METHOD AFTER [at BEFORE] [every DURATION] [OPTIONS] [of DIMENSIONS] [foreach DIMENSIONS]
 ```
 
-Everything is the same with [badges](/web/api/badges/README.md). In short:
+Everything is the same with [badges](https://github.com/netdata/netdata/blob/master/web/api/badges/README.md). In short:
 
 -   `METHOD` is one of `average`, `min`, `max`, `sum`, `incremental-sum`.
      This is required.
@@ -312,7 +442,7 @@ Everything is the same with [badges](/web/api/badges/README.md). In short:
      above too).
 
 -   `OPTIONS` is a space separated list of `percentage`, `absolute`, `min2max`, `unaligned`,
-     `match-ids`, `match-names`. Check the [badges](/web/api/badges/README.md) documentation for more info.
+     `match-ids`, `match-names`. Check the [badges](https://github.com/netdata/netdata/blob/master/web/api/badges/README.md) documentation for more info.
 
 -   `of DIMENSIONS` is optional and has to be the last parameter. Dimensions have to be separated
      by `,` or `|`. The space characters found in dimensions will be kept as-is (a few dimensions
@@ -323,7 +453,8 @@ Everything is the same with [badges](/web/api/badges/README.md). In short:
 -   `foreach DIMENSIONS` is optional, will always be the last parameter, and uses the same `,`/`|`
      rules as the `of` parameter. Each dimension you specify in `foreach` will use the same rule
      to trigger an alarm. If you set both `of` and `foreach`, Netdata will ignore the `of` parameter
-     and replace it with one of the dimensions you gave to `foreach`.
+     and replace it with one of the dimensions you gave to `foreach`. This option allows you to 
+     [use dimension templates to create dynamic alarms](#use-dimension-templates-to-create-dynamic-alarms).
 
 The result of the lookup will be available as `$this` and `$NAME` in expressions.
 The timestamps of the timeframe evaluated by the database lookup is available as variables
@@ -499,7 +630,7 @@ good idea to tell Netdata to not clear the notification, by using the `no-clear-
 
 #### Alarm line `host labels`
 
-Defines the list of labels present on a host. See our [host labels guide](/docs/guides/using-host-labels.md) for
+Defines the list of labels present on a host. See our [host labels guide](https://github.com/netdata/netdata/blob/master/docs/guides/using-host-labels.md) for
 an explanation of host labels and how to implement them.
 
 For example, let's suppose that `netdata.conf` is configured with the following labels:
@@ -532,7 +663,7 @@ that will be applied to all hosts installed in the last decade with the followin
 host labels: installed = 201*
 ```
 
-See our [simple patterns docs](/libnetdata/simple_pattern/README.md) for more examples.
+See our [simple patterns docs](https://github.com/netdata/netdata/blob/master/libnetdata/simple_pattern/README.md) for more examples.
 
 #### Alarm line `info`
 
@@ -548,13 +679,13 @@ alert information. Current variables supported are:
 
 | variable | description |
 | ---------| ----------- |
-| $family  | Will be replaced by the family instance for the alert (e.g. eth0) |
-| $label:  | Followed by a chart label name, this will replace the variable with the chart label's value |
+| ${family}  | Will be replaced by the family instance for the alert (e.g. eth0) |
+| ${label:LABEL_NAME}  | The variable will be replaced with the value of the label |
 
 For example, an info field like the following:
 
 ```yaml
-info: average inbound utilization for the network interface $family over the last minute
+info: average inbound utilization for the network interface ${family} over the last minute
 ```
 
 Will be rendered on the alert acting on interface `eth0` as:
@@ -567,7 +698,7 @@ An alert acting on a chart that has a chart label named e.g. `target`, with a va
 can be enriched as follows:
 
 ```yaml
-info: average ratio of HTTP responses with unexpected status over the last 5 minutes for the site $label:target
+info: average ratio of HTTP responses with unexpected status over the last 5 minutes for the site ${label:target}
 ```
 
 Will become:
@@ -647,15 +778,15 @@ You can find all the variables that can be used for a given chart, using
 Agent dashboard. For example, [variables for the `system.cpu` chart of the
 registry](https://registry.my-netdata.io/api/v1/alarm_variables?chart=system.cpu).
 
-> If you don't know how to find the CHART_NAME, you can read about it [here](/web/README.md#charts).
+> If you don't know how to find the CHART_NAME, you can read about it [here](https://github.com/netdata/netdata/blob/master/web/README.md#charts).
 
 Netdata supports 3 internal indexes for variables that will be used in health monitoring.
 
 <details markdown="1"><summary>The variables below can be used in both chart alarms and context templates.</summary>
 
 Although the `alarm_variables` link shows you variables for a particular chart, the same variables can also be used in
-templates for charts belonging to a given [context](/web/README.md#contexts). The reason is that all charts of a given
-context are essentially identical, with the only difference being the [family](/web/README.md#families) that
+templates for charts belonging to a given [context](https://github.com/netdata/netdata/blob/master/web/README.md#contexts). The reason is that all charts of a given
+context are essentially identical, with the only difference being the [family](https://github.com/netdata/netdata/blob/master/web/README.md#families) that
 identifies a particular hardware or software instance. Charts and templates do not apply to specific families anyway,
 unless if you explicitly limit an alarm with the [alarm line `families`](#alarm-line-families).
 
@@ -995,7 +1126,7 @@ The `lookup` line will use the `anomaly_rate` dimension of the `anomaly_detectio
 
 ## Troubleshooting
 
-You can compile Netdata with [debugging](/daemon/README.md#debugging) and then set in `netdata.conf`:
+You can compile Netdata with [debugging](https://github.com/netdata/netdata/blob/master/daemon/README.md#debugging) and then set in `netdata.conf`:
 
 ```yaml
 [global]
@@ -1017,7 +1148,166 @@ expression.
 
 It's currently not possible to schedule notifications from within the alarm template. For those scenarios where you need
 to temporary disable notifications (for instance when running backups triggers a disk alert) you can disable or silence
-notifications are runtime. The health checks can be controlled at runtime via the [health management
-api](/web/api/health/README.md).
+notifications are runtime. The health checks can be controlled at runtime via the 
+[health management API](https://github.com/netdata/netdata/blob/master/web/api/health/README.md).
 
+## Use dimension templates to create dynamic alarms
 
+In v1.18 of Netdata, we introduced **dimension templates** for alarms, which simplifies the process of 
+writing [alarm entities](#health-entity-reference) for 
+charts with many dimensions.
+
+Dimension templates can condense many individual entities into one—no more copy-pasting one entity and changing the
+`alarm`/`template` and `lookup` lines for each dimension you'd like to monitor.
+
+### The fundamentals of `foreach`
+
+Our dimension templates update creates a new `foreach` parameter to the 
+existing [`lookup` line](#alarm-line-lookup). This 
+is where the magic happens.
+
+You use the `foreach` parameter to specify which dimensions you want to monitor with this single alarm. You can separate
+them with a comma (`,`) or a pipe (`|`). You can also use 
+a [Netdata simple pattern](https://github.com/netdata/netdata/blob/master/libnetdata/simple_pattern/README.md) to create 
+many alarms with a regex-like syntax.
+
+The `foreach` parameter _has_ to be the last parameter in your `lookup` line, and if you have both `of` and `foreach` in
+the same `lookup` line, Netdata will ignore the `of` parameter and use `foreach` instead.
+
+Let's get into some examples so you can see how the new parameter works.
+
+> ⚠️ The following entities are examples to showcase the functionality and syntax of dimension templates. They are not
+> meant to be run as-is on production systems.
+
+### Condensing entities with `foreach`
+
+Let's say you want to monitor the `system`, `user`, and `nice` dimensions in your system's overall CPU utilization.
+Before dimension templates, you would need the following three entities:
+
+```yaml
+ alarm: cpu_system
+    on: system.cpu
+lookup: average -10m percentage of system
+ every: 1m
+  warn: $this > 50
+  crit: $this > 80
+
+ alarm: cpu_user
+    on: system.cpu
+lookup: average -10m percentage of user
+ every: 1m
+  warn: $this > 50
+  crit: $this > 80
+
+ alarm: cpu_nice
+    on: system.cpu
+lookup: average -10m percentage of nice
+ every: 1m
+  warn: $this > 50
+  crit: $this > 80
+```
+
+With dimension templates, you can condense these into a single alarm. Take note of the `alarm` and `lookup` lines.
+
+```yaml
+ alarm: cpu_template
+    on: system.cpu
+lookup: average -10m percentage foreach system,user,nice
+ every: 1m
+  warn: $this > 50
+  crit: $this > 80
+```
+
+The `alarm` line specifies the naming scheme Netdata will use. You can use whatever naming scheme you'd like, with `.`
+and `_` being the only allowed symbols.
+
+The `lookup` line has changed from `of` to `foreach`, and we're now passing three dimensions.
+
+In this example, Netdata will create three alarms with the names `cpu_template_system`, `cpu_template_user`, and
+`cpu_template_nice`. Every minute, each alarm will use the same database query to calculate the average CPU usage for
+the `system`, `user`, and `nice` dimensions over the last 10 minutes and send out alarms if necessary.
+
+You can find these three alarms active by clicking on the **Alarms** button in the top navigation, and then clicking on
+the **All** tab and scrolling to the **system - cpu** collapsible section.
+
+![Three new alarms created from the dimension template](https://user-images.githubusercontent.com/1153921/66218994-29523800-e67f-11e9-9bcb-9bca23e2c554.png)
+
+Let's look at some other examples of how `foreach` works so you can best apply it in your configurations.
+
+### Using a Netdata simple pattern in `foreach`
+
+In the last example, we used `foreach system,user,nice` to create three distinct alarms using dimension templates. But
+what if you want to quickly create alarms for _all_ the dimensions of a given chart? 
+
+Use a [simple pattern](https://github.com/netdata/netdata/blob/master/libnetdata/simple_pattern/README.md)! One example of a simple pattern is a single wildcard
+(`*`).
+
+Instead of monitoring system CPU usage, let's monitor per-application CPU usage using the `apps.cpu` chart. Passing a
+wildcard as the simple pattern tells Netdata to create a separate alarm for _every_ process on your system:
+
+```yaml
+ alarm: app_cpu
+    on: apps.cpu
+lookup: average -10m percentage foreach *
+ every: 1m
+  warn: $this > 50
+  crit: $this > 80
+```
+
+This entity will now create alarms for every dimension in the `apps.cpu` chart. Given that most `apps.cpu` charts have
+10 or more dimensions, using the wildcard ensures you catch every CPU-hogging process.
+
+To learn more about how to use simple patterns with dimension templates, see 
+our [simple patterns documentation](https://github.com/netdata/netdata/blob/master/libnetdata/simple_pattern/README.md).
+
+### Using `foreach` with alarm templates
+
+Dimension templates also work 
+with [alarm templates](#alarm-line-alarm-or-template). 
+Alarm templates help you create alarms for all the charts with a given context—for example, all the cores of your 
+system's CPU.
+
+By combining the two, you can create dozens of individual alarms with a single template entity. Here's how you would
+create alarms for the `system`, `user`, and `nice` dimensions for every chart in the `cpu.cpu` context—or, in other
+words, every CPU core.
+
+```yaml
+template: cpu_template
+      on: cpu.cpu
+  lookup: average -10m percentage foreach system,user,nice
+   every: 1m
+    warn: $this > 50
+    crit: $this > 80
+```
+
+On a system with a 6-core, 12-thread Ryzen 5 1600 CPU, this one entity creates alarms on the following charts and
+dimensions:
+
+-   `cpu.cpu0`
+    -   `cpu_template_user`
+    -   `cpu_template_system`
+    -   `cpu_template_nice`
+
+-   `cpu.cpu1`
+    -   `cpu_template_user`
+    -   `cpu_template_system`
+    -   `cpu_template_nice`
+
+-   `cpu.cpu2`
+    -   `cpu_template_user`
+    -   `cpu_template_system`
+    -   `cpu_template_nice`
+
+-   ...
+
+-   `cpu.cpu11`
+    -   `cpu_template_user`
+    -   `cpu_template_system`
+    -   `cpu_template_nice`
+
+And how just a few of those dimension template-generated alarms look like in the Netdata dashboard.
+
+![A few of the created alarms in the Netdata dashboard](https://user-images.githubusercontent.com/1153921/66219669-708cf880-e680-11e9-8b3a-7bfe178fa28b.png)
+
+All in all, this single entity creates 36 individual alarms. Much easier than writing 36 separate entities in your
+health configuration files!

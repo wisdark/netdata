@@ -424,7 +424,9 @@ static bool rrd_functions_conflict_callback(const DICTIONARY_ITEM *item __maybe_
 void rrdfunctions_init(RRDHOST *host) {
     if(host->functions) return;
 
-    host->functions = dictionary_create(DICT_OPTION_DONT_OVERWRITE_VALUE);
+    host->functions = dictionary_create_advanced(DICT_OPTION_DONT_OVERWRITE_VALUE | DICT_OPTION_FIXED_SIZE,
+                                                 &dictionary_stats_category_functions, sizeof(struct rrd_collector_function));
+
     dictionary_register_insert_callback(host->functions, rrd_functions_insert_callback, host);
     dictionary_register_delete_callback(host->functions, rrd_functions_delete_callback, host);
     dictionary_register_conflict_callback(host->functions, rrd_functions_conflict_callback, host);
@@ -494,7 +496,7 @@ static void rrd_function_call_wait_free(struct rrd_function_call_wait *tmp) {
 
 struct {
     const char *format;
-    uint8_t content_type;
+    HTTP_CONTENT_TYPE content_type;
 } function_formats[] = {
     { .format = "application/json", CT_APPLICATION_JSON },
     { .format = "text/plain",       CT_TEXT_PLAIN },
@@ -521,7 +523,7 @@ uint8_t functions_format_to_content_type(const char *format) {
     return CT_TEXT_PLAIN;
 }
 
-const char *functions_content_type_to_format(uint8_t content_type) {
+const char *functions_content_type_to_format(HTTP_CONTENT_TYPE content_type) {
     for (int i = 0; function_formats[i].format; i++)
         if (function_formats[i].content_type == content_type)
             return function_formats[i].format;
@@ -535,7 +537,7 @@ int rrd_call_function_error(BUFFER *wb, const char *msg, int code) {
 
     buffer_flush(wb);
     buffer_sprintf(wb, "{\"status\":%d,\"error_message\":\"%s\"}", code, buffer);
-    wb->contenttype = CT_APPLICATION_JSON;
+    wb->content_type = CT_APPLICATION_JSON;
     buffer_no_cacheable(wb);
     return code;
 }
@@ -629,8 +631,8 @@ int rrd_call_function_and_wait(RRDHOST *host, BUFFER *wb, int timeout, const cha
         pthread_cond_init(&tmp->cond, NULL);
 
         bool we_should_free = true;
-        BUFFER *temp_wb  = buffer_create(PLUGINSD_LINE_MAX + 1); // we need it because we may give up on it
-        temp_wb->contenttype = wb->contenttype;
+        BUFFER *temp_wb  = buffer_create(PLUGINSD_LINE_MAX + 1, &netdata_buffers_statistics.buffers_functions); // we need it because we may give up on it
+        temp_wb->content_type = wb->content_type;
         code = rdcf->function(temp_wb, timeout, key, rdcf->collector_data, rrd_call_function_signal_when_ready, tmp);
         if (code == HTTP_RESP_OK) {
             netdata_mutex_lock(&tmp->mutex);
@@ -645,7 +647,7 @@ int rrd_call_function_and_wait(RRDHOST *host, BUFFER *wb, int timeout, const cha
             if (tmp->data_are_ready) {
                 // we have a response
                 buffer_fast_strcat(wb, buffer_tostring(temp_wb), buffer_strlen(temp_wb));
-                wb->contenttype = temp_wb->contenttype;
+                wb->content_type = temp_wb->content_type;
                 wb->expires = temp_wb->expires;
 
                 if(wb->expires)
@@ -668,13 +670,14 @@ int rrd_call_function_and_wait(RRDHOST *host, BUFFER *wb, int timeout, const cha
             netdata_mutex_unlock(&tmp->mutex);
         }
         else {
-            buffer_free(temp_wb);
             if(!buffer_strlen(wb))
                 rrd_call_function_error(wb, "Failed to send request to the collector.", code);
         }
 
-        if (we_should_free)
+        if (we_should_free) {
             rrd_function_call_wait_free(tmp);
+            buffer_free(temp_wb);
+        }
     }
 
     return code;
@@ -735,14 +738,29 @@ void chart_functions2json(RRDSET *st, BUFFER *wb, int tabs, const char *kq, cons
     functions2json(st->functions_view, wb, ident, kq, sq);
 }
 
-void host_functions2json(RRDHOST *host, BUFFER *wb, int tabs, const char *kq, const char *sq) {
+void host_functions2json(RRDHOST *host, BUFFER *wb) {
     if(!host || !host->functions) return;
 
-    char ident[tabs + 1];
-    ident[tabs] = '\0';
-    while(tabs) ident[--tabs] = '\t';
+    buffer_json_member_add_object(wb, "functions");
 
-    functions2json(host->functions, wb, ident, kq, sq);
+    struct rrd_collector_function *t;
+    dfe_start_read(host->functions, t) {
+        if(!t->collector->running) continue;
+
+        buffer_json_member_add_object(wb, t_dfe.name);
+        buffer_json_member_add_string(wb, "help", string2str(t->help));
+        buffer_json_member_add_int64(wb, "timeout", t->timeout);
+        buffer_json_member_add_array(wb, "options");
+        if(t->options & RRD_FUNCTION_GLOBAL)
+            buffer_json_add_array_item_string(wb, "GLOBAL");
+        if(t->options & RRD_FUNCTION_LOCAL)
+            buffer_json_add_array_item_string(wb, "LOCAL");
+        buffer_json_array_close(wb);
+        buffer_json_object_close(wb);
+    }
+    dfe_done(t);
+
+    buffer_json_object_close(wb);
 }
 
 void chart_functions_to_dict(DICTIONARY *rrdset_functions_view, DICTIONARY *dst) {

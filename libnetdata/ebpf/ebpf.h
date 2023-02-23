@@ -206,7 +206,7 @@ typedef struct ebpf_specify_name {
 
 typedef enum netdata_ebpf_load_mode {
     EBPF_LOAD_LEGACY = 1<<0,        // Select legacy mode, this means we will load binaries
-    EBPF_LOAD_CORE = 1<<1,          // When CO-RE is used, it is necessary to use the souce code
+    EBPF_LOAD_CORE = 1<<1,          // When CO-RE is used, it is necessary to use the source code
     EBPF_LOAD_PLAY_DICE = 1<<2,      // Take a look on environment and choose the best option
     EBPF_LOADED_FROM_STOCK = 1<<3,  // Configuration loaded from Stock file
     EBPF_LOADED_FROM_USER = 1<<4    // Configuration loaded from user
@@ -270,6 +270,7 @@ typedef struct ebpf_module {
     netdata_ebpf_targets_t *targets;
     struct bpf_link **probe_links;
     struct bpf_object *objects;
+    struct netdata_static_thread *thread;
 } ebpf_module_t;
 
 int ebpf_get_kernel_version();

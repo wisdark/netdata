@@ -1,7 +1,10 @@
 <!--
 title: "Go applications monitoring with Netdata"
-custom_edit_url: https://github.com/netdata/netdata/edit/master/collectors/python.d.plugin/go_expvar/README.md
+custom_edit_url: "https://github.com/netdata/netdata/edit/master/collectors/python.d.plugin/go_expvar/README.md"
 sidebar_label: "Go applications"
+learn_status: "Published"
+learn_topic_type: "References"
+learn_rel_path: "Integrations/Monitor/Application Performance Monitoring"
 -->
 
 # Go applications monitoring with Netdata
@@ -209,8 +212,8 @@ See [this issue](https://github.com/netdata/netdata/pull/1902#issuecomment-28449
 
 Please see these two links to the official Netdata documentation for more information about the values:
 
--   [External plugins - charts](/collectors/plugins.d/README.md#chart)
--   [Chart variables](/collectors/python.d.plugin/README.md#global-variables-order-and-chart)
+-   [External plugins - charts](https://github.com/netdata/netdata/blob/master/collectors/plugins.d/README.md#chart)
+-   [Chart variables](https://github.com/netdata/netdata/blob/master/collectors/python.d.plugin/README.md#global-variables-order-and-chart)
 
 **Line definitions**
 
@@ -233,7 +236,7 @@ hidden: False
 ```
 
 Please see the following link for more information about the options and their default values:
-[External plugins - dimensions](/collectors/plugins.d/README.md#dimension)
+[External plugins - dimensions](https://github.com/netdata/netdata/blob/master/collectors/plugins.d/README.md#dimension)
 
 Apart from top-level expvars, this plugin can also parse expvars stored in a multi-level map;
 All dicts in the resulting JSON document are then flattened to one level.
@@ -255,7 +258,7 @@ the first defined key wins and all subsequent keys with the same name are ignore
 ## Enable the collector
 
 The `go_expvar` collector is disabled by default. To enable it, use `edit-config` from the Netdata [config
-directory](/docs/configure/nodes.md), which is typically at `/etc/netdata`, to edit the `python.d.conf` file.
+directory](https://github.com/netdata/netdata/blob/master/docs/configure/nodes.md), which is typically at `/etc/netdata`, to edit the `python.d.conf` file.
 
 ```bash
 cd /etc/netdata   # Replace this path with your Netdata config directory, if different
@@ -268,7 +271,7 @@ restart netdata`, or the appropriate method for your system, to finish enabling 
 ## Configuration
 
 Edit the `python.d/go_expvar.conf` configuration file using `edit-config` from the Netdata [config
-directory](/docs/configure/nodes.md), which is typically at `/etc/netdata`.
+directory](https://github.com/netdata/netdata/blob/master/docs/configure/nodes.md), which is typically at `/etc/netdata`.
 
 ```bash
 cd /etc/netdata   # Replace this path with your Netdata config directory, if different
@@ -316,4 +319,24 @@ The images below show how do the final charts in Netdata look.
 
 ![Custom charts](https://cloud.githubusercontent.com/assets/15180106/26762051/62ae915e-493b-11e7-8518-bd25a3886650.png)
 
+
+### Troubleshooting
+
+To troubleshoot issues with the `go_expvar` module, run the `python.d.plugin` with the debug option enabled. The 
+output will give you the output of the data collection job or error messages on why the collector isn't working.
+
+First, navigate to your plugins directory, usually they are located under `/usr/libexec/netdata/plugins.d/`. If that's 
+not the case on your system, open `netdata.conf` and look for the setting `plugins directory`. Once you're in the 
+plugin's directory, switch to the `netdata` user.
+
+```bash
+cd /usr/libexec/netdata/plugins.d/
+sudo su -s /bin/bash netdata
+```
+
+Now you can manually run the `go_expvar` module in debug mode:
+
+```bash
+./python.d.plugin go_expvar debug trace
+```
 

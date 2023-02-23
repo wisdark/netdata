@@ -14,6 +14,7 @@ public:
     unsigned MaxTrainSamples;
     unsigned MinTrainSamples;
     unsigned TrainEvery;
+
     unsigned NumModelsToUse;
 
     unsigned DBEngineAnomalyRateEvery;
@@ -28,7 +29,7 @@ public:
     double DimensionAnomalyScoreThreshold;
 
     double HostAnomalyRateThreshold;
-    RRDR_GROUPING AnomalyDetectionGroupingMethod;
+    RRDR_TIME_GROUPING AnomalyDetectionGroupingMethod;
     time_t AnomalyDetectionQueryDuration;
 
     bool StreamADCharts;

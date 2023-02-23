@@ -21,6 +21,81 @@ int enable_ksm = 0;
 volatile sig_atomic_t netdata_exit = 0;
 const char *program_version = VERSION;
 
+#define MAX_JUDY_SIZE_TO_ARAL 24
+static bool judy_sizes_config[MAX_JUDY_SIZE_TO_ARAL + 1] = {
+        [3] = true,
+        [4] = true,
+        [5] = true,
+        [6] = true,
+        [7] = true,
+        [8] = true,
+        [10] = true,
+        [11] = true,
+        [15] = true,
+        [23] = true,
+};
+static ARAL *judy_sizes_aral[MAX_JUDY_SIZE_TO_ARAL + 1] = {};
+
+struct aral_statistics judy_sizes_aral_statistics = {};
+
+void aral_judy_init(void) {
+    for(size_t Words = 0; Words <= MAX_JUDY_SIZE_TO_ARAL; Words++)
+        if(judy_sizes_config[Words]) {
+            char buf[30+1];
+            snprintfz(buf, 30, "judy-%zu", Words * sizeof(Word_t));
+            judy_sizes_aral[Words] = aral_create(
+                    buf,
+                    Words * sizeof(Word_t),
+                    0,
+                    65536,
+                    &judy_sizes_aral_statistics,
+                    NULL, NULL, false, false);
+        }
+}
+
+size_t judy_aral_overhead(void) {
+    return aral_overhead_from_stats(&judy_sizes_aral_statistics);
+}
+
+size_t judy_aral_structures(void) {
+    return aral_structures_from_stats(&judy_sizes_aral_statistics);
+}
+
+static ARAL *judy_size_aral(Word_t Words) {
+    if(Words <= MAX_JUDY_SIZE_TO_ARAL && judy_sizes_aral[Words])
+        return judy_sizes_aral[Words];
+
+    return NULL;
+}
+
+inline Word_t JudyMalloc(Word_t Words) {
+    Word_t Addr;
+
+    ARAL *ar = judy_size_aral(Words);
+    if(ar)
+        Addr = (Word_t) aral_mallocz(ar);
+    else
+        Addr = (Word_t) mallocz(Words * sizeof(Word_t));
+
+    return(Addr);
+}
+
+inline void JudyFree(void * PWord, Word_t Words) {
+    ARAL *ar = judy_size_aral(Words);
+    if(ar)
+        aral_freez(ar, PWord);
+    else
+        freez(PWord);
+}
+
+Word_t JudyMallocVirtual(Word_t Words) {
+    return JudyMalloc(Words);
+}
+
+void JudyFreeVirtual(void * PWord, Word_t Words) {
+    JudyFree(PWord, Words);
+}
+
 // ----------------------------------------------------------------------------
 // memory allocation functions that handle failures
 
@@ -149,31 +224,6 @@ static size_t (*libc_malloc_usable_size)(void *) = NULL;
 void posix_memfree(void *ptr) {
     libc_free(ptr);
 }
-
-Word_t JudyMalloc(Word_t Words) {
-    Word_t Addr;
-
-    Addr = (Word_t) mallocz(Words * sizeof(Word_t));
-    return(Addr);
-}
-void JudyFree(void * PWord, Word_t Words) {
-    (void)Words;
-    freez(PWord);
-}
-Word_t JudyMallocVirtual(Word_t Words) {
-    Word_t Addr;
-
-    Addr = (Word_t) mallocz(Words * sizeof(Word_t));
-    return(Addr);
-}
-void JudyFreeVirtual(void * PWord, Word_t Words) {
-    (void)Words;
-    freez(PWord);
-}
-
-#define MALLOC_ALIGNMENT (sizeof(uintptr_t) * 2)
-#define size_t_atomic_count(op, var, size) __atomic_## op ##_fetch(&(var), size, __ATOMIC_RELAXED)
-#define size_t_atomic_bytes(op, var, size) __atomic_## op ##_fetch(&(var), ((size) % MALLOC_ALIGNMENT)?((size) + MALLOC_ALIGNMENT - ((size) % MALLOC_ALIGNMENT)):(size), __ATOMIC_RELAXED)
 
 struct malloc_header_signature {
     uint32_t magic;
@@ -1176,7 +1226,7 @@ static int memory_file_open(const char *filename, size_t size) {
     return fd;
 }
 
-static inline int madvise_sequential(void *mem, size_t len) {
+inline int madvise_sequential(void *mem, size_t len) {
     static int logger = 1;
     int ret = madvise(mem, len, MADV_SEQUENTIAL);
 
@@ -1184,7 +1234,15 @@ static inline int madvise_sequential(void *mem, size_t len) {
     return ret;
 }
 
-static inline int madvise_dontfork(void *mem, size_t len) {
+inline int madvise_random(void *mem, size_t len) {
+    static int logger = 1;
+    int ret = madvise(mem, len, MADV_RANDOM);
+
+    if (ret != 0 && logger-- > 0) error("madvise(MADV_RANDOM) failed.");
+    return ret;
+}
+
+inline int madvise_dontfork(void *mem, size_t len) {
     static int logger = 1;
     int ret = madvise(mem, len, MADV_DONTFORK);
 
@@ -1192,7 +1250,7 @@ static inline int madvise_dontfork(void *mem, size_t len) {
     return ret;
 }
 
-static inline int madvise_willneed(void *mem, size_t len) {
+inline int madvise_willneed(void *mem, size_t len) {
     static int logger = 1;
     int ret = madvise(mem, len, MADV_WILLNEED);
 
@@ -1200,24 +1258,27 @@ static inline int madvise_willneed(void *mem, size_t len) {
     return ret;
 }
 
+inline int madvise_dontneed(void *mem, size_t len) {
+    static int logger = 1;
+    int ret = madvise(mem, len, MADV_DONTNEED);
+
+    if (ret != 0 && logger-- > 0) error("madvise(MADV_DONTNEED) failed.");
+    return ret;
+}
+
+inline int madvise_dontdump(void *mem __maybe_unused, size_t len __maybe_unused) {
 #if __linux__
-static inline int madvise_dontdump(void *mem, size_t len) {
     static int logger = 1;
     int ret = madvise(mem, len, MADV_DONTDUMP);
 
     if (ret != 0 && logger-- > 0) error("madvise(MADV_DONTDUMP) failed.");
     return ret;
-}
 #else
-static inline int madvise_dontdump(void *mem, size_t len) {
-    UNUSED(mem);
-    UNUSED(len);
-
     return 0;
-}
 #endif
+}
 
-static inline int madvise_mergeable(void *mem, size_t len) {
+inline int madvise_mergeable(void *mem __maybe_unused, size_t len __maybe_unused) {
 #ifdef MADV_MERGEABLE
     static int logger = 1;
     int ret = madvise(mem, len, MADV_MERGEABLE);
@@ -1225,14 +1286,12 @@ static inline int madvise_mergeable(void *mem, size_t len) {
     if (ret != 0 && logger-- > 0) error("madvise(MADV_MERGEABLE) failed.");
     return ret;
 #else
-    UNUSED(mem);
-    UNUSED(len);
-    
     return 0;
 #endif
 }
 
-void *netdata_mmap(const char *filename, size_t size, int flags, int ksm) {
+void *netdata_mmap(const char *filename, size_t size, int flags, int ksm, bool read_only, int *open_fd)
+{
     // info("netdata_mmap('%s', %zu", filename, size);
 
     // MAP_SHARED is used in memory mode map
@@ -1271,7 +1330,7 @@ void *netdata_mmap(const char *filename, size_t size, int flags, int ksm) {
         fd_for_mmap = -1;
     }
 
-    mem = mmap(NULL, size, PROT_READ | PROT_WRITE, flags, fd_for_mmap, 0);
+    mem = mmap(NULL, size, read_only ? PROT_READ : PROT_READ | PROT_WRITE, flags, fd_for_mmap, 0);
     if (mem != MAP_FAILED) {
 
 #ifdef NETDATA_TRACE_ALLOCATIONS
@@ -1288,15 +1347,20 @@ void *netdata_mmap(const char *filename, size_t size, int flags, int ksm) {
             else info("Cannot seek to beginning of file '%s'.", filename);
         }
 
-        madvise_sequential(mem, size);
+        // madvise_sequential(mem, size);
         madvise_dontfork(mem, size);
         madvise_dontdump(mem, size);
-        if(flags & MAP_SHARED) madvise_willneed(mem, size);
+        // if(flags & MAP_SHARED) madvise_willneed(mem, size);
         if(ksm) madvise_mergeable(mem, size);
     }
 
 cleanup:
-    if(fd != -1) close(fd);
+    if(fd != -1) {
+        if (open_fd)
+            *open_fd = fd;
+        else
+            close(fd);
+    }
     if(mem == MAP_FAILED) return NULL;
     errno = 0;
     return mem;
@@ -1815,16 +1879,19 @@ inline int config_isspace(char c)
 }
 
 // split a text into words, respecting quotes
-inline size_t quoted_strings_splitter(char *str, char **words, size_t max_words, int (*custom_isspace)(char), char *recover_input, char **recover_location, int max_recover)
+inline size_t quoted_strings_splitter(char *str, char **words, size_t max_words, int (*custom_isspace)(char))
 {
     char *s = str, quote = 0;
     size_t i = 0;
-    int rec = 0;
-    char *recover = recover_input;
 
     // skip all white space
     while (unlikely(custom_isspace(*s)))
         s++;
+
+    if(unlikely(!*s)) {
+        words[i] = NULL;
+        return 0;
+    }
 
     // check for quote
     if (unlikely(*s == '\'' || *s == '"')) {
@@ -1837,19 +1904,15 @@ inline size_t quoted_strings_splitter(char *str, char **words, size_t max_words,
 
     // while we have something
     while (likely(*s)) {
-        // if it is escape
+        // if it is an escape
         if (unlikely(*s == '\\' && s[1])) {
             s += 2;
             continue;
         }
 
-        // if it is quote
+        // if it is a quote
         else if (unlikely(*s == quote)) {
             quote = 0;
-            if (recover && rec < max_recover) {
-                recover_location[rec++] = s;
-                *recover++ = *s;
-            }
             *s = ' ';
             continue;
         }
@@ -1857,19 +1920,13 @@ inline size_t quoted_strings_splitter(char *str, char **words, size_t max_words,
         // if it is a space
         else if (unlikely(quote == 0 && custom_isspace(*s))) {
             // terminate the word
-            if (recover && rec < max_recover) {
-                if (!rec || recover_location[rec-1] != s) {
-                    recover_location[rec++] = s;
-                    *recover++ = *s;
-                }
-            }
             *s++ = '\0';
 
             // skip all white space
             while (likely(custom_isspace(*s)))
                 s++;
 
-            // check for quote
+            // check for a quote
             if (unlikely(*s == '\'' || *s == '"')) {
                 quote = *s; // remember the quote
                 s++;        // skip the quote
@@ -1897,9 +1954,9 @@ inline size_t quoted_strings_splitter(char *str, char **words, size_t max_words,
     return i;
 }
 
-inline size_t pluginsd_split_words(char *str, char **words, size_t max_words, char *recover_input, char **recover_location, int max_recover)
+inline size_t pluginsd_split_words(char *str, char **words, size_t max_words)
 {
-    return quoted_strings_splitter(str, words, max_words, pluginsd_space, recover_input, recover_location, max_recover);
+    return quoted_strings_splitter(str, words, max_words, pluginsd_space);
 }
 
 bool bitmap256_get_bit(BITMAP256 *ptr, uint8_t idx) {
@@ -1933,4 +1990,187 @@ bool run_command_and_copy_output_to_stdout(const char *command, int max_line_len
 
     netdata_pclose(NULL, fp, pid);
     return true;
+}
+
+void for_each_open_fd(OPEN_FD_ACTION action, OPEN_FD_EXCLUDE excluded_fds){
+    int fd;
+
+    switch(action){
+        case OPEN_FD_ACTION_CLOSE:
+            if(!(excluded_fds & OPEN_FD_EXCLUDE_STDIN))  (void)close(STDIN_FILENO);
+            if(!(excluded_fds & OPEN_FD_EXCLUDE_STDOUT)) (void)close(STDOUT_FILENO);
+            if(!(excluded_fds & OPEN_FD_EXCLUDE_STDERR)) (void)close(STDERR_FILENO);
+#if defined(HAVE_CLOSE_RANGE)
+            if(close_range(STDERR_FILENO + 1, ~0U, 0) == 0) return;
+            error("close_range() failed, will try to close fds one by one");
+#endif
+            break;
+        case OPEN_FD_ACTION_FD_CLOEXEC:
+            if(!(excluded_fds & OPEN_FD_EXCLUDE_STDIN))  (void)fcntl(STDIN_FILENO, F_SETFD, FD_CLOEXEC);
+            if(!(excluded_fds & OPEN_FD_EXCLUDE_STDOUT)) (void)fcntl(STDOUT_FILENO, F_SETFD, FD_CLOEXEC);
+            if(!(excluded_fds & OPEN_FD_EXCLUDE_STDERR)) (void)fcntl(STDERR_FILENO, F_SETFD, FD_CLOEXEC);
+#if defined(HAVE_CLOSE_RANGE) && defined(CLOSE_RANGE_CLOEXEC) // Linux >= 5.11, FreeBSD >= 13.1
+            if(close_range(STDERR_FILENO + 1, ~0U, CLOSE_RANGE_CLOEXEC) == 0) return;
+            error("close_range() failed, will try to mark fds for closing one by one");
+#endif
+            break;
+        default:
+            break; // do nothing
+    }
+
+    DIR *dir = opendir("/proc/self/fd");
+    if (dir == NULL) {
+        struct rlimit rl;
+        int open_max = -1;
+
+        if(getrlimit(RLIMIT_NOFILE, &rl) == 0 && rl.rlim_max != RLIM_INFINITY) open_max = rl.rlim_max;
+#ifdef _SC_OPEN_MAX
+        else open_max = sysconf(_SC_OPEN_MAX);
+#endif
+
+        if (open_max == -1) open_max = 65535; // 65535 arbitrary default if everything else fails
+
+        for (fd = STDERR_FILENO + 1; fd < open_max; fd++) {
+            switch(action){
+                case OPEN_FD_ACTION_CLOSE:
+                    if(fd_is_valid(fd)) (void)close(fd);
+                    break;
+                case OPEN_FD_ACTION_FD_CLOEXEC:
+                    (void)fcntl(fd, F_SETFD, FD_CLOEXEC);
+                    break;
+                default:
+                    break; // do nothing
+            }
+        }
+    } else {
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != NULL) {
+            fd = str2i(entry->d_name);
+            if(unlikely((fd == STDIN_FILENO ) || (fd == STDOUT_FILENO) || (fd == STDERR_FILENO) )) continue;
+            switch(action){
+                case OPEN_FD_ACTION_CLOSE:
+                    if(fd_is_valid(fd)) (void)close(fd);
+                    break;
+                case OPEN_FD_ACTION_FD_CLOEXEC:
+                    (void)fcntl(fd, F_SETFD, FD_CLOEXEC);
+                    break;
+                default:
+                    break; // do nothing
+            }
+        }
+        closedir(dir);
+    }
+}
+
+struct timing_steps {
+    const char *name;
+    usec_t time;
+    size_t count;
+} timing_steps[TIMING_STEP_MAX + 1] = {
+        [TIMING_STEP_INTERNAL] = { .name = "internal", .time = 0, },
+
+        [TIMING_STEP_BEGIN2_PREPARE] = { .name = "BEGIN2 prepare", .time = 0, },
+        [TIMING_STEP_BEGIN2_FIND_CHART] = { .name = "BEGIN2 find chart", .time = 0, },
+        [TIMING_STEP_BEGIN2_PARSE] = { .name = "BEGIN2 parse", .time = 0, },
+        [TIMING_STEP_BEGIN2_ML] = { .name = "BEGIN2 ml", .time = 0, },
+        [TIMING_STEP_BEGIN2_PROPAGATE] = { .name = "BEGIN2 propagate", .time = 0, },
+        [TIMING_STEP_BEGIN2_STORE] = { .name = "BEGIN2 store", .time = 0, },
+
+        [TIMING_STEP_SET2_PREPARE] = { .name = "SET2 prepare", .time = 0, },
+        [TIMING_STEP_SET2_LOOKUP_DIMENSION] = { .name = "SET2 find dimension", .time = 0, },
+        [TIMING_STEP_SET2_PARSE] = { .name = "SET2 parse", .time = 0, },
+        [TIMING_STEP_SET2_ML] = { .name = "SET2 ml", .time = 0, },
+        [TIMING_STEP_SET2_PROPAGATE] = { .name = "SET2 propagate", .time = 0, },
+        [TIMING_STEP_RRDSET_STORE_METRIC] = { .name = "SET2 rrdset store", .time = 0, },
+        [TIMING_STEP_DBENGINE_FIRST_CHECK] = { .name = "db 1st check", .time = 0, },
+        [TIMING_STEP_DBENGINE_CHECK_DATA] = { .name = "db check data", .time = 0, },
+        [TIMING_STEP_DBENGINE_PACK] = { .name = "db pack", .time = 0, },
+        [TIMING_STEP_DBENGINE_PAGE_FIN] = { .name = "db page fin", .time = 0, },
+        [TIMING_STEP_DBENGINE_MRG_UPDATE] = { .name = "db mrg update", .time = 0, },
+        [TIMING_STEP_DBENGINE_PAGE_ALLOC] = { .name = "db page alloc", .time = 0, },
+        [TIMING_STEP_DBENGINE_CREATE_NEW_PAGE] = { .name = "db new page", .time = 0, },
+        [TIMING_STEP_DBENGINE_FLUSH_PAGE] = { .name = "db page flush", .time = 0, },
+        [TIMING_STEP_SET2_STORE] = { .name = "SET2 store", .time = 0, },
+
+        [TIMING_STEP_END2_PREPARE] = { .name = "END2 prepare", .time = 0, },
+        [TIMING_STEP_END2_PUSH_V1] = { .name = "END2 push v1", .time = 0, },
+        [TIMING_STEP_END2_ML] = { .name = "END2 ml", .time = 0, },
+        [TIMING_STEP_END2_RRDSET] = { .name = "END2 rrdset", .time = 0, },
+        [TIMING_STEP_END2_PROPAGATE] = { .name = "END2 propagate", .time = 0, },
+        [TIMING_STEP_END2_STORE] = { .name = "END2 store", .time = 0, },
+
+        // terminator
+        [TIMING_STEP_MAX] = { .name = NULL, .time = 0, },
+};
+
+void timing_action(TIMING_ACTION action, TIMING_STEP step) {
+    static __thread usec_t last_action_time = 0;
+    static struct timing_steps timings2[TIMING_STEP_MAX + 1] = {};
+
+    switch(action) {
+        case TIMING_ACTION_INIT:
+            last_action_time = now_monotonic_usec();
+            break;
+
+        case TIMING_ACTION_STEP: {
+            if(!last_action_time)
+                return;
+
+            usec_t now = now_monotonic_usec();
+            __atomic_add_fetch(&timing_steps[step].time, now - last_action_time, __ATOMIC_RELAXED);
+            __atomic_add_fetch(&timing_steps[step].count, 1, __ATOMIC_RELAXED);
+            last_action_time = now;
+            break;
+        }
+
+        case TIMING_ACTION_FINISH: {
+            if(!last_action_time)
+                return;
+
+            usec_t expected = __atomic_load_n(&timing_steps[TIMING_STEP_INTERNAL].time, __ATOMIC_RELAXED);
+            if(last_action_time - expected < 10 * USEC_PER_SEC) {
+                last_action_time = 0;
+                return;
+            }
+
+            if(!__atomic_compare_exchange_n(&timing_steps[TIMING_STEP_INTERNAL].time, &expected, last_action_time, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+                last_action_time = 0;
+                return;
+            }
+
+            struct timing_steps timings3[TIMING_STEP_MAX + 1];
+            memcpy(timings3, timing_steps, sizeof(timings3));
+
+            size_t total_reqs = 0;
+            usec_t total_usec = 0;
+            for(size_t t = 1; t < TIMING_STEP_MAX ; t++) {
+                total_usec += timings3[t].time - timings2[t].time;
+                total_reqs += timings3[t].count - timings2[t].count;
+            }
+
+            BUFFER *wb = buffer_create(1024, NULL);
+
+            for(size_t t = 1; t < TIMING_STEP_MAX ; t++) {
+                size_t requests = timings3[t].count - timings2[t].count;
+                if(!requests) continue;
+
+                buffer_sprintf(wb, "TIMINGS REPORT: [%3zu. %-20s]: # %10zu, t %11.2f ms (%6.2f %%), avg %6.2f usec/run\n",
+                               t,
+                               timing_steps[t].name ? timing_steps[t].name : "x",
+                               requests,
+                               (double) (timings3[t].time - timings2[t].time) / (double)USEC_PER_MS,
+                               (double) (timings3[t].time - timings2[t].time) * 100.0 / (double) total_usec,
+                               (double) (timings3[t].time - timings2[t].time) / (double)requests
+                );
+            }
+
+            info("TIMINGS REPORT:\n%sTIMINGS REPORT:                        total # %10zu, t %11.2f ms",
+                 buffer_tostring(wb), total_reqs, (double)total_usec / USEC_PER_MS);
+
+            memcpy(timings2, timings3, sizeof(timings2));
+
+            last_action_time = 0;
+            buffer_free(wb);
+        }
+    }
 }

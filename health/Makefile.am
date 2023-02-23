@@ -36,13 +36,14 @@ dist_healthconfig_DATA = \
     health.d/cgroups.conf \
     health.d/cpu.conf \
     health.d/cockroachdb.conf \
+    health.d/consul.conf \
     health.d/disks.conf \
     health.d/dnsmasq_dhcp.conf \
     health.d/dns_query.conf \
     health.d/dockerd.conf \
+    health.d/elasticsearch.conf \
     health.d/entropy.conf \
     health.d/exporting.conf \
-    health.d/fping.conf \
     health.d/geth.conf \
     health.d/ioping.conf \
     health.d/gearman.conf \
@@ -96,7 +97,7 @@ dist_healthconfig_DATA = \
     health.d/vsphere.conf \
     health.d/web_log.conf \
     health.d/whoisquery.conf \
-    health.d/wmi.conf \
+    health.d/windows.conf \
     health.d/x509check.conf \
     health.d/zfs.conf \
     health.d/dbengine.conf \

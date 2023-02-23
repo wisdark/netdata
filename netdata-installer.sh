@@ -163,10 +163,6 @@ banner_nonroot_install() {
 
       $PROGRAM ${@} --install-prefix /tmp
 
-  or
-
-      $PROGRAM ${@} --install /tmp
-
   or, run the installer as root:
 
       sudo $PROGRAM ${@}
@@ -203,8 +199,7 @@ usage() {
 USAGE: ${PROGRAM} [options]
        where options include:
 
-  --install <path>           Install netdata in <path>. Ex. --install /opt will put netdata in /opt/netdata, this option is deprecated and will be removed in a future version, please use --install-prefix instead.
-  --install-prefix <path>           Install netdata in <path>. Ex. --install-prefix /opt will put netdata in /opt/netdata.
+  --install-prefix <path>    Install netdata in <path>. Ex. --install-prefix /opt will put netdata in /opt/netdata.
   --dont-start-it            Do not (re)start netdata after installation.
   --dont-wait                Run installation in non-interactive mode.
   --stable-channel           Use packages from GitHub release pages instead of nightly updates.
@@ -337,8 +332,6 @@ while [ -n "${1}" ]; do
       NETDATA_CONFIGURE_OPTIONS="$(echo "${NETDATA_CONFIGURE_OPTIONS%--disable-ml)}" | sed 's/$/ --disable-ml/g')"
       NETDATA_ENABLE_ML=0
       ;;
-    "--enable-ml-tests") NETDATA_CONFIGURE_OPTIONS="$(echo "${NETDATA_CONFIGURE_OPTIONS%--enable-ml-tests)}" | sed 's/$/ --enable-ml-tests/g')" ;;
-    "--disable-ml-tests") NETDATA_CONFIGURE_OPTIONS="$(echo "${NETDATA_CONFIGURE_OPTIONS%--disable-ml-tests)}" | sed 's/$/ --disable-ml-tests/g')" ;;
     "--disable-lto") NETDATA_CONFIGURE_OPTIONS="$(echo "${NETDATA_CONFIGURE_OPTIONS%--disable-lto)}" | sed 's/$/ --disable-lto/g')" ;;
     "--disable-x86-sse") NETDATA_CONFIGURE_OPTIONS="$(echo "${NETDATA_CONFIGURE_OPTIONS%--disable-x86-sse)}" | sed 's/$/ --disable-x86-sse/g')" ;;
     "--disable-telemetry") NETDATA_DISABLE_TELEMETRY=1 ;;
@@ -365,10 +358,6 @@ while [ -n "${1}" ]; do
       ;;
     "--build-json-c")
       NETDATA_BUILD_JSON_C=1
-      ;;
-    "--install")
-      NETDATA_PREFIX="${2}/netdata"
-      shift 1
       ;;
     "--install-prefix")
       NETDATA_PREFIX="${2}/netdata"
@@ -440,7 +429,7 @@ if [ "$(uname -s)" = "Linux" ] && [ -f /proc/meminfo ]; then
       target_ram="$(echo "${target_ram}" | awk '{$1/=1024*1024*1024;printf "%.2fGiB\n",$1}')"
       total_ram="$(echo "${total_ram}" | awk '{$1/=1024*1024*1024;printf "%.2fGiB\n",$1}')"
       run_failed "Netdata needs ${target_ram} of RAM to safely install, but this system only has ${total_ram}. Try reducing the number of processes used for the install using the \$MAKEOPTS variable."
-      exit_reason "Insufficent RAM to safely install." I000F
+      exit_reason "Insufficient RAM to safely install." I000F
       exit 2
     fi
   fi
@@ -799,7 +788,7 @@ copy_libbpf() {
 }
 
 bundle_libbpf() {
-  if { [ -n "${NETDATA_DISABLE_EBPF}" ] && [ ${NETDATA_DISABLE_EBPF} = 1 ]; } || [ "$(uname -s)" != Linux ]; then
+  if { [ -n "${NETDATA_DISABLE_EBPF}" ] && [ "${NETDATA_DISABLE_EBPF}" = 1 ]; } || [ "$(uname -s)" != Linux ]; then
     return 0
   fi
 
@@ -833,14 +822,14 @@ bundle_libbpf() {
       rm -rf "${tmp}"; then
       run_ok "libbpf built and prepared."
     else
-      if [ -n "${NETDATA_DISABLE_EBPF}" ] && [ ${NETDATA_DISABLE_EBPF} = 0 ]; then
+      if [ -n "${NETDATA_DISABLE_EBPF}" ] && [ "${NETDATA_DISABLE_EBPF}" = 0 ]; then
         fatal "failed to build libbpf." I0005
       else
         run_failed "Failed to build libbpf. eBPF support will be disabled"
       fi
     fi
   else
-    if [ -n "${NETDATA_DISABLE_EBPF}" ] && [ ${NETDATA_DISABLE_EBPF} = 0 ]; then
+    if [ -n "${NETDATA_DISABLE_EBPF}" ] && [ "${NETDATA_DISABLE_EBPF}" = 0 ]; then
       fatal "Failed to fetch sources for libbpf." I0006
     else
       run_failed "Unable to fetch sources for libbpf. eBPF support will be disabled"
@@ -857,7 +846,7 @@ copy_co_re() {
 }
 
 bundle_ebpf_co_re() {
-  if { [ -n "${NETDATA_DISABLE_EBPF}" ] && [ ${NETDATA_DISABLE_EBPF} = 1 ]; } || [ "$(uname -s)" != Linux ]; then
+  if { [ -n "${NETDATA_DISABLE_EBPF}" ] && [ "${NETDATA_DISABLE_EBPF}" = 1 ]; } || [ "$(uname -s)" != Linux ]; then
     return 0
   fi
 
@@ -880,7 +869,7 @@ bundle_ebpf_co_re() {
       rm -rf "${tmp}"; then
       run_ok "libbpf built and prepared."
     else
-      if [ -n "${NETDATA_DISABLE_EBPF}" ] && [ ${NETDATA_DISABLE_EBPF} = 0 ]; then
+      if [ -n "${NETDATA_DISABLE_EBPF}" ] && [ "${NETDATA_DISABLE_EBPF}" = 0 ]; then
         fatal "Failed to get eBPF CO-RE files." I0007
       else
         run_failed "Failed to get eBPF CO-RE files. eBPF support will be disabled"
@@ -889,7 +878,7 @@ bundle_ebpf_co_re() {
       fi
     fi
   else
-    if [ -n "${NETDATA_DISABLE_EBPF}" ] && [ ${NETDATA_DISABLE_EBPF} = 0 ]; then
+    if [ -n "${NETDATA_DISABLE_EBPF}" ] && [ "${NETDATA_DISABLE_EBPF}" = 0 ]; then
       fatal "Failed to fetch eBPF CO-RE files." I0008
     else
       run_failed "Failed to fetch eBPF CO-RE files. eBPF support will be disabled"
@@ -1089,6 +1078,11 @@ if [ "$(id -u)" -eq 0 ]; then
     # shellcheck disable=SC2086
     portable_add_user_to_group ${g} netdata && NETDATA_ADDED_TO_GROUPS="${NETDATA_ADDED_TO_GROUPS} ${g}"
   done
+  # Netdata must be able to read /etc/pve/qemu-server/* and /etc/pve/lxc/* 
+  # for reading VMs/containers names, CPU and memory limits on Proxmox.
+  if [ -d "/etc/pve" ]; then
+    portable_add_user_to_group "www-data" netdata && NETDATA_ADDED_TO_GROUPS="${NETDATA_ADDED_TO_GROUPS} www-data"
+  fi
 else
   run_failed "The installer does not run as root. Nothing to do for user and groups"
 fi
@@ -1206,8 +1200,8 @@ run chmod 770 "${NETDATA_CLAIMING_DIR}"
 if [ "$(id -u)" -eq 0 ]; then
   # find the admin group
   admin_group=
-  test -z "${admin_group}" && getent group root > /dev/null 2>&1 && admin_group="root"
-  test -z "${admin_group}" && getent group daemon > /dev/null 2>&1 && admin_group="daemon"
+  test -z "${admin_group}" && get_group root > /dev/null 2>&1 && admin_group="root"
+  test -z "${admin_group}" && get_group daemon > /dev/null 2>&1 && admin_group="daemon"
   test -z "${admin_group}" && admin_group="${NETDATA_GROUP}"
 
   run chown "${NETDATA_USER}:${admin_group}" "${NETDATA_LOG_DIR}"
@@ -1440,15 +1434,18 @@ install_go() {
     run chown "root:${NETDATA_GROUP}" "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/go.d.plugin"
   fi
   run chmod 0750 "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/go.d.plugin"
-  if command -v setcap 1>/dev/null 2>&1; then
-    run setcap "cap_net_admin+epi cap_net_raw=eip" "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/go.d.plugin"
-  fi
   rm -rf "${tmp}"
 
   [ -n "${GITHUB_ACTIONS}" ] && echo "::endgroup::"
 }
 
 install_go
+
+if [ -f "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/go.d.plugin" ]; then
+  if command -v setcap 1>/dev/null 2>&1; then
+    run setcap "cap_net_admin+epi cap_net_raw=eip" "${NETDATA_PREFIX}/usr/libexec/netdata/plugins.d/go.d.plugin"
+  fi
+fi
 
 should_install_ebpf() {
   if [ "${NETDATA_DISABLE_EBPF:=0}" -eq 1 ]; then

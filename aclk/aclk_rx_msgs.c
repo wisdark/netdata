@@ -5,6 +5,7 @@
 #include "aclk_stats.h"
 #include "aclk_query_queue.h"
 #include "aclk.h"
+#include "aclk_capas.h"
 
 #include "schema-wrappers/proto_2_json.h"
 
@@ -271,37 +272,28 @@ int create_node_instance_result(const char *msg, size_t msg_len)
         .live = 0,
         .queryable = 1,
         .session_id = aclk_session_newarch,
-        .node_id = res.node_id
+        .node_id = res.node_id,
+        .capabilities = NULL
     };
 
     RRDHOST *host = rrdhost_find_by_guid(res.machine_guid);
-    if (host) {
-        // not all host must have RRDHOST struct created for them
-        // if they never connected during runtime of agent
+    if (likely(host)) {
         if (host == localhost) {
             node_state_update.live = 1;
             node_state_update.hops = 0;
         } else {
-            netdata_mutex_lock(&host->receiver_lock);
-            node_state_update.live = (host->receiver != NULL);
-            netdata_mutex_unlock(&host->receiver_lock);
+            node_state_update.live = (!rrdhost_flag_check(host, RRDHOST_FLAG_ORPHAN));
             node_state_update.hops = host->system_info->hops;
         }
+        node_state_update.capabilities = aclk_get_node_instance_capas(host);
     }
-
-    struct capability caps[] = {
-        { .name = "proto", .version = 1,                     .enabled = 1 },
-        { .name = "ml",    .version = ml_capable(localhost), .enabled = host ? ml_enabled(host) : 0 },
-        { .name = "mc",    .version = enable_metric_correlations ? metric_correlations_version : 0, .enabled = enable_metric_correlations },
-        { .name = "ctx",   .version = 1,                     .enabled = 1 },
-        { .name = NULL,    .version = 0,                     .enabled = 0 }
-    };
-    node_state_update.capabilities = caps;
 
     rrdhost_aclk_state_lock(localhost);
     node_state_update.claim_id = localhost->aclk_state.claimed_id;
     query->data.bin_payload.payload = generate_node_instance_connection(&query->data.bin_payload.size, &node_state_update);
     rrdhost_aclk_state_unlock(localhost);
+
+    freez((void *)node_state_update.capabilities);
 
     query->data.bin_payload.msg_name = "UpdateNodeInstanceConnection";
     query->data.bin_payload.topic = ACLK_TOPICID_NODE_CONN;

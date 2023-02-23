@@ -1,7 +1,11 @@
 <!--
 title: "Online change point detection with Netdata"
 description: "Use ML-driven change point detection to narrow your focus and shorten root cause analysis."
-custom_edit_url: https://github.com/netdata/netdata/edit/master/collectors/python.d.plugin/changefinder/README.md
+custom_edit_url: "https://github.com/netdata/netdata/edit/master/collectors/python.d.plugin/changefinder/README.md"
+sidebar_label: "changefinder"
+learn_status: "Published"
+learn_topic_type: "References"
+learn_rel_path: "Integrations/Monitor/QoS"
 -->
 
 # Online changepoint detection with Netdata
@@ -93,7 +97,7 @@ leave the `changefinder.conf` file alone to begin with. Then you can return to i
 a bit more once the collector is running for a while and you have a feeling for its performance on your node._
 
 Edit the `python.d/changefinder.conf` configuration file using `edit-config` from the your
-agent's [config directory](/docs/configure/nodes.md), which is usually at `/etc/netdata`.
+agent's [config directory](https://github.com/netdata/netdata/blob/master/docs/configure/nodes.md), which is usually at `/etc/netdata`.
 
 ```bash
 cd /etc/netdata   # Replace this path with your Netdata config directory, if different
@@ -104,7 +108,7 @@ The default configuration should look something like this. Here you can see each
 information about each one and what it does.
 
 ```yaml
-# ----------------------------------------------------------------------
+# -
 # JOBS (data collection sources)
 
 # Pull data from local Netdata node.
@@ -214,4 +218,24 @@ sudo su -s /bin/bash netdata
   Anodot also have some great whitepapers in this space too that some may find useful.
 - Novelty and outlier detection in
   the [scikit-learn documentation](https://scikit-learn.org/stable/modules/outlier_detection.html).
+
+### Troubleshooting
+
+To troubleshoot issues with the `changefinder` module, run the `python.d.plugin` with the debug option enabled. The 
+output will give you the output of the data collection job or error messages on why the collector isn't working.
+
+First, navigate to your plugins directory, usually they are located under `/usr/libexec/netdata/plugins.d/`. If that's 
+not the case on your system, open `netdata.conf` and look for the setting `plugins directory`. Once you're in the 
+plugin's directory, switch to the `netdata` user.
+
+```bash
+cd /usr/libexec/netdata/plugins.d/
+sudo su -s /bin/bash netdata
+```
+
+Now you can manually run the `changefinder` module in debug mode:
+
+```bash
+./python.d.plugin changefinder debug trace
+```
 

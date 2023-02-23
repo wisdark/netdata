@@ -22,6 +22,7 @@ inline NETDATA_DOUBLE rrdr2value(RRDR *r, long i, RRDR_OPTIONS options, int *all
     if(unlikely(options & RRDR_OPTION_PERCENTAGE)) {
         total = 0;
         for (c = 0; c < used; c++) {
+            if(unlikely(!(r->od[c] & RRDR_DIMENSION_QUERIED))) continue;
             NETDATA_DOUBLE n = cn[c];
 
             if(likely((options & RRDR_OPTION_ABSOLUTE) && n < 0))
@@ -36,8 +37,8 @@ inline NETDATA_DOUBLE rrdr2value(RRDR *r, long i, RRDR_OPTIONS options, int *all
 
     // for each dimension
     for (c = 0; c < used; c++) {
-        if(unlikely(r->od[c] & RRDR_DIMENSION_HIDDEN)) continue;
-        if(unlikely((options & RRDR_OPTION_NONZERO) && !(r->od[c] & RRDR_DIMENSION_NONZERO))) continue;
+        if(!rrdr_dimension_should_be_exposed(r->od[c], options))
+            continue;
 
         NETDATA_DOUBLE n = cn[c];
 
@@ -48,12 +49,12 @@ inline NETDATA_DOUBLE rrdr2value(RRDR *r, long i, RRDR_OPTIONS options, int *all
             n = n * 100 / total;
 
             if(unlikely(set_min_max)) {
-                r->min = r->max = n;
+                r->view.min = r->view.max = n;
                 set_min_max = 0;
             }
 
-            if(n < r->min) r->min = n;
-            if(n > r->max) r->max = n;
+            if(n < r->view.min) r->view.min = n;
+            if(n > r->view.max) r->view.max = n;
         }
 
         if(unlikely(init)) {
@@ -105,10 +106,11 @@ inline NETDATA_DOUBLE rrdr2value(RRDR *r, long i, RRDR_OPTIONS options, int *all
 QUERY_VALUE rrdmetric2value(RRDHOST *host,
                             struct rrdcontext_acquired *rca, struct rrdinstance_acquired *ria, struct rrdmetric_acquired *rma,
                             time_t after, time_t before,
-                            RRDR_OPTIONS options, RRDR_GROUPING group_method, const char *group_options,
-                            size_t tier, time_t timeout
+                            RRDR_OPTIONS options, RRDR_TIME_GROUPING group_method, const char *group_options,
+                            size_t tier, time_t timeout, QUERY_SOURCE query_source, STORAGE_PRIORITY priority
 ) {
     QUERY_TARGET_REQUEST qtr = {
+            .version = 1,
             .host = host,
             .rca = rca,
             .ria = ria,
@@ -117,10 +119,12 @@ QUERY_VALUE rrdmetric2value(RRDHOST *host,
             .before = before,
             .points = 1,
             .options = options,
-            .group_method = group_method,
-            .group_options = group_options,
+            .time_group_method = group_method,
+            .time_group_options = group_options,
             .tier = tier,
             .timeout = timeout,
+            .query_source = query_source,
+            .priority = priority,
     };
 
     ONEWAYALLOC *owa = onewayalloc_create(16 * 1024);
@@ -136,14 +140,14 @@ QUERY_VALUE rrdmetric2value(RRDHOST *host,
     }
     else {
         qv = (QUERY_VALUE) {
-                .after = r->after,
-                .before = r->before,
-                .points_read = r->internal.db_points_read,
-                .result_points = r->internal.result_points_generated,
+                .after = r->view.after,
+                .before = r->view.before,
+                .points_read = r->stats.db_points_read,
+                .result_points = r->stats.result_points_generated,
         };
 
         for(size_t t = 0; t < storage_tiers ;t++)
-            qv.storage_points_per_tier[t] = r->internal.tier_points_read[t];
+            qv.storage_points_per_tier[t] = r->stats.tier_points_read[t];
 
         long i = (!(options & RRDR_OPTION_REVERSED))?(long)rrdr_rows(r) - 1:0;
         int all_values_are_null = 0;

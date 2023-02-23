@@ -25,8 +25,8 @@ void chart_labels2json(RRDSET *st, BUFFER *wb, size_t indentation)
 // generate JSON for the /api/v1/chart API call
 
 void rrdset2json(RRDSET *st, BUFFER *wb, size_t *dimensions_count, size_t *memory_used, int skip_volatile) {
-    time_t first_entry_t = rrdset_first_entry_t(st);
-    time_t last_entry_t  = rrdset_last_entry_t(st);
+    time_t first_entry_t = rrdset_first_entry_s(st);
+    time_t last_entry_t  = rrdset_last_entry_s(st);
 
     buffer_sprintf(
         wb,
@@ -83,7 +83,7 @@ void rrdset2json(RRDSET *st, BUFFER *wb, size_t *dimensions_count, size_t *memor
         "\t\t\t\"dimensions\": {\n",
         st->update_every);
 
-    unsigned long memory = sizeof(RRDSET) + st->memsize;
+    unsigned long memory = sizeof(RRDSET);
 
     size_t dimensions = 0;
     RRDDIM *rd;
@@ -96,9 +96,9 @@ void rrdset2json(RRDSET *st, BUFFER *wb, size_t *dimensions_count, size_t *memor
             buffer_strcat(wb, ",\n\t\t\t\t\"");
         else
             buffer_strcat(wb, "\t\t\t\t\"");
-        buffer_strcat_jsonescape(wb, rrddim_id(rd));
+        buffer_json_strcat(wb, rrddim_id(rd));
         buffer_strcat(wb, "\": { \"name\": \"");
-        buffer_strcat_jsonescape(wb, rrddim_name(rd));
+        buffer_json_strcat(wb, rrddim_name(rd));
         buffer_strcat(wb, "\" }");
 
         dimensions++;
@@ -112,9 +112,9 @@ void rrdset2json(RRDSET *st, BUFFER *wb, size_t *dimensions_count, size_t *memor
     health_api_v1_chart_custom_variables2json(st, wb);
 
     buffer_strcat(wb, ",\n\t\t\t\"green\": ");
-    buffer_rrd_value(wb, st->green);
+    buffer_print_netdata_double(wb, st->green);
     buffer_strcat(wb, ",\n\t\t\t\"red\": ");
-    buffer_rrd_value(wb, st->red);
+    buffer_print_netdata_double(wb, st->red);
 
     if (likely(!skip_volatile)) {
         buffer_strcat(wb, ",\n\t\t\t\"alarms\": {\n");

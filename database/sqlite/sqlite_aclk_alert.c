@@ -43,6 +43,34 @@ void update_filtered(ALARM_ENTRY *ae, uint32_t unique_id, char *uuid_str) {
     ae->flags |= HEALTH_ENTRY_FLAG_ACLK_QUEUED;
 }
 
+static inline bool is_event_from_alert_variable_config(uint32_t unique_id, char *uuid_str) {
+    sqlite3_stmt *res = NULL;
+    int rc = 0;
+    bool ret = false;
+
+    char sql[ACLK_SYNC_QUERY_SIZE];
+    snprintfz(sql,ACLK_SYNC_QUERY_SIZE-1, "select hl.unique_id from health_log_%s hl, alert_hash ah where hl.unique_id = %u " \
+                                          "and hl.config_hash_id = ah.hash_id " \
+                                          "and ah.warn is null and ah.crit is null;", uuid_str, unique_id);
+
+    rc = sqlite3_prepare_v2(db_meta, sql, -1, &res, 0);
+    if (rc != SQLITE_OK) {
+        error_report("Failed to prepare statement when trying to check for alert variables.");
+        return false;
+    }
+
+    rc = sqlite3_step_monitored(res);
+    if (likely(rc == SQLITE_ROW)) {
+        ret = true;
+    }
+
+    rc = sqlite3_finalize(res);
+    if (unlikely(rc != SQLITE_OK))
+        error_report("Failed to finalize statement when trying to check for alert variables, rc = %d", rc);
+
+    return ret;
+}
+
 #define MAX_REMOVED_PERIOD 86400
 //decide if some events should be sent or not
 int should_send_to_cloud(RRDHOST *host, ALARM_ENTRY *ae)
@@ -57,6 +85,9 @@ int should_send_to_cloud(RRDHOST *host, ALARM_ENTRY *ae)
     }
 
     if (unlikely(uuid_is_null(ae->config_hash_id))) 
+        return 0;
+
+    if (is_event_from_alert_variable_config(ae->unique_id, uuid_str))
         return 0;
 
     char sql[ACLK_SYNC_QUERY_SIZE];
@@ -133,6 +164,9 @@ done:
 // and handle both cases
 int sql_queue_alarm_to_aclk(RRDHOST *host, ALARM_ENTRY *ae, int skip_filter)
 {
+    if(!service_running(SERVICE_ACLK))
+        return 0;
+
     if (!claimed())
         return 0;
 
@@ -153,7 +187,7 @@ int sql_queue_alarm_to_aclk(RRDHOST *host, ALARM_ENTRY *ae, int skip_filter)
     char uuid_str[GUID_LEN + 1];
     uuid_unparse_lower_fix(&host->host_uuid, uuid_str);
 
-    BUFFER *sql = buffer_create(1024);
+    BUFFER *sql = buffer_create(1024, &netdata_buffers_statistics.buffers_sqlite);
 
     buffer_sprintf(
         sql,
@@ -242,7 +276,7 @@ void aclk_push_alert_event(struct aclk_database_worker_config *wc, struct aclk_d
         return;
     }
 
-    BUFFER *sql = buffer_create(1024);
+    BUFFER *sql = buffer_create(1024, &netdata_buffers_statistics.buffers_sqlite);
 
     if (wc->alerts_start_seq_id != 0) {
         buffer_sprintf(
@@ -267,20 +301,38 @@ void aclk_push_alert_event(struct aclk_database_worker_config *wc, struct aclk_d
 
     sqlite3_stmt *res = NULL;
 
-    buffer_sprintf(sql, "select aa.sequence_id, hl.unique_id, hl.alarm_id, hl.config_hash_id, hl.updated_by_id, hl.when_key, \
-                   hl.duration, hl.non_clear_duration, hl.flags, hl.exec_run_timestamp, hl.delay_up_to_timestamp, hl.name, \
-                   hl.chart, hl.family, hl.exec, hl.recipient, hl.source, hl.units, hl.info, hl.exec_code, hl.new_status, \
-                   hl.old_status, hl.delay, hl.new_value, hl.old_value, hl.last_repeat, hl.chart_context \
-                         from health_log_%s hl, aclk_alert_%s aa \
-                         where hl.unique_id = aa.alert_unique_id and aa.date_submitted is null \
-                         order by aa.sequence_id asc limit %d;", wc->uuid_str, wc->uuid_str, limit);
+    buffer_sprintf(sql, "select aa.sequence_id, hl.unique_id, hl.alarm_id, hl.config_hash_id, hl.updated_by_id, hl.when_key, " \
+        " hl.duration, hl.non_clear_duration, hl.flags, hl.exec_run_timestamp, hl.delay_up_to_timestamp, hl.name,  " \
+        " hl.chart, hl.family, hl.exec, hl.recipient, hl.source, hl.units, hl.info, hl.exec_code, hl.new_status,  " \
+        " hl.old_status, hl.delay, hl.new_value, hl.old_value, hl.last_repeat, hl.chart_context  " \
+        " from health_log_%s hl, aclk_alert_%s aa " \
+        " where hl.unique_id = aa.alert_unique_id and aa.date_submitted is null " \
+        " order by aa.sequence_id asc limit %d;", wc->uuid_str, wc->uuid_str, limit);
 
     rc = sqlite3_prepare_v2(db_meta, buffer_tostring(sql), -1, &res, 0);
     if (rc != SQLITE_OK) {
-        error_report("Failed to prepare statement when trying to send an alert update via ACLK");
-        buffer_free(sql);
-        freez(claim_id);
-        return;
+
+        // Try to create tables
+        if (wc->host)
+            sql_create_health_log_table(wc->host);
+
+        BUFFER *sql_fix = buffer_create(1024, &netdata_buffers_statistics.buffers_sqlite);
+        buffer_sprintf(sql_fix, TABLE_ACLK_ALERT, wc->uuid_str);
+        db_execute(buffer_tostring(sql_fix));
+        buffer_flush(sql_fix);
+        buffer_sprintf(sql_fix, INDEX_ACLK_ALERT, wc->uuid_str, wc->uuid_str);
+        db_execute(buffer_tostring(sql_fix));
+        buffer_free(sql_fix);
+
+        // Try again
+        rc = sqlite3_prepare_v2(db_meta, buffer_tostring(sql), -1, &res, 0);
+        if (rc != SQLITE_OK) {
+            error_report("Failed to prepare statement when trying to send an alert update via ACLK");
+
+            buffer_free(sql);
+            freez(claim_id);
+            return;
+        }
     }
 
     char uuid_str[GUID_LEN + 1];
@@ -311,7 +363,7 @@ void aclk_push_alert_event(struct aclk_database_worker_config *wc, struct aclk_d
         alarm_log.utc_offset = wc->host->utc_offset;
         alarm_log.timezone = strdupz(rrdhost_abbrev_timezone(wc->host));
         alarm_log.exec_path = sqlite3_column_bytes(res, 14) > 0 ? strdupz((char *)sqlite3_column_text(res, 14)) :
-                                                                  strdupz((char *)string2str(wc->host->health_default_exec));
+                                                                  strdupz((char *)string2str(wc->host->health.health_default_exec));
         alarm_log.conf_source = strdupz((char *)sqlite3_column_text(res, 16));
 
         char *edit_command = sqlite3_column_bytes(res, 16) > 0 ?
@@ -407,7 +459,7 @@ void sql_queue_existing_alerts_to_aclk(RRDHOST *host)
 {
     char uuid_str[GUID_LEN + 1];
     uuid_unparse_lower_fix(&host->host_uuid, uuid_str);
-    BUFFER *sql = buffer_create(1024);
+    BUFFER *sql = buffer_create(1024, &netdata_buffers_statistics.buffers_sqlite);
 
     buffer_sprintf(sql,"delete from aclk_alert_%s; " \
                        "insert into aclk_alert_%s (alert_unique_id, date_created, filtered_alert_unique_id) " \
@@ -484,7 +536,7 @@ void aclk_push_alarm_health_log(struct aclk_database_worker_config *wc, struct a
     struct timeval first_timestamp;
     struct timeval last_timestamp;
 
-    BUFFER *sql = buffer_create(1024);
+    BUFFER *sql = buffer_create(1024, &netdata_buffers_statistics.buffers_sqlite);
 
     sqlite3_stmt *res = NULL;
 
@@ -528,7 +580,7 @@ void aclk_push_alarm_health_log(struct aclk_database_worker_config *wc, struct a
     alarm_log.node_id =  wc->node_id;
     alarm_log.log_entries = log_entries;
     alarm_log.status = wc->alert_updates == 0 ? 2 : 1;
-    alarm_log.enabled = (int)host->health_enabled;
+    alarm_log.enabled = (int)host->health.health_enabled;
 
     wc->alert_sequence_id = last_sequence;
 
@@ -541,6 +593,8 @@ void aclk_push_alarm_health_log(struct aclk_database_worker_config *wc, struct a
 
     freez(claim_id);
     buffer_free(sql);
+
+    aclk_alert_reloaded = 1;
 #endif
 
     return;
@@ -651,7 +705,7 @@ int aclk_push_alert_config_event(struct aclk_database_worker_config *wc, struct 
             alarm_config.p_db_lookup_dimensions = sqlite3_column_bytes(res, 27) > 0 ? strdupz((char *)sqlite3_column_text(res, 27)) : NULL;
             alarm_config.p_db_lookup_method = sqlite3_column_bytes(res, 28) > 0 ? strdupz((char *)sqlite3_column_text(res, 28)) : NULL;
 
-            BUFFER *tmp_buf = buffer_create(1024);
+            BUFFER *tmp_buf = buffer_create(1024, &netdata_buffers_statistics.buffers_sqlite);
             buffer_data_options2string(tmp_buf, sqlite3_column_int(res, 29));
             alarm_config.p_db_lookup_options = strdupz((char *)buffer_tostring(tmp_buf));
             buffer_free(tmp_buf);
@@ -706,7 +760,7 @@ void aclk_start_alert_streaming(char *node_id, uint64_t batch_id, uint64_t start
                  (struct aclk_database_worker_config *)host->dbsync_worker :
                  (struct aclk_database_worker_config *)find_inactive_wc_by_node_id(node_id);
 
-        if (unlikely(!host->health_enabled)) {
+        if (unlikely(!host->health.health_enabled)) {
             log_access("ACLK STA [%s (N/A)]: Ignoring request to stream alert state changes, health is disabled.", node_id);
             return;
         }
@@ -735,7 +789,7 @@ void sql_process_queue_removed_alerts_to_aclk(struct aclk_database_worker_config
 {
     UNUSED(cmd);
 
-    BUFFER *sql = buffer_create(1024);
+    BUFFER *sql = buffer_create(1024, &netdata_buffers_statistics.buffers_sqlite);
 
     buffer_sprintf(sql,"insert into aclk_alert_%s (alert_unique_id, date_created, filtered_alert_unique_id) " \
         "select unique_id alert_unique_id, unixepoch(), unique_id alert_unique_id from health_log_%s " \
@@ -813,7 +867,7 @@ void aclk_process_send_alarm_snapshot(char *node_id, char *claim_id, uint64_t sn
 
 void aclk_mark_alert_cloud_ack(char *uuid_str, uint64_t alerts_ack_sequence_id)
 {
-    BUFFER *sql = buffer_create(1024);
+    BUFFER *sql = buffer_create(1024, &netdata_buffers_statistics.buffers_sqlite);
 
     if (alerts_ack_sequence_id != 0) {
         buffer_sprintf(
@@ -846,7 +900,7 @@ void health_alarm_entry2proto_nolock(struct alarm_log_entry *alarm_log, ALARM_EN
 
     alarm_log->utc_offset = host->utc_offset;
     alarm_log->timezone = strdupz(rrdhost_abbrev_timezone(host));
-    alarm_log->exec_path = ae->exec ? strdupz(ae_exec(ae)) : strdupz((char *)string2str(host->health_default_exec));
+    alarm_log->exec_path = ae->exec ? strdupz(ae_exec(ae)) : strdupz((char *)string2str(host->health.health_default_exec));
     alarm_log->conf_source = ae->source ? strdupz(ae_source(ae)) : strdupz((char *)"");
 
     alarm_log->command = strdupz((char *)edit_command);
@@ -1022,7 +1076,7 @@ void sql_aclk_alert_clean_dead_entries(RRDHOST *host)
     char uuid_str[GUID_LEN + 1];
     uuid_unparse_lower_fix(&host->host_uuid, uuid_str);
 
-    BUFFER *sql = buffer_create(1024);
+    BUFFER *sql = buffer_create(1024, &netdata_buffers_statistics.buffers_sqlite);
 
     buffer_sprintf(sql,"delete from aclk_alert_%s where filtered_alert_unique_id not in "
                    " (select unique_id from health_log_%s); ", uuid_str, uuid_str);
@@ -1048,7 +1102,7 @@ int get_proto_alert_status(RRDHOST *host, struct proto_alert_status *proto_alert
     proto_alert_status->alert_updates = wc->alert_updates;
     proto_alert_status->alerts_batch_id = wc->alerts_batch_id;
 
-    BUFFER *sql = buffer_create(1024);
+    BUFFER *sql = buffer_create(1024, &netdata_buffers_statistics.buffers_sqlite);
     sqlite3_stmt *res = NULL;
 
     buffer_sprintf(sql, "SELECT MIN(sequence_id), MAX(sequence_id), " \

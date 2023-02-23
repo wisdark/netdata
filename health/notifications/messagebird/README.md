@@ -1,9 +1,13 @@
 <!--
-title: "Messagebird"
-custom_edit_url: https://github.com/netdata/netdata/edit/master/health/notifications/messagebird/README.md
+title: "Messagebird agent alert notifications"
+sidebar_label: "Messagebird"
+custom_edit_url: "https://github.com/netdata/netdata/edit/master/health/notifications/messagebird/README.md"
+learn_status: "Published"
+learn_topic_type: "Tasks"
+learn_rel_path: "Integrations/Notify/Agent alert notifications"
 -->
 
-# Messagebird
+# Messagebird agent alert notifications
 
 The messagebird notifications will look like this on your Android device:
 

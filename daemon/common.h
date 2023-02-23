@@ -4,6 +4,7 @@
 #define NETDATA_COMMON_H 1
 
 #include "libnetdata/libnetdata.h"
+#include "event_loop.h"
 
 // ----------------------------------------------------------------------------
 // shortcuts for the default netdata configuration
@@ -57,7 +58,7 @@
 #include "exporting/exporting_engine.h"
 
 // the netdata API
-#include "web/api/web_api_v1.h"
+#include "web/server/web_client.h"
 
 // all data collection plugins
 #include "collectors/all.h"
@@ -104,5 +105,7 @@ extern int netdata_anonymous_statistics_enabled;
 
 extern int netdata_ready;
 extern int netdata_cloud_setting;
+
+long get_netdata_cpus(void);
 
 #endif /* NETDATA_COMMON_H */

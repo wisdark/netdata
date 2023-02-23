@@ -59,7 +59,7 @@ static inline void registry_set_person_cookie(struct web_client *w, REGISTRY_PER
 
 static inline void registry_json_header(RRDHOST *host, struct web_client *w, const char *action, const char *status) {
     buffer_flush(w->response.data);
-    w->response.data->contenttype = CT_APPLICATION_JSON;
+    w->response.data->content_type = CT_APPLICATION_JSON;
     buffer_sprintf(w->response.data, "{\n\t\"action\": \"%s\",\n\t\"status\": \"%s\",\n\t\"hostname\": \"%s\",\n\t\"machine_guid\": \"%s\"",
             action, status, rrdhost_registry_hostname(host), host->machine_guid);
 }
@@ -191,7 +191,7 @@ int registry_request_access_json(RRDHOST *host, struct web_client *w, char *pers
     if(registry.verify_cookies_redirects > 0 && !person_guid[0]) {
         buffer_flush(w->response.data);
         registry_set_cookie(w, REGISTRY_VERIFY_COOKIES_GUID);
-        w->response.data->contenttype = CT_APPLICATION_JSON;
+        w->response.data->content_type = CT_APPLICATION_JSON;
         buffer_sprintf(w->response.data, "{ \"status\": \"redirect\", \"registry\": \"%s\" }", registry.registry_to_announce);
         return 200;
     }
@@ -379,7 +379,6 @@ void registry_statistics(void) {
 
         rrddim_add(sts, "sessions",  NULL,  1, 1, RRD_ALGORITHM_ABSOLUTE);
     }
-    else rrdset_next(sts);
 
     rrddim_set(sts, "sessions", registry.usages_count);
     rrdset_done(sts);
@@ -408,7 +407,6 @@ void registry_statistics(void) {
         rrddim_add(stc, "persons_urls",   NULL,  1, 1, RRD_ALGORITHM_ABSOLUTE);
         rrddim_add(stc, "machines_urls",  NULL,  1, 1, RRD_ALGORITHM_ABSOLUTE);
     }
-    else rrdset_next(stc);
 
     rrddim_set(stc, "persons",       registry.persons_count);
     rrddim_set(stc, "machines",      registry.machines_count);
@@ -441,7 +439,6 @@ void registry_statistics(void) {
         rrddim_add(stm, "persons_urls",   NULL,  1, 1024, RRD_ALGORITHM_ABSOLUTE);
         rrddim_add(stm, "machines_urls",  NULL,  1, 1024, RRD_ALGORITHM_ABSOLUTE);
     }
-    else rrdset_next(stm);
 
     rrddim_set(stm, "persons",       registry.persons_memory + dictionary_stats_for_registry(registry.persons));
     rrddim_set(stm, "machines",      registry.machines_memory + dictionary_stats_for_registry(registry.machines));

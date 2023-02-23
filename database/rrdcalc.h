@@ -77,7 +77,7 @@ struct rrdcalc {
     STRING *dimensions;             // the chart dimensions
     STRING *foreach_dimension;      // the group of dimensions that the `foreach` will be applied.
     SIMPLE_PATTERN *foreach_dimension_pattern; // used if and only if there is a simple pattern for the chart.
-    RRDR_GROUPING group;            // grouping method: average, max, etc.
+    RRDR_TIME_GROUPING group;            // grouping method: average, max, etc.
     int before;                     // ending point in time-series
     int after;                      // starting point in time-series
     RRDCALC_OPTIONS options;        // configuration options
@@ -251,8 +251,8 @@ void rrdcalc_rrdhost_index_init(RRDHOST *host);
 void rrdcalc_rrdhost_index_destroy(RRDHOST *host);
 
 #define RRDCALC_VAR_MAX 100
-#define RRDCALC_VAR_FAMILY "$family"
-#define RRDCALC_VAR_LABEL "$label:"
+#define RRDCALC_VAR_FAMILY "${family}"
+#define RRDCALC_VAR_LABEL "${label:"
 #define RRDCALC_VAR_LABEL_LEN (sizeof(RRDCALC_VAR_LABEL)-1)
 
 #endif //NETDATA_RRDCALC_H

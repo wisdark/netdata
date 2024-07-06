@@ -9,13 +9,14 @@ learn_rel_path: "Developers"
 
 # Redistributed software
 
-Netdata copyright info:
- Copyright 2016-2018, Costa Tsaousis.
- Copyright 2018, Netdata Inc.
- Released under [GPL v3 or later](https://raw.githubusercontent.com/netdata/netdata/master/LICENSE).
+Netdata copyright info:<br/>
+Copyright 2023, Netdata Inc.<br/>
+Released under [GPL v3 or later](https://raw.githubusercontent.com/netdata/netdata/master/LICENSE).
 
 Netdata uses SPDX license tags to identify the license for its files.
 Individual licenses referenced in the tags are available on the [SPDX project site](http://spdx.org/licenses/).
+
+Netdata redistributes the Netdata Cloud UI, licensed under [Netdata Cloud UI License v1.0 (NCUL1)](https://raw.githubusercontent.com/netdata/netdata/master/src/web/gui/v2/LICENSE.md). Netdata Cloud UI includes [third party open-source software](https://raw.githubusercontent.com/netdata/netdata/master/src/web/gui/v2/3D_PARTY_LICENSES.txt).
 
 Netdata redistributes the following third-party software.
 We have decided to redistribute all these, instead of using them
@@ -107,7 +108,7 @@ connectivity is not available.
       Copyright 2016, Hyunje Alex Jun and other contributors
       [MIT License](https://github.com/noraesae/perfect-scrollbar/blob/master/LICENSE)
 
--   [FontAwesome](https://fortawesome.github.io/Font-Awesome/)
+-   [FontAwesome](https://github.com/FortAwesome/Font-Awesome)
 
       Created by Dave Gandy
       Font license: [SIL OFL 1.1](http://scripts.sil.org/OFL)
@@ -140,7 +141,7 @@ connectivity is not available.
       Copyright 2014, Pavel Rojtberg
       [LGPL 2.1 License](http://opensource.org/licenses/LGPL-2.1)
 
--   [PyYAML](https://bitbucket.org/blackjack/pysensors)
+-   [PyYAML](https://pypi.org/project/PyYAML/)
 
       Copyright 2006, Kirill Simonov
       [MIT License](https://github.com/yaml/pyyaml/blob/master/LICENSE)
@@ -165,7 +166,7 @@ connectivity is not available.
       Copyright (c) 2014 Lucas Garron
       [MIT License](https://github.com/lgarron/clipboard-polyfill/blob/master/LICENSE.md)
 
--   [Utilities for writing code that runs on Python 2 and 3](https://raw.githubusercontent.com/netdata/netdata/master/collectors/python.d.plugin/python_modules/urllib3/packages/six.py)
+-   [Utilities for writing code that runs on Python 2 and 3](https://raw.githubusercontent.com/netdata/netdata/master/src/collectors/python.d.plugin/python_modules/urllib3/packages/six.py)
 
       Copyright (c) 2010-2015 Benjamin Peterson
       [MIT License](https://github.com/benjaminp/six/blob/master/LICENSE)
@@ -188,5 +189,10 @@ connectivity is not available.
 
     Copyright March 2010 by Université de Montréal, Richard Simard and Pierre L'Ecuyer
     [GPL 3.0](https://www.gnu.org/licenses/gpl-3.0.en.html)
+
+-   [xxHash](https://github.com/Cyan4973/xxHash)
+
+    Copyright (c) 2012-2021 Yann Collet
+    [BSD](https://github.com/Cyan4973/xxHash/blob/dev/LICENSE)
 
 

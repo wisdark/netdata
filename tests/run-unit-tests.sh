@@ -20,17 +20,20 @@
 
 install_netdata() {
   echo "Installing Netdata"
+
+  NETDATA_CMAKE_OPTIONS="-DCMAKE_BUILD_TYPE=Debug -DENABLE_ADDRESS_SANITIZER=On" \
   fakeroot ./netdata-installer.sh \
     --install-prefix "$HOME" \
     --dont-wait \
     --dont-start-it \
-    --enable-plugin-nfacct \
-    --enable-plugin-freeipmi \
-    --disable-lto
+    --disable-lto \
+    --enable-logsmanagement-tests
 }
 
 c_unit_tests() {
   echo "Running C code unit tests"
+
+  ASAN_OPTIONS=detect_leaks=0 \
   "$HOME"/netdata/usr/sbin/netdata -W unittest
 }
 

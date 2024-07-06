@@ -1,0 +1,1 @@
+integrations/netdata_agent_alarms.md

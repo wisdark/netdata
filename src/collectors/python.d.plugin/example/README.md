@@ -1,0 +1,1 @@
+integrations/example_collector.md

@@ -1,35 +1,24 @@
-<!--
-title: "Uninstall Netdata"
-description: "If you are no longer interested in using the Netdata Agent, use the self-contained uninstaller to remove all traces of binaries and configuration files."
-custom_edit_url: "https://github.com/netdata/netdata/edit/master/packaging/installer/UNINSTALL.md"
-sidebar_label: "Uninstall Netdata"
-learn_status: "Published"
-learn_topic_type: "Tasks"
-learn_rel_path: "Installation"
--->
-
 # Uninstall Netdata
 
-> ⚠️ If you're having trouble updating Netdata, moving from one installation method to another, or generally having
-> issues with your Netdata Agent installation, consider our [**reinstall Netdata**
-> doc](https://github.com/netdata/netdata/blob/master/packaging/installer/REINSTALL.md) instead of removing the Netdata Agent entirely.
+> ### Note 
+> 
+> If you're having trouble updating Netdata, moving from one installation method to another, or generally having
+> issues with your Netdata Agent installation, consider our [reinstalling Netdata](/packaging/installer/REINSTALL.md) instead of removing the Netdata Agent entirely.
 
 The recommended method to uninstall Netdata on a system is to use our kickstart installer script with the `--uninstall` option like so:
 
 ```sh
-wget -O /tmp/netdata-kickstart.sh https://my-netdata.io/kickstart.sh && sh /tmp/netdata-kickstart.sh --uninstall
+wget -O /tmp/netdata-kickstart.sh https://get.netdata.cloud/kickstart.sh && sh /tmp/netdata-kickstart.sh --uninstall
 ```
 
 Or (if you have curl but not wget):
 
 ```sh
-curl https://my-netdata.io/kickstart.sh > /tmp/netdata-kickstart.sh && sh /tmp/netdata-kickstart.sh --uninstall
+curl https://get.netdata.cloud/kickstart.sh > /tmp/netdata-kickstart.sh && sh /tmp/netdata-kickstart.sh --uninstall
 ```
 
 This will work in most cases without you needing to do anything more other than accepting removal of configuration
-and data files. You can confirm whether this approach will work for you by adding `--dry-run` to the list of
-options. If that produces a line with a message like `Would attempt to uninstall existing install`, then this
-method will work on your system.
+and data files.
 
 If you used a non-standard installation prefix, you may need to specify that prefix using the `--old-install-prefix`
 option when uninstalling this way.

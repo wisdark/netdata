@@ -1,25 +1,16 @@
-<!--
-title: "Install Netdata on Kubernetes"
-description: "Deploy Netdata to monitor a Kubernetes cluster to monitor the health, performance, resource utilization, and application metrics of a Kubernetes cluster in real time."
-custom_edit_url: "https://github.com/netdata/netdata/edit/master/packaging/installer/methods/kubernetes.md"
-sidebar_label: "Kubernetes"
-learn_status: "Published"
-learn_rel_path: "Installation/Install on specific environments"
--->
-
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
 # Install Netdata on Kubernetes
 
-This document details how to install Netdata on an existing Kubernetes (k8s) cluster, and connect it to Netdata Cloud. Read our [Kubernetes visualizations](https://github.com/netdata/netdata/blob/master/docs/cloud/visualize/kubernetes.md) documentation, to see what you will get.
+This document details how to install Netdata on an existing Kubernetes (k8s) cluster, and connect it to Netdata Cloud. Read our [Kubernetes visualizations](/docs/dashboards-and-charts/kubernetes-tab.md) documentation, to see what you will get.
 
-The [Netdata Helm chart](https://github.com/netdata/helmchart/blob/master/charts/netdata/README.md) installs one `parent` pod for storing metrics and managing alarm notifications, plus an additional
+The [Netdata Helm chart](https://github.com/netdata/helmchart/blob/master/charts/netdata/README.md) installs one `parent` pod for storing metrics and managing alert notifications, plus an additional
 `child` pod for every node in the cluster, responsible for collecting metrics from the node, Kubernetes control planes,
 pods/containers, and [supported application-specific
 metrics](https://github.com/netdata/helmchart#service-discovery-and-supported-services).
 
-### Prerequisites
+## Prerequisites
 
 To deploy Kubernetes monitoring with Netdata, you need:
 
@@ -54,9 +45,9 @@ The installation process securely connects your Kubernetes cluster to stream met
   helm install netdata netdata/netdata 
   ```
 
-  > :bookmark_tabs: Note
+  > ### Note
   >  
-  > If you plan to connect the node to Netdata Cloud, you can find the command with the right parameters by clicking the "Add Nodes" button in your Space's "Nodes" view.
+  > If you plan to connect the node to Netdata Cloud, you can find the command with the right parameters by clicking the "Add Nodes" button in your Space's Nodes tab.
 
   For more installation options, please read our [Netdata Helm chart for Kubernetes](https://github.com/netdata/helmchart/blob/master/charts/netdata/README.md) reference.
 
@@ -106,7 +97,7 @@ On an existing installation, in order to connect it to Netdata Cloud you will ne
   > :bookmark_tabs: Note
   >  
   > Make sure to replace `YOUR_CLAIM_TOKEN` with the claim token of your space,
-  > and `YOUR_ROOM_ID` with the ID of the room you are willing to connect to.
+  > and `YOUR_ROOM_ID` with the ID of the Room you are willing to connect to.
 
   These settings connect your `parent`/`child` nodes to Netdata Cloud and store more metrics in the nodes' time-series databases.
 
@@ -200,10 +191,10 @@ helm upgrade netdata netdata/netdata
 
 ## What's next?
 
-[Start Kubernetes monitoring](https://github.com/netdata/netdata/blob/master/docs/cloud/visualize/kubernetes.md) in Netdata Cloud, which comes with meaningful visualizations out of the box.
+[Start Kubernetes monitoring](/docs/dashboards-and-charts/kubernetes-tab.md) in Netdata Cloud, which comes with meaningful visualizations out of the box.
 
 ### Related reference documentation
 
-- [Netdata Cloud · Kubernetes monitoring](https://github.com/netdata/netdata/blob/master/docs/cloud/visualize/kubernetes.md)
+- [Netdata Cloud · Kubernetes monitoring](/docs/dashboards-and-charts/kubernetes-tab.md)
 - [Netdata Helm chart](https://github.com/netdata/helmchart)
 - [Netdata service discovery](https://github.com/netdata/agent-service-discovery/)

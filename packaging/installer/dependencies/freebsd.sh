@@ -21,10 +21,13 @@ package_tree="
   lzlib
   e2fsprogs-libuuid
   json-c
+  libyaml
   libuv
   liblz4
   openssl
   python3
+  bison
+  flex
   "
 
 prompt() {

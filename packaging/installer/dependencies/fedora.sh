@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Package tree used for installing netdata on distribution:
-# << Fedora: [24->35] >>
+# << Fedora: [24->38] >>
 
 set -e
 
@@ -24,31 +24,35 @@ else
 fi
 
 declare -a package_tree=(
-  findutils
-  gcc
-  gcc-c++
-  make
   autoconf
   autoconf-archive
   autogen
   automake
-  libatomic
-  libtool
+  bison
   cmake
-  zlib-devel
-  libuuid-devel
-  libmnl-devel
-  json-c-devel
-  libuv-devel
-  lz4-devel
-  openssl-devel
-  elfutils-libelf-devel
-  git
-  pkgconfig
-  tar
   curl
+  elfutils-libelf-devel
+  findutils
+  flex
+  gcc
+  gcc-c++
+  git
   gzip
+  json-c-devel
+  libatomic
+  libmnl-devel
+  libtool
+  libuuid-devel
+  libuv-devel
+  libyaml-devel
+  lz4-devel
+  make
+  openssl-devel
+  pkgconfig
   python3
+  systemd-devel
+  tar
+  zlib-devel
   "${ulogd_pkg}"
 )
 

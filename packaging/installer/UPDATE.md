@@ -1,21 +1,11 @@
-<!--
-title: "Update the Netdata Agent"
-description: "If you opted out of automatic updates, you need to update your Netdata Agent to the latest nightly or stable version."
-custom_edit_url: "https://github.com/netdata/netdata/edit/master/packaging/installer/UPDATE.md"
-sidebar_label: "Update the Netdata Agent"
-learn_status: "Published"
-learn_topic_type: "Tasks"
-learn_rel_path: "Installation"
--->
-
-# Update the Netdata Agent
+# Update Netdata
 
 By default, the Netdata Agent automatically updates with the latest nightly or stable version depending on which
 you installed. If you opted out of automatic updates, you need to update your Netdata Agent to the latest nightly
 or stable version. You can also [enable or disable automatic updates on an existing install](#control-automatic-updates).
 
 > 💡 Looking to reinstall the Netdata Agent to enable a feature, update an Agent that cannot update automatically, or
-> troubleshoot an error during the installation process? See our [reinstallation doc](https://github.com/netdata/netdata/blob/master/packaging/installer/REINSTALL.md)
+> troubleshoot an error during the installation process? See our [reinstallation doc](/packaging/installer/REINSTALL.md)
 > for reinstallation steps.
 
 Before you update the Netdata Agent, check to see if your Netdata Agent is already up-to-date by clicking on the update
@@ -38,15 +28,31 @@ The exact update method to use depends on the install type:
 Starting with netdata v1.33.0, you can use Netdata itself to determine the installation type by running:
 
 ```bash
-netdata -W buildinfo | grep 'Install type:'
+netdata -W buildinfo | grep -E 'Installation Type|Install type:'
 ```
+
+The following table contains all possible installation types:
+
+| Installation-type  | Description                                                                                                                                                 |
+|--------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| binpkg-rpm         | RPM-based native packages shipped from Netdata's repos.                                                                                                     |
+| binpkg-deb         | DEB-based native packages shipped from Netdata's repos.                                                                                                     |
+| kickstart-build    | Build from source with the kickstart script's `--build-only` option.                                                                                        |
+| kickstart-static   | Installed the static builds, shipped from netdata via the kickstart script's (option: `--static-only`).                                                     |
+| manual-static-ARCH | Manually installed static Agent binaries by downloading archives from GitHub and installing them manually. Offline installations are part of this category. |
+| legacy-build       | Used for pre-existing kickstart.sh or netdata-installer.sh installations. This exist because we cannot determine how the install originally happened.       |
+| legacy-static      | Same as legacy-build, but for static installs.                                                                                                              |
+| oci                | Installed using official Docker images from Netdata, though not necessarily running on Docker                                                               |
+| custom             | Anything not covered by the other identifiers, including manual builds, manually running netdata-installer.sh, and third-party packages (community).        |
+| Unknown            | Same as custom.                                                                                                                                             |
+
 
 If you are using an older version of Netdata, or the above command produces no output, you can run our one-line
 installation script in dry-run mode to attempt to determine what method to use to update by running the following
 command:
 
 ```bash
-wget -O /tmp/netdata-kickstart.sh https://my-netdata.io/kickstart.sh && sh /tmp/netdata-kickstart.sh --dry-run
+wget -O /tmp/netdata-kickstart.sh https://get.netdata.cloud/kickstart.sh && sh /tmp/netdata-kickstart.sh --dry-run
 ```
 
 Note that if you installed Netdata using an installation prefix, you will need to add an `--install-prefix` option
@@ -69,7 +75,7 @@ If you installed Netdata using an installation prefix, you will need to add an `
 that prefix to this command to make sure it finds Netdata.
 
 ```bash
-wget -O /tmp/netdata-kickstart.sh https://my-netdata.io/kickstart.sh && sh /tmp/netdata-kickstart.sh
+wget -O /tmp/netdata-kickstart.sh https://get.netdata.cloud/kickstart.sh && sh /tmp/netdata-kickstart.sh
 ```
 
 ### Issues with older binpkg installs
@@ -81,11 +87,17 @@ find the updater script.
 
 On such installs, you can update Netdata using your distribution package manager.
 
+### Updates on hosts without IPv4 connectivity
+
+The update process outlined above suffers from the same issues that installing on hosts without IPv4
+connectivity does, and requires similar workarounds. For more details check [the explanation in our install
+documentation](/packaging/installer/README.md#installs-on-hosts-without-ipv4-connectivity).
+
 ### If the kickstart script does not work
 
 If the above command fails, you can [reinstall
-Netdata](https://github.com/netdata/netdata/blob/master/packaging/installer/REINSTALL.md#one-line-installer-script-kickstartsh) to get the latest version. This
-also preserves your [configuration](https://github.com/netdata/netdata/blob/master/docs/configure/nodes.md) in `netdata.conf` or other files just like updating
+Netdata](/packaging/installer/REINSTALL.md#one-line-installer-script-kickstartsh) to get the latest version. This
+also preserves your [configuration](/docs/netdata-agent/configuration/README.md) in `netdata.conf` or other files just like updating
 normally would, though you will need to specify any installation options you used originally again.
 
 ## Docker
@@ -109,7 +121,7 @@ docker rm netdata
 ```
 
 You can now re-create your Netdata container using the `docker` command or a `docker-compose.yml` file. See our [Docker
-installation instructions](https://github.com/netdata/netdata/blob/master/packaging/docker/README.md#create-a-new-netdata-agent-container) for details.
+installation instructions](/packaging/docker/README.md#create-a-new-netdata-agent-container) for details.
 
 ## macOS
 
@@ -120,7 +132,7 @@ brew upgrade netdata
 ```
 
 Homebrew downloads the latest Netdata via the
-[formulae](https://github.com/Homebrew/homebrew-core/blob/master/Formula/netdata.rb), ensures all dependencies are met,
+[formulae](https://github.com/Homebrew/homebrew-core/blob/master/Formula/n/netdata.rb), ensures all dependencies are met,
 and updates Netdata via reinstallation.
 
 If you instead installed Netdata using our one-line installation script, you can use our [regular update
@@ -128,7 +140,7 @@ instructions](#updates-for-most-systems) to update Netdata.
 
 ## Manual installation from Git
 
-If you installed [Netdata manually from Git](https://github.com/netdata/netdata/blob/master/packaging/installer/methods/manual.md), you can run that installer again
+If you installed [Netdata manually from Git](/packaging/installer/methods/manual.md), you can run that installer again
 to update your agent. First, run our automatic requirements installer, which works on many Linux distributions, to
 ensure your system has the dependencies necessary for new features.
 
@@ -176,3 +188,24 @@ and:
 ```bash
 /opt/netdata/usr/libexec/netdata/netdata-updater.sh --disable-auto-updates
 ```
+
+## Control runtime behavior of the updater script.
+
+Starting with v1.40.0, the `netdata-updater.sh` script supports a config file called `netdata-updater.conf`,
+located in the same directory as the main `netdata.conf` file. This file uses POSIX shell script syntax to define
+variables that are used by the updater.
+
+This configuration file can be edited [using our `edit-config`
+script](/docs/netdata-agent/configuration/README.md).
+
+The following configuration options are currently supported:
+
+- `NETDATA_UPDATER_JITTER`: Sets an upper limit in seconds on the random delay in the updater script when running
+  as a scheduled task. This random delay helps avoid issues resulting from too many nodes trying to reconnect to
+  the Cloud at the same time. The default value is 3600, which corresponds to one hour. Most users should not ever
+  need to change this.
+- `NETDATA_MAJOR_VERSION_UPDATES`: If set to a value other than 0, then new major versions will be installed
+  without user confirmation. Must be set to a  non-zero value for automated updates to install new major versions.
+- `NETDATA_NO_SYSTEMD_JOURNAL`: If set to a value other than 0, skip attempting to install the
+  `netdata-plugin-systemd-journal` package on supported systems on update. This optional package will be installed
+  by default on supported systems by the updater if this option is not set. Only affects systems using native packages.

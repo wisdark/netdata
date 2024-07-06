@@ -20,6 +20,7 @@ declare -a package_tree=(
   util-linux
   libmnl
   json-c
+  libyaml
   libuv
   lz4
   openssl
@@ -31,6 +32,8 @@ declare -a package_tree=(
   gzip
   python3
   binutils
+  bison
+  flex
 )
 
 usage() {

@@ -24,12 +24,15 @@ package_tree="
   sys-apps/util-linux
   net-libs/libmnl
   dev-libs/json-c
+  dev-libs/libyaml
   dev-libs/libuv
   app-arch/lz4
   dev-libs/openssl
   virtual/libelf
   dev-lang/python
   dev-libs/libuv
+  sys-devel/bison
+  sys-devel/flex
   "
 usage() {
   cat << EOF

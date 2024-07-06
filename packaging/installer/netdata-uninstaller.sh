@@ -158,7 +158,7 @@ create_tmp_directory() {
     fi
   fi
 
-  mktemp -d -t netdata-kickstart-XXXXXXXXXX
+  mktemp -d -t netdata-uninstaller-XXXXXXXXXX
 }
 
 tmpdir="$(create_tmp_directory)"
@@ -520,6 +520,15 @@ portable_del_user_from_group() {
   groupname="${1}"
   username="${2}"
 
+  if command -v getent > /dev/null 2>&1; then
+    getent group "${1:-""}" | grep -q "${2}"
+  else
+    grep "^${1}:" /etc/group | grep -q "${2}"
+  fi
+
+  ret=$?
+  [ "${ret}" != "0" ] && return 0
+
   # username is not in group
   info "Deleting ${username} user from ${groupname} group ..."
 
@@ -714,8 +723,13 @@ trap quit_msg EXIT
 info "Stopping a possibly running netdata..."
 stop_all_netdata
 
+if [ "$(uname -s)" = "Darwin" ]; then
+  launchctl unload /Library/LaunchDaemons/com.github.netdata.plist 2>/dev/null
+fi
+
 #### REMOVE NETDATA FILES
 rm_file /etc/logrotate.d/netdata
+rm_file /usr/lib/systemd/journald@netdata.conf.d/netdata.conf
 rm_file /etc/systemd/system/netdata.service
 rm_file /lib/systemd/system/netdata.service
 rm_file /usr/lib/systemd/system/netdata.service
@@ -725,41 +739,50 @@ rm_file /usr/lib/systemd/system/netdata-updater.service
 rm_file /etc/systemd/system/netdata-updater.timer
 rm_file /lib/systemd/system/netdata-updater.timer
 rm_file /usr/lib/systemd/system/netdata-updater.timer
+rm_file /usr/lib/systemd/system-preset/50-netdata.preset
+rm_file /lib/systemd/system-preset/50-netdata.preset
 rm_file /etc/init.d/netdata
 rm_file /etc/periodic/daily/netdata-updater
 rm_file /etc/cron.daily/netdata-updater
 rm_file /etc/cron.d/netdata-updater
+rm_file /etc/cron.d/netdata-updater-daily
+rm_file /Library/LaunchDaemons/com.github.netdata.plist
 
 
-if [ -n "${NETDATA_PREFIX}" ] && [ -d "${NETDATA_PREFIX}" ]; then
+if [ -n "${NETDATA_PREFIX}" ] && [ -d "${NETDATA_PREFIX}" ] && [ "netdata" = "$(basename "$NETDATA_PREFIX")" ] ; then
   rm_dir "${NETDATA_PREFIX}"
 else
-  rm_file "/usr/sbin/netdata"
-  rm_file "/usr/sbin/netdatacli"
+  rm_file "${NETDATA_PREFIX}/usr/sbin/netdata"
+  rm_file "${NETDATA_PREFIX}/usr/sbin/netdatacli"
+  rm_file "${NETDATA_PREFIX}/usr/sbin/netdata-claim.sh"
+  rm_file "${NETDATA_PREFIX}/usr/sbin/log2journal"
+  rm_file "${NETDATA_PREFIX}/usr/sbin/systemd-cat-native"
   rm_file "/tmp/netdata-ipc"
-  rm_file "/usr/sbin/netdata-claim.sh"
-  rm_dir "/usr/share/netdata"
-  rm_dir "/usr/libexec/netdata"
-  rm_dir "/var/lib/netdata"
-  rm_dir "/var/cache/netdata"
-  rm_dir "/var/log/netdata"
-  rm_dir "/etc/netdata"
+  rm_file "/tmp/netdata-service-cmds"
+  rm_dir "${NETDATA_PREFIX}/usr/share/netdata"
+  rm_dir "${NETDATA_PREFIX}/usr/libexec/netdata"
+  rm_dir "${NETDATA_PREFIX}/var/lib/netdata"
+  rm_dir "${NETDATA_PREFIX}/var/cache/netdata"
+  rm_dir "${NETDATA_PREFIX}/var/log/netdata"
+  rm_dir "${NETDATA_PREFIX}/etc/netdata"
+  rm_dir /usr/lib/systemd/journald@netdata.conf.d/
+fi
+
+if [ -n "${tmpdir}" ]; then
+  run rm -rf "${tmpdir}" || true
 fi
 
 FILE_REMOVAL_STATUS=1
 
-#### REMOVE NETDATA USER FROM ADDED GROUPS
-if [ -n "$NETDATA_ADDED_TO_GROUPS" ]; then
+#### REMOVE USER
+if user_input "Do you want to delete 'netdata' system user ? "; then
+  portable_del_user "netdata" || :
+elif [ -n "$NETDATA_ADDED_TO_GROUPS" ]; then
   if user_input "Do you want to delete 'netdata' from following groups: '$NETDATA_ADDED_TO_GROUPS' ? "; then
     for group in $NETDATA_ADDED_TO_GROUPS; do
       portable_del_user_from_group "${group}" "netdata"
     done
   fi
-fi
-
-#### REMOVE USER
-if user_input "Do you want to delete 'netdata' system user ? "; then
-  portable_del_user "netdata" || :
 fi
 
 ### REMOVE GROUP

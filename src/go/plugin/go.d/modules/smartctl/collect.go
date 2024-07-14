@@ -42,7 +42,8 @@ func (s *Smartctl) collect() (map[string]int64, error) {
 		// TODO: make it concurrent
 		for _, d := range s.scannedDevices {
 			if err := s.collectScannedDevice(mx, d); err != nil {
-				return nil, err
+				s.Warning(err)
+				continue
 			}
 		}
 
@@ -57,7 +58,7 @@ func (s *Smartctl) collect() (map[string]int64, error) {
 func (s *Smartctl) collectScannedDevice(mx map[string]int64, scanDev *scanDevice) error {
 	resp, err := s.exec.deviceInfo(scanDev.name, scanDev.typ, s.NoCheckPowerMode)
 	if err != nil {
-		if resp != nil && isDeviceOpenFailedNoSuchDevice(resp) {
+		if resp != nil && isDeviceOpenFailedNoSuchDevice(resp) && !scanDev.extra {
 			s.Infof("smartctl reported that device '%s' type '%s' no longer exists", scanDev.name, scanDev.typ)
 			s.forceScan = true
 			return nil
@@ -133,6 +134,30 @@ func (s *Smartctl) collectSmartDevice(mx map[string]int64, dev *smartDevice) {
 			}
 			if v, err := strconv.ParseInt(rs, 10, 64); err == nil {
 				mx[px+"decoded"] = v
+			}
+		}
+	}
+
+	if dev.deviceType() == "scsi" {
+		sel := dev.data.Get("scsi_error_counter_log")
+		if !sel.Exists() {
+			return
+		}
+
+		for _, v := range []string{"read", "write", "verify"} {
+			for _, n := range []string{
+				//"errors_corrected_by_eccdelayed",
+				//"errors_corrected_by_eccfast",
+				//"errors_corrected_by_rereads_rewrites",
+				"total_errors_corrected",
+				"total_uncorrected_errors",
+			} {
+				key := fmt.Sprintf("%sscsi_error_log_%s_%s", px, v, n)
+				metric := fmt.Sprintf("%s.%s", v, n)
+
+				if m := sel.Get(metric); m.Exists() {
+					mx[key] = m.Int()
+				}
 			}
 		}
 	}

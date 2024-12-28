@@ -302,7 +302,7 @@ int do_sys_class_infiniband(int update_every, usec_t dt)
     static int initialized = 0;
     static int enable_new_ports = -1, enable_only_active = CONFIG_BOOLEAN_YES;
     static int do_bytes = -1, do_packets = -1, do_errors = -1, do_hwpackets = -1, do_hwerrors = -1;
-    static char *sys_class_infiniband_dirname = NULL;
+    static const char *sys_class_infiniband_dirname = NULL;
 
     static long long int dt_to_refresh_ports = 0, last_refresh_ports_usec = 0;
 
@@ -332,7 +332,7 @@ int do_sys_class_infiniband(int update_every, usec_t dt)
                 SIMPLE_PATTERN_EXACT, true);
 
         dt_to_refresh_ports =
-            config_get_number(CONFIG_SECTION_PLUGIN_SYS_CLASS_INFINIBAND, "refresh ports state every seconds", 30) *
+            config_get_duration_seconds(CONFIG_SECTION_PLUGIN_SYS_CLASS_INFINIBAND, "refresh ports state every", 30) *
             USEC_PER_SEC;
         if (dt_to_refresh_ports < 0)
             dt_to_refresh_ports = 0;
@@ -538,8 +538,7 @@ int do_sys_class_infiniband(int update_every, usec_t dt)
                     port->priority + 1,
                     update_every,
                     RRDSET_TYPE_AREA);
-                // Create Dimensions
-                rrdset_flag_set(port->st_bytes, RRDSET_FLAG_DETAIL);
+
                 // On this chart, we want to have a KB/s so the dashboard will autoscale it
                 // The reported values are also per-lane, so we must multiply it by the width
                 // x4 lanes multiplier as per Documentation/ABI/stable/sysfs-class-infiniband
@@ -576,8 +575,7 @@ int do_sys_class_infiniband(int update_every, usec_t dt)
                     port->priority + 2,
                     update_every,
                     RRDSET_TYPE_AREA);
-                // Create Dimensions
-                rrdset_flag_set(port->st_packets, RRDSET_FLAG_DETAIL);
+
                 FOREACH_COUNTER_PACKETS(GEN_RRD_DIM_ADD, port)
             }
 
@@ -605,8 +603,7 @@ int do_sys_class_infiniband(int update_every, usec_t dt)
                     port->priority + 3,
                     update_every,
                     RRDSET_TYPE_LINE);
-                // Create Dimensions
-                rrdset_flag_set(port->st_errors, RRDSET_FLAG_DETAIL);
+
                 FOREACH_COUNTER_ERRORS(GEN_RRD_DIM_ADD, port)
             }
 
@@ -641,8 +638,6 @@ int do_sys_class_infiniband(int update_every, usec_t dt)
                         update_every,
                         RRDSET_TYPE_LINE);
 
-                    rrdset_flag_set(port->st_hwerrors, RRDSET_FLAG_DETAIL);
-
                     // VENDORS: Set your selection
 
                     // VENDOR: Mellanox
@@ -676,8 +671,6 @@ int do_sys_class_infiniband(int update_every, usec_t dt)
                         port->priority + 5,
                         update_every,
                         RRDSET_TYPE_LINE);
-
-                    rrdset_flag_set(port->st_hwpackets, RRDSET_FLAG_DETAIL);
 
                     // VENDORS: Set your selection
 

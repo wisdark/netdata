@@ -8,6 +8,12 @@ extern "C" {
 #endif
 
 #include "libnetdata/libnetdata.h"
+#include "rrd-database-mode.h"
+#include "streaming/stream-traffic-types.h"
+#include "streaming/stream-sender-commit.h"
+#include "rrdhost-state-id.h"
+#include "health/health-alert-log.h"
+#include "rrdhost-system-info.h"
 
 // non-existing structs instead of voids
 // to enable type checking at compile time
@@ -21,8 +27,6 @@ typedef struct rrddim RRDDIM;
 typedef struct rrdset RRDSET;
 typedef struct rrdcalc RRDCALC;
 typedef struct alarm_entry ALARM_ENTRY;
-
-typedef struct rrdlabels RRDLABELS;
 
 typedef struct rrdvar_acquired RRDVAR_ACQUIRED;
 typedef struct rrdcalc_acquired RRDCALC_ACQUIRED;
@@ -57,6 +61,7 @@ typedef enum __attribute__ ((__packed__)) storage_priority {
 
     // synchronous query, not to be dispatched to workers or queued
     STORAGE_PRIORITY_SYNCHRONOUS,
+    STORAGE_PRIORITY_SYNCHRONOUS_FIRST,
 
     STORAGE_PRIORITY_INTERNAL_MAX_DONT_USE,
 } STORAGE_PRIORITY;
@@ -69,26 +74,6 @@ struct rrdengine_instance;
 #endif
 
 // ----------------------------------------------------------------------------
-// memory mode
-
-typedef enum __attribute__ ((__packed__)) rrd_memory_mode {
-    RRD_MEMORY_MODE_NONE     = 0,
-    RRD_MEMORY_MODE_RAM      = 1,
-    RRD_MEMORY_MODE_ALLOC    = 4,
-    RRD_MEMORY_MODE_DBENGINE = 5,
-
-    // this is 8-bit
-} RRD_MEMORY_MODE;
-
-#define RRD_MEMORY_MODE_NONE_NAME "none"
-#define RRD_MEMORY_MODE_RAM_NAME "ram"
-#define RRD_MEMORY_MODE_ALLOC_NAME "alloc"
-#define RRD_MEMORY_MODE_DBENGINE_NAME "dbengine"
-
-extern RRD_MEMORY_MODE default_rrd_memory_mode;
-
-const char *rrd_memory_mode_name(RRD_MEMORY_MODE id);
-RRD_MEMORY_MODE rrd_memory_mode_id(const char *name);
 
 struct ml_metrics_statistics {
     size_t anomalous;
@@ -98,14 +83,55 @@ struct ml_metrics_statistics {
     size_t silenced;
 };
 
+
+// use this for configuration flags, not for state control
+// flags are set/unset in a manner that is not thread safe
+// and may lead to missing information.
+typedef enum __attribute__ ((__packed__)) rrdset_flags {
+    RRDSET_FLAG_DEBUG                            = (1 << 2),  // enables or disables debugging for a chart
+    RRDSET_FLAG_OBSOLETE                         = (1 << 3),  // this is marked by the collector/module as obsolete
+    RRDSET_FLAG_EXPORTING_SEND                   = (1 << 4),  // if set, this chart should be sent to Prometheus web API and external databases
+    RRDSET_FLAG_EXPORTING_IGNORE                 = (1 << 5),  // if set, this chart should not be sent to Prometheus web API and external databases
+
+    RRDSET_FLAG_UPSTREAM_SEND                    = (1 << 6),  // if set, this chart should be sent upstream (streaming)
+    RRDSET_FLAG_UPSTREAM_IGNORE                  = (1 << 7),  // if set, this chart should not be sent upstream (streaming)
+
+    RRDSET_FLAG_STORE_FIRST                      = (1 << 8),  // if set, do not eliminate the first collection during interpolation
+    RRDSET_FLAG_HETEROGENEOUS                    = (1 << 9),  // if set, the chart is not homogeneous (dimensions in it have multiple algorithms, multipliers or dividers)
+    RRDSET_FLAG_HOMOGENEOUS_CHECK                = (1 << 10), // if set, the chart should be checked to determine if the dimensions are homogeneous
+    RRDSET_FLAG_HIDDEN                           = (1 << 11), // if set, do not show this chart on the dashboard, but use it for exporting
+    RRDSET_FLAG_SYNC_CLOCK                       = (1 << 12), // if set, microseconds on next data collection will be ignored (the chart will be synced to now)
+    RRDSET_FLAG_OBSOLETE_DIMENSIONS              = (1 << 13), // this is marked by the collector/module when a chart has obsolete dimensions
+
+    RRDSET_FLAG_METADATA_UPDATE                  = (1 << 14), // Mark that metadata needs to be stored
+    RRDSET_FLAG_ANOMALY_DETECTION                = (1 << 15), // flag to identify anomaly detection charts.
+    RRDSET_FLAG_INDEXED_ID                       = (1 << 16), // the rrdset is indexed by its id
+    RRDSET_FLAG_INDEXED_NAME                     = (1 << 17), // the rrdset is indexed by its name
+
+    RRDSET_FLAG_PENDING_HEALTH_INITIALIZATION    = (1 << 18),
+
+    RRDSET_FLAG_SENDER_REPLICATION_IN_PROGRESS   = (1 << 19), // the sending side has replication in progress
+    RRDSET_FLAG_SENDER_REPLICATION_FINISHED      = (1 << 20), // the sending side has completed replication
+    RRDSET_FLAG_RECEIVER_REPLICATION_IN_PROGRESS = (1 << 21), // the receiving side has replication in progress
+    RRDSET_FLAG_RECEIVER_REPLICATION_FINISHED    = (1 << 22), // the receiving side has completed replication
+
+    RRDSET_FLAG_UPSTREAM_SEND_VARIABLES          = (1 << 23), // a custom variable has been updated and needs to be exposed to parent
+
+    RRDSET_FLAG_COLLECTION_FINISHED              = (1 << 24), // when set, data collection is not available for this chart
+
+    RRDSET_FLAG_HAS_RRDCALC_LINKED               = (1 << 25), // this chart has at least one rrdcal linked
+} RRDSET_FLAGS;
+
 #include "daemon/common.h"
 #include "web/api/queries/query.h"
 #include "web/api/queries/rrdr.h"
 #include "health/rrdvar.h"
 #include "health/rrdcalc.h"
 #include "rrdlabels.h"
-#include "streaming/rrdpush.h"
-#include "aclk/aclk_rrdhost_state.h"
+#include "streaming/stream-capabilities.h"
+#include "streaming/stream-path.h"
+#include "streaming/stream.h"
+//#include "aclk/aclk_rrdhost_state.h"
 #include "sqlite/sqlite_health.h"
 
 typedef struct storage_query_handle STORAGE_QUERY_HANDLE;
@@ -133,21 +159,18 @@ typedef enum __attribute__ ((__packed__)) rrdset_type {
     RRDSET_TYPE_LINE    = 0,
     RRDSET_TYPE_AREA    = 1,
     RRDSET_TYPE_STACKED = 2,
+    RRDSET_TYPE_HEATMAP = 3,
 } RRDSET_TYPE;
 
 #define RRDSET_TYPE_LINE_NAME "line"
 #define RRDSET_TYPE_AREA_NAME "area"
 #define RRDSET_TYPE_STACKED_NAME "stacked"
+#define RRDSET_TYPE_HEATMAP_NAME "heatmap"
 
 RRDSET_TYPE rrdset_type_id(const char *name);
 const char *rrdset_type_name(RRDSET_TYPE chart_type);
 
 #include "contexts/rrdcontext.h"
-
-extern bool dbengine_enabled;
-extern size_t storage_tiers;
-extern bool use_direct_io;
-extern size_t storage_tiers_grouping_iterations[RRD_STORAGE_TIERS];
 
 typedef enum __attribute__ ((__packed__)) {
     RRD_BACKFILL_NONE = 0,
@@ -160,11 +183,6 @@ typedef enum __attribute__ ((__packed__)) {
 
 #define RRD_DEFAULT_HISTORY_ENTRIES 3600
 #define RRD_HISTORY_ENTRIES_MAX (86400*365)
-
-extern int default_rrd_update_every;
-extern int default_rrd_history_entries;
-extern int gap_when_lost_iterations_above;
-extern time_t rrdset_free_obsolete_time_s;
 
 #if defined(ENV32BIT)
 #define MIN_LIBUV_WORKER_THREADS 8
@@ -262,13 +280,13 @@ struct rrddim_tier {
     STORAGE_COLLECT_HANDLE *sch;   // the data collection handle
 };
 
-void rrdr_fill_tier_gap_from_smaller_tiers(RRDDIM *rd, size_t tier, time_t now_s);
+bool backfill_tier_from_smaller_tiers(RRDDIM *rd, size_t tier, time_t now_s);
 
 // ----------------------------------------------------------------------------
 // RRD DIMENSION - this is a metric
 
 struct rrddim {
-    nd_uuid_t metric_uuid;                             // global UUID for this metric (unique_across hosts)
+    nd_uuid_t metric_uuid;                          // global UUID for this metric (unique_across hosts)
 
     // ------------------------------------------------------------------------
     // dimension definition
@@ -287,10 +305,10 @@ struct rrddim {
     // operational state members
 
     struct rrdset *rrdset;
-    rrd_ml_dimension_t *ml_dimension;                   // machine learning data about this dimension
+    rrd_ml_dimension_t *ml_dimension;               // machine learning data about this dimension
 
     struct {
-        RRDMETRIC_ACQUIRED *rrdmetric;                  // the rrdmetric of this dimension
+        RRDMETRIC_ACQUIRED *rrdmetric;              // the rrdmetric of this dimension
         bool collected;
     } rrdcontexts;
 
@@ -317,8 +335,8 @@ struct rrddim {
         struct {
             uint32_t sent_version;
             uint32_t dim_slot;
-        } sender;
-    } rrdpush;
+        } snd;
+    } stream;
 
     // ------------------------------------------------------------------------
     // data collection members
@@ -344,7 +362,7 @@ struct rrddim {
 
     // ------------------------------------------------------------------------
 
-    struct rrddim_tier tiers[];                     // our tiers of databases
+    struct rrddim_tier tiers[];                         // our tiers of databases
 };
 
 size_t rrddim_size(void);
@@ -661,47 +679,6 @@ STORAGE_ENGINE* storage_engine_find(const char* name);
 // ----------------------------------------------------------------------------
 // RRDSET - this is a chart
 
-// use this for configuration flags, not for state control
-// flags are set/unset in a manner that is not thread safe
-// and may lead to missing information.
-
-typedef enum __attribute__ ((__packed__)) rrdset_flags {
-    RRDSET_FLAG_DETAIL                           = (1 << 1),  // if set, the data set should be considered as a detail of another
-                                                              // (the master data set should be the one that has the same family and is not detail)
-    RRDSET_FLAG_DEBUG                            = (1 << 2),  // enables or disables debugging for a chart
-    RRDSET_FLAG_OBSOLETE                         = (1 << 3),  // this is marked by the collector/module as obsolete
-    RRDSET_FLAG_EXPORTING_SEND                   = (1 << 4),  // if set, this chart should be sent to Prometheus web API and external databases
-    RRDSET_FLAG_EXPORTING_IGNORE                 = (1 << 5),  // if set, this chart should not be sent to Prometheus web API and external databases
-
-    RRDSET_FLAG_UPSTREAM_SEND                    = (1 << 6),  // if set, this chart should be sent upstream (streaming)
-    RRDSET_FLAG_UPSTREAM_IGNORE                  = (1 << 7),  // if set, this chart should not be sent upstream (streaming)
-
-    RRDSET_FLAG_STORE_FIRST                      = (1 << 8),  // if set, do not eliminate the first collection during interpolation
-    RRDSET_FLAG_HETEROGENEOUS                    = (1 << 9),  // if set, the chart is not homogeneous (dimensions in it have multiple algorithms, multipliers or dividers)
-    RRDSET_FLAG_HOMOGENEOUS_CHECK                = (1 << 10), // if set, the chart should be checked to determine if the dimensions are homogeneous
-    RRDSET_FLAG_HIDDEN                           = (1 << 11), // if set, do not show this chart on the dashboard, but use it for exporting
-    RRDSET_FLAG_SYNC_CLOCK                       = (1 << 12), // if set, microseconds on next data collection will be ignored (the chart will be synced to now)
-    RRDSET_FLAG_OBSOLETE_DIMENSIONS              = (1 << 13), // this is marked by the collector/module when a chart has obsolete dimensions
-
-    RRDSET_FLAG_METADATA_UPDATE                  = (1 << 14), // Mark that metadata needs to be stored
-    RRDSET_FLAG_ANOMALY_DETECTION                = (1 << 15), // flag to identify anomaly detection charts.
-    RRDSET_FLAG_INDEXED_ID                       = (1 << 16), // the rrdset is indexed by its id
-    RRDSET_FLAG_INDEXED_NAME                     = (1 << 17), // the rrdset is indexed by its name
-
-    RRDSET_FLAG_PENDING_HEALTH_INITIALIZATION    = (1 << 18),
-
-    RRDSET_FLAG_SENDER_REPLICATION_IN_PROGRESS   = (1 << 19), // the sending side has replication in progress
-    RRDSET_FLAG_SENDER_REPLICATION_FINISHED      = (1 << 20), // the sending side has completed replication
-    RRDSET_FLAG_RECEIVER_REPLICATION_IN_PROGRESS = (1 << 21), // the receiving side has replication in progress
-    RRDSET_FLAG_RECEIVER_REPLICATION_FINISHED    = (1 << 22), // the receiving side has completed replication
-
-    RRDSET_FLAG_UPSTREAM_SEND_VARIABLES          = (1 << 23), // a custom variable has been updated and needs to be exposed to parent
-
-    RRDSET_FLAG_COLLECTION_FINISHED              = (1 << 24), // when set, data collection is not available for this chart
-
-    RRDSET_FLAG_HAS_RRDCALC_LINKED               = (1 << 25), // this chart has at least one rrdcal linked
-} RRDSET_FLAGS;
-
 #define rrdset_flag_get(st) __atomic_load_n(&((st)->flags), __ATOMIC_ACQUIRE)
 #define rrdset_flag_check(st, flag) (__atomic_load_n(&((st)->flags), __ATOMIC_ACQUIRE) & (flag))
 #define rrdset_flag_set(st, flag)   __atomic_or_fetch(&((st)->flags), flag, __ATOMIC_RELEASE)
@@ -797,8 +774,8 @@ struct rrdset {
             uint32_t dim_last_slot_used;
 
             time_t resync_time_s;                   // the timestamp up to which we should resync clock upstream
-        } sender;
-    } rrdpush;
+        } snd;
+    } stream;
 
     // ------------------------------------------------------------------------
     // db mode SAVE, MAP specifics
@@ -869,13 +846,13 @@ static inline uint32_t rrdset_metadata_version(RRDSET *st) {
 }
 
 static inline uint32_t rrdset_metadata_upstream_version(RRDSET *st) {
-    return __atomic_load_n(&st->rrdpush.sender.sent_version, __ATOMIC_RELAXED);
+    return __atomic_load_n(&st->stream.snd.sent_version, __ATOMIC_RELAXED);
 }
 
 void rrdset_metadata_updated(RRDSET *st);
 
 static inline void rrdset_metadata_exposed_upstream(RRDSET *st, uint32_t version) {
-    __atomic_store_n(&st->rrdpush.sender.sent_version, version, __ATOMIC_RELAXED);
+    __atomic_store_n(&st->stream.snd.sent_version, version, __ATOMIC_RELAXED);
 }
 
 static inline bool rrdset_check_upstream_exposed(RRDSET *st) {
@@ -888,17 +865,17 @@ static inline uint32_t rrddim_metadata_version(RRDDIM *rd) {
 }
 
 static inline uint32_t rrddim_metadata_upstream_version(RRDDIM *rd) {
-    return __atomic_load_n(&rd->rrdpush.sender.sent_version, __ATOMIC_RELAXED);
+    return __atomic_load_n(&rd->stream.snd.sent_version, __ATOMIC_RELAXED);
 }
 
 void rrddim_metadata_updated(RRDDIM *rd);
 
 static inline void rrddim_metadata_exposed_upstream(RRDDIM *rd, uint32_t version) {
-    __atomic_store_n(&rd->rrdpush.sender.sent_version, version, __ATOMIC_RELAXED);
+    __atomic_store_n(&rd->stream.snd.sent_version, version, __ATOMIC_RELAXED);
 }
 
 static inline void rrddim_metadata_exposed_upstream_clear(RRDDIM *rd) {
-    __atomic_store_n(&rd->rrdpush.sender.sent_version, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&rd->stream.snd.sent_version, 0, __ATOMIC_RELAXED);
 }
 
 static inline bool rrddim_check_upstream_exposed(RRDDIM *rd) {
@@ -909,7 +886,7 @@ static inline bool rrddim_check_upstream_exposed(RRDDIM *rd) {
 // still, it can be removed, after the collector has finished
 // so, it is safe to check it without atomics
 static inline bool rrddim_check_upstream_exposed_collector(RRDDIM *rd) {
-    return rd->rrdset->version == rd->rrdpush.sender.sent_version;
+    return rd->rrdset->version == rd->stream.snd.sent_version;
 }
 
 STRING *rrd_string_strdupz(const char *s);
@@ -946,38 +923,53 @@ typedef enum __attribute__ ((__packed__)) rrdhost_flags {
     // Careful not to overlap with rrdhost_options to avoid bugs if
     // rrdhost_flags_xxx is used instead of rrdhost_option_xxx or vice-versa
     // Orphan, Archived and Obsolete flags
+
+    /*
+     * 3 BASE FLAGS FOR HOSTS:
+     *
+     * - COLLECTOR_ONLINE = the collector is currently collecting data for this node
+     *                      this is true FOR ALL KINDS OF NODES (including localhost, virtual hosts, children)
+     *
+     * - ORPHAN           = the node had a collector online recently, but does not have it now
+     *
+     * - ARCHIVED         = the node does not have data collection structures attached to it
+     *
+     */
+
+    RRDHOST_FLAG_COLLECTOR_ONLINE               = (1 << 7), // the collector of this host is online
     RRDHOST_FLAG_ORPHAN                         = (1 << 8), // this host is orphan (not receiving data)
     RRDHOST_FLAG_ARCHIVED                       = (1 << 9), // The host is archived, no collected charts yet
+
     RRDHOST_FLAG_PENDING_OBSOLETE_CHARTS        = (1 << 10), // the host has pending chart obsoletions
     RRDHOST_FLAG_PENDING_OBSOLETE_DIMENSIONS    = (1 << 11), // the host has pending dimension obsoletions
 
     // Streaming sender
-    RRDHOST_FLAG_RRDPUSH_SENDER_INITIALIZED     = (1 << 12), // the host has initialized rrdpush structures
-    RRDHOST_FLAG_RRDPUSH_SENDER_SPAWN           = (1 << 13), // When set, the sender thread is running
-    RRDHOST_FLAG_RRDPUSH_SENDER_CONNECTED       = (1 << 14), // When set, the host is connected to a parent
-    RRDHOST_FLAG_RRDPUSH_SENDER_READY_4_METRICS = (1 << 15), // when set, rrdset_done() should push metrics to parent
-    RRDHOST_FLAG_RRDPUSH_SENDER_LOGGED_STATUS   = (1 << 16), // when set, we have logged the status of metrics streaming
+    RRDHOST_FLAG_STREAM_SENDER_INITIALIZED      = (1 << 12), // the host has initialized streaming sender structures
+    RRDHOST_FLAG_STREAM_SENDER_ADDED            = (1 << 13), // When set, the sender thread is running
+    RRDHOST_FLAG_STREAM_SENDER_CONNECTED        = (1 << 14), // When set, the host is connected to a parent
+    RRDHOST_FLAG_STREAM_SENDER_READY_4_METRICS  = (1 << 15), // when set, rrdset_done() should push metrics to parent
+    RRDHOST_FLAG_STREAM_SENDER_LOGGED_STATUS    = (1 << 16), // when set, we have logged the status of metrics streaming
 
     // Health
     RRDHOST_FLAG_PENDING_HEALTH_INITIALIZATION  = (1 << 17), // contains charts and dims with uninitialized variables
     RRDHOST_FLAG_INITIALIZED_HEALTH             = (1 << 18), // the host has initialized health structures
+    RRDHOST_FLAG_HEALTH_RUNNING_NOW             = (1 << 19), // health is currently executing health check on this host
 
     // Exporting
-    RRDHOST_FLAG_EXPORTING_SEND                 = (1 << 19), // send it to external databases
-    RRDHOST_FLAG_EXPORTING_DONT_SEND            = (1 << 20), // don't send it to external databases
+    RRDHOST_FLAG_EXPORTING_SEND                 = (1 << 20), // send it to external databases
+    RRDHOST_FLAG_EXPORTING_DONT_SEND            = (1 << 21), // don't send it to external databases
 
     // ACLK
-    RRDHOST_FLAG_ACLK_STREAM_CONTEXTS           = (1 << 21), // when set, we should send ACLK stream context updates
-    RRDHOST_FLAG_ACLK_STREAM_ALERTS             = (1 << 22), // Host should stream alerts
+    RRDHOST_FLAG_ACLK_STREAM_CONTEXTS           = (1 << 22), // when set, we should send ACLK stream context updates
+    RRDHOST_FLAG_ACLK_STREAM_ALERTS             = (1 << 23), // Host should stream alerts
 
     // Metadata
-    RRDHOST_FLAG_METADATA_UPDATE                = (1 << 23), // metadata needs to be stored in the database
-    RRDHOST_FLAG_METADATA_LABELS                = (1 << 24), // metadata needs to be stored in the database
-    RRDHOST_FLAG_METADATA_INFO                  = (1 << 25), // metadata needs to be stored in the database
-    RRDHOST_FLAG_PENDING_CONTEXT_LOAD           = (1 << 26), // Context needs to be loaded
+    RRDHOST_FLAG_METADATA_UPDATE                = (1 << 24), // metadata needs to be stored in the database
+    RRDHOST_FLAG_METADATA_LABELS                = (1 << 25), // metadata needs to be stored in the database
+    RRDHOST_FLAG_METADATA_INFO                  = (1 << 26), // metadata needs to be stored in the database
+    RRDHOST_FLAG_PENDING_CONTEXT_LOAD           = (1 << 27), // Context needs to be loaded
 
-    RRDHOST_FLAG_METADATA_CLAIMID               = (1 << 27), // metadata needs to be stored in the database
-    RRDHOST_FLAG_RRDPUSH_RECEIVER_DISCONNECTED  = (1 << 28), // set when the receiver part is disconnected
+    RRDHOST_FLAG_METADATA_CLAIMID               = (1 << 28), // metadata needs to be stored in the database
 
     RRDHOST_FLAG_GLOBAL_FUNCTIONS_UPDATED       = (1 << 29), // set when the host has updated global functions
 } RRDHOST_FLAGS;
@@ -1011,144 +1003,18 @@ typedef enum __attribute__ ((__packed__)) {
 #define rrdhost_option_set(host, flag)   (host)->options |= flag
 #define rrdhost_option_clear(host, flag) (host)->options &= ~(flag)
 
-#define rrdhost_has_rrdpush_sender_enabled(host) (rrdhost_option_check(host, RRDHOST_OPTION_SENDER_ENABLED) && (host)->sender)
+#define rrdhost_has_stream_sender_enabled(host) (rrdhost_option_check(host, RRDHOST_OPTION_SENDER_ENABLED) && (host)->sender)
 
-#define rrdhost_can_send_definitions_to_parent(host) (rrdhost_has_rrdpush_sender_enabled(host) && rrdhost_flag_check(host, RRDHOST_FLAG_RRDPUSH_SENDER_CONNECTED))
-
-// ----------------------------------------------------------------------------
-// Health data
-
-struct alarm_entry {
-    uint32_t unique_id;
-    uint32_t alarm_id;
-    uint32_t alarm_event_id;
-    usec_t global_id;
-    nd_uuid_t config_hash_id;
-    nd_uuid_t transition_id;
-
-    time_t when;
-    time_t duration;
-    time_t non_clear_duration;
-
-    STRING *name;
-    STRING *chart;
-    STRING *chart_context;
-    STRING *chart_name;
-
-    STRING *classification;
-    STRING *component;
-    STRING *type;
-
-    STRING *exec;
-    STRING *recipient;
-    time_t exec_run_timestamp;
-    int exec_code;
-
-    STRING *source;
-    STRING *units;
-    STRING *summary;
-    STRING *info;
-
-    NETDATA_DOUBLE old_value;
-    NETDATA_DOUBLE new_value;
-
-    STRING *old_value_string;
-    STRING *new_value_string;
-
-    RRDCALC_STATUS old_status;
-    RRDCALC_STATUS new_status;
-
-    uint32_t flags;
-
-    int delay;
-    time_t delay_up_to_timestamp;
-
-    uint32_t updated_by_id;
-    uint32_t updates_id;
-
-    time_t last_repeat;
-
-    POPEN_INSTANCE *popen_instance;
-
-    struct alarm_entry *next;
-    struct alarm_entry *next_in_progress;
-    struct alarm_entry *prev_in_progress;
-};
-
-#define ae_name(ae) string2str((ae)->name)
-#define ae_chart_id(ae) string2str((ae)->chart)
-#define ae_chart_name(ae) string2str((ae)->chart_name)
-#define ae_chart_context(ae) string2str((ae)->chart_context)
-#define ae_classification(ae) string2str((ae)->classification)
-#define ae_exec(ae) string2str((ae)->exec)
-#define ae_recipient(ae) string2str((ae)->recipient)
-#define ae_source(ae) string2str((ae)->source)
-#define ae_units(ae) string2str((ae)->units)
-#define ae_summary(ae) string2str((ae)->summary)
-#define ae_info(ae) string2str((ae)->info)
-#define ae_old_value_string(ae) string2str((ae)->old_value_string)
-#define ae_new_value_string(ae) string2str((ae)->new_value_string)
-
-typedef struct alarm_log {
-    uint32_t next_log_id;
-    uint32_t next_alarm_id;
-    unsigned int count;
-    unsigned int max;
-    uint32_t health_log_history;                   // the health log history in seconds to be kept in db
-    ALARM_ENTRY *alarms;
-    RW_SPINLOCK spinlock;
-} ALARM_LOG;
-
-typedef struct health {
-    time_t health_delay_up_to;                     // a timestamp to delay alarms processing up to
-    STRING *health_default_exec;                   // the full path of the alarms notifications program
-    STRING *health_default_recipient;              // the default recipient for all alarms
-    unsigned int health_enabled;                   // 1 when this host has health enabled
-    bool use_summary_for_notifications;            // whether or not to use the summary field as a subject for notifications
-} HEALTH;
+#define rrdhost_can_stream_metadata_to_parent(host)                                 \
+    (rrdhost_has_stream_sender_enabled(host) &&                                     \
+     rrdhost_flag_check(host, RRDHOST_FLAG_STREAM_SENDER_READY_4_METRICS) &&        \
+     rrdhost_flag_check(host, RRDHOST_FLAG_COLLECTOR_ONLINE)                  \
+    )
 
 // ----------------------------------------------------------------------------
 // RRD HOST
 
-struct rrdhost_system_info {
-    char *cloud_provider_type;
-    char *cloud_instance_type;
-    char *cloud_instance_region;
-
-    char *host_os_name;
-    char *host_os_id;
-    char *host_os_id_like;
-    char *host_os_version;
-    char *host_os_version_id;
-    char *host_os_detection;
-    char *host_cores;
-    char *host_cpu_freq;
-    char *host_ram_total;
-    char *host_disk_space;
-    char *container_os_name;
-    char *container_os_id;
-    char *container_os_id_like;
-    char *container_os_version;
-    char *container_os_version_id;
-    char *container_os_detection;
-    char *kernel_name;
-    char *kernel_version;
-    char *architecture;
-    char *virtualization;
-    char *virt_detection;
-    char *container;
-    char *container_detection;
-    char *is_k8s_node;
-    uint16_t hops;
-    bool ml_capable;
-    bool ml_enabled;
-    char *install_type;
-    char *prebuilt_arch;
-    char *prebuilt_dist;
-    int mc_version;
-};
-
-struct rrdhost_system_info *rrdhost_labels_to_system_info(RRDLABELS *labels);
+struct stream_thread;
 
 struct rrdhost {
     char machine_guid[GUID_LEN + 1];                // the unique ID of this host
@@ -1163,6 +1029,11 @@ struct rrdhost {
     STRING *abbrev_timezone;                        // the abbriviated timezone of the host
     STRING *program_name;                           // the program name that collects metrics for this host
     STRING *program_version;                        // the program version that collects metrics for this host
+
+    REFCOUNT state_refcount;
+    RRDHOST_STATE state_id;                         // every time data collection (stream receiver) (dis)connects,
+                                                    // this gets incremented - it is used to detect stale functions,
+                                                    // stale backfilling requests, etc.
 
     int32_t utc_offset;                             // the offset in seconds from utc
 
@@ -1188,9 +1059,14 @@ struct rrdhost {
     struct rrdhost_system_info *system_info;        // information collected from the host environment
 
     // ------------------------------------------------------------------------
-    // streaming of data to remote hosts - rrdpush sender
+    // streaming and replication, configuration and status
 
     struct {
+        struct stream_thread *thread;
+        uint8_t refcount;
+
+        // --- sender ---
+
         struct {
             struct {
                 struct {
@@ -1204,7 +1080,28 @@ struct rrdhost {
 
                 uint32_t last_used;                 // the last slot we used for a chart (increments only)
             } pluginsd_chart_slots;
-        } send;
+
+            struct {
+                pid_t tid;
+
+                time_t last_connected;              // last time child connected (stored in db)
+                uint32_t connections;               // the number of times this sender has connected
+
+                struct {
+                    size_t charts;                  // the number of charts currently being replicated to a parent
+                } replication;
+            } status;
+
+            // reserved for the receiver/sender thread - do not use for other purposes
+            struct sender_buffer commit;
+
+            STRING *destination;                    // where to send metrics to
+            STRING *api_key;                        // the api key at the receiving netdata
+            SIMPLE_PATTERN *charts_matching;        // pattern to match the charts to be sent
+            RRDHOST_STREAM_PARENTS parents;         // the list of parents (extracted from destination)
+        } snd;
+
+        // --- receiver ---
 
         struct {
             struct {
@@ -1212,44 +1109,46 @@ struct rrdhost {
                 uint32_t size;
                 RRDSET **array;
             } pluginsd_chart_slots;
-        } receive;
-    } rrdpush;
 
-    char *rrdpush_send_destination;                 // where to send metrics to
-    char *rrdpush_send_api_key;                     // the api key at the receiving netdata
-    struct rrdpush_destinations *destinations;      // a linked list of possible destinations
-    struct rrdpush_destinations *destination;       // the current destination from the above list
-    SIMPLE_PATTERN *rrdpush_send_charts_matching;   // pattern to match the charts to be sent
+            struct {
+                pid_t tid;
 
-    int32_t rrdpush_last_receiver_exit_reason;
-    time_t rrdpush_seconds_to_replicate;            // max time we want to replicate from the child
-    time_t rrdpush_replication_step;                // seconds per replication step
-    size_t rrdpush_receiver_replicating_charts;     // the number of charts currently being replicated from a child
-    NETDATA_DOUBLE rrdpush_receiver_replication_percent; // the % of replication completion
+                time_t last_connected;              // the time the last sender was connected
+                time_t last_disconnected;           // the time the last sender was disconnected
+                time_t last_chart;                  // the time of the last CHART streaming command
+                bool check_obsolete;                // set when child connects, will instruct parent to
+                                                    // trigger a check for obsoleted charts since previous connect
+
+                uint32_t connections;               // the number of times this receiver has connected
+                STREAM_HANDSHAKE exit_reason;       // the last receiver exit reason
+
+                struct {
+                    size_t charts;                  // the number of charts currently being replicated from a child
+                    NETDATA_DOUBLE percent;         // the % of replication completion
+                } replication;
+            } status;
+        } rcv;
+
+        // --- configuration ---
+
+        struct {
+            time_t period;                          // max time we want to replicate from the child
+            time_t step;                            // seconds per replication step
+        } replication;
+
+        RRDHOST_STREAM_PATH path;
+    } stream;
 
     // the following are state information for the threading
     // streaming metrics from this netdata to an upstream netdata
     struct sender_state *sender;
-    ND_THREAD *rrdpush_sender_thread;               // the sender thread
-    size_t rrdpush_sender_replicating_charts;       // the number of charts currently being replicated to a parent
-    struct aclk_sync_cfg_t *aclk_config;
-
-    uint32_t rrdpush_receiver_connection_counter;   // the number of times this receiver has connected
-    uint32_t rrdpush_sender_connection_counter;     // the number of times this sender has connected
-
-    // ------------------------------------------------------------------------
-    // streaming of data from remote hosts - rrdpush receiver
-
-    time_t last_connected;                          // last time child connected (stored in db)
-    time_t child_connect_time;                      // the time the last sender was connected
-    time_t child_last_chart_command;                // the time of the last CHART streaming command
-    time_t child_disconnected_time;                 // the time the last sender was disconnected
-    int connected_children_count;                   // number of senders currently streaming
 
     struct receiver_state *receiver;
-    netdata_mutex_t receiver_lock;
-    int trigger_chart_obsoletion_check;             // set when child connects, will instruct parent to
-                                                    // trigger a check for obsoleted charts since previous connect
+    SPINLOCK receiver_lock;
+
+    // ------------------------------------------------------------------------
+
+    struct aclk_sync_cfg_t *aclk_config;
 
     // ------------------------------------------------------------------------
     // health monitoring options
@@ -1293,11 +1192,18 @@ struct rrdhost {
                                                     // this includes custom host variables
 
     struct {
+        uint32_t metrics_count;                     // atomic
+        uint32_t instances_count;                   // atomic
+        uint32_t contexts_count;                    // atomic
+    } collected;
+
+    struct {
         DICTIONARY *contexts;
         DICTIONARY *hub_queue;
         DICTIONARY *pp_queue;
-        uint32_t metrics;
-        uint32_t instances;
+        uint32_t metrics_count;                     // atomic
+        uint32_t instances_count;                   // atomic
+        uint32_t contexts_count;                    // atomic
     } rrdctx;
 
     struct {
@@ -1306,16 +1212,21 @@ struct rrdhost {
         time_t last_time_s;
     } retention;
 
-    nd_uuid_t  host_uuid;                              // Global GUID for this host
-    nd_uuid_t  *node_id;                               // Cloud node_id
+    ND_UUID host_id;                                // Global GUID for this host
+    ND_UUID node_id;                                // Cloud node_id
 
-    netdata_mutex_t aclk_state_lock;
-    aclk_rrdhost_state aclk_state;
+    struct {
+        ND_UUID claim_id_of_origin;
+        ND_UUID claim_id_of_parent;
+    } aclk;
 
     struct rrdhost *next;
     struct rrdhost *prev;
 };
 extern RRDHOST *localhost;
+
+#define rrdhost_receiver_lock(host) spinlock_lock(&(host)->receiver_lock)
+#define rrdhost_receiver_unlock(host) spinlock_unlock(&(host)->receiver_lock)
 
 #define rrdhost_hostname(host) string2str((host)->hostname)
 #define rrdhost_registry_hostname(host) string2str((host)->registry_hostname)
@@ -1325,20 +1236,22 @@ extern RRDHOST *localhost;
 #define rrdhost_program_name(host) string2str((host)->program_name)
 #define rrdhost_program_version(host) string2str((host)->program_version)
 
-#define rrdhost_aclk_state_lock(host) netdata_mutex_lock(&((host)->aclk_state_lock))
-#define rrdhost_aclk_state_unlock(host) netdata_mutex_unlock(&((host)->aclk_state_lock))
+#define rrdhost_receiver_replicating_charts(host) (__atomic_load_n(&((host)->stream.rcv.status.replication.charts), __ATOMIC_RELAXED))
+#define rrdhost_receiver_replicating_charts_plus_one(host) (__atomic_add_fetch(&((host)->stream.rcv.status.replication.charts), 1, __ATOMIC_RELAXED))
+#define rrdhost_receiver_replicating_charts_minus_one(host) (__atomic_sub_fetch(&((host)->stream.rcv.status.replication.charts), 1, __ATOMIC_RELAXED))
+#define rrdhost_receiver_replicating_charts_zero(host) (__atomic_store_n(&((host)->stream.rcv.status.replication.charts), 0, __ATOMIC_RELAXED))
 
-#define rrdhost_receiver_replicating_charts(host) (__atomic_load_n(&((host)->rrdpush_receiver_replicating_charts), __ATOMIC_RELAXED))
-#define rrdhost_receiver_replicating_charts_plus_one(host) (__atomic_add_fetch(&((host)->rrdpush_receiver_replicating_charts), 1, __ATOMIC_RELAXED))
-#define rrdhost_receiver_replicating_charts_minus_one(host) (__atomic_sub_fetch(&((host)->rrdpush_receiver_replicating_charts), 1, __ATOMIC_RELAXED))
-#define rrdhost_receiver_replicating_charts_zero(host) (__atomic_store_n(&((host)->rrdpush_receiver_replicating_charts), 0, __ATOMIC_RELAXED))
+#define rrdhost_sender_replicating_charts(host) (__atomic_load_n(&((host)->stream.snd.status.replication.charts), __ATOMIC_RELAXED))
+#define rrdhost_sender_replicating_charts_plus_one(host) (__atomic_add_fetch(&((host)->stream.snd.status.replication.charts), 1, __ATOMIC_RELAXED))
+#define rrdhost_sender_replicating_charts_minus_one(host) (__atomic_sub_fetch(&((host)->stream.snd.status.replication.charts), 1, __ATOMIC_RELAXED))
+#define rrdhost_sender_replicating_charts_zero(host) (__atomic_store_n(&((host)->stream.snd.status.replication.charts), 0, __ATOMIC_RELAXED))
 
-#define rrdhost_sender_replicating_charts(host) (__atomic_load_n(&((host)->rrdpush_sender_replicating_charts), __ATOMIC_RELAXED))
-#define rrdhost_sender_replicating_charts_plus_one(host) (__atomic_add_fetch(&((host)->rrdpush_sender_replicating_charts), 1, __ATOMIC_RELAXED))
-#define rrdhost_sender_replicating_charts_minus_one(host) (__atomic_sub_fetch(&((host)->rrdpush_sender_replicating_charts), 1, __ATOMIC_RELAXED))
-#define rrdhost_sender_replicating_charts_zero(host) (__atomic_store_n(&((host)->rrdpush_sender_replicating_charts), 0, __ATOMIC_RELAXED))
+#define rrdhost_is_online(host) (                                                                               \
+    (host) == localhost ||                                                                                      \
+    rrdhost_option_check(host, RRDHOST_OPTION_VIRTUAL_HOST) ||                                                  \
+    (rrdhost_flag_check(host, RRDHOST_FLAG_COLLECTOR_ONLINE) && !rrdhost_flag_check(host, RRDHOST_FLAG_ORPHAN)) \
+ )
 
-#define rrdhost_is_online(host) ((host) == localhost || rrdhost_option_check(host, RRDHOST_OPTION_VIRTUAL_HOST) || !rrdhost_flag_check(host, RRDHOST_FLAG_ORPHAN | RRDHOST_FLAG_RRDPUSH_RECEIVER_DISCONNECTED))
 bool rrdhost_matches_window(RRDHOST *host, time_t after, time_t before, time_t now);
 
 extern DICTIONARY *rrdhost_root_index;
@@ -1380,7 +1293,7 @@ void rrddim_index_destroy(RRDSET *st);
 extern time_t rrdhost_free_orphan_time_s;
 extern time_t rrdhost_free_ephemeral_time_s;
 
-int rrd_init(char *hostname, struct rrdhost_system_info *system_info, bool unittest);
+int rrd_init(const char *hostname, struct rrdhost_system_info *system_info, bool unittest);
 
 RRDHOST *rrdhost_find_by_hostname(const char *hostname);
 RRDHOST *rrdhost_find_by_guid(const char *guid);
@@ -1399,18 +1312,16 @@ RRDHOST *rrdhost_find_or_create(
     int update_every,
     long history,
     RRD_MEMORY_MODE mode,
-    unsigned int health_enabled,
-    unsigned int rrdpush_enabled,
-    char *rrdpush_destination,
-    char *rrdpush_api_key,
-    char *rrdpush_send_charts_matching,
-    bool rrdpush_enable_replication,
-    time_t rrdpush_seconds_to_replicate,
-    time_t rrdpush_replication_step,
+    bool health,
+    bool stream,
+    STRING *parents,
+    STRING *api_key,
+    STRING *send_charts_matching,
+    bool replication,
+    time_t replication_period,
+    time_t replication_step,
     struct rrdhost_system_info *system_info,
     bool is_archived);
-
-int rrdhost_set_system_info_variable(struct rrdhost_system_info *system_info, char *name, char *value);
 
 // ----------------------------------------------------------------------------
 // RRDSET functions
@@ -1433,18 +1344,48 @@ RRDSET *rrdset_create_custom(RRDHOST *host
                              , RRD_MEMORY_MODE memory_mode
                              , long history_entries);
 
-#define rrdset_create(host, type, id, name, family, context, title, units, plugin, module, priority, update_every, chart_type) \
-    rrdset_create_custom(host, type, id, name, family, context, title, units, plugin, module, priority, update_every, chart_type, (host)->rrd_memory_mode, (host)->rrd_history_entries)
+static inline
+RRDSET *rrdset_create(RRDHOST *host
+                             , const char *type
+                             , const char *id
+                             , const char *name
+                             , const char *family
+                             , const char *context
+                             , const char *title
+                             , const char *units
+                             , const char *plugin
+                             , const char *module
+                             , long priority
+                             , int update_every
+                             , RRDSET_TYPE chart_type) {
+    return rrdset_create_custom(
+        host, type, id, name, family, context, title, units, plugin, module, priority, update_every, chart_type, (host)->rrd_memory_mode, (host)->rrd_history_entries);
+}
 
-#define rrdset_create_localhost(type, id, name, family, context, title, units, plugin, module, priority, update_every, chart_type) \
-    rrdset_create(localhost, type, id, name, family, context, title, units, plugin, module, priority, update_every, chart_type)
+static inline
+RRDSET *rrdset_create_localhost(
+                               const char *type
+                             , const char *id
+                             , const char *name
+                             , const char *family
+                             , const char *context
+                             , const char *title
+                             , const char *units
+                             , const char *plugin
+                             , const char *module
+                             , long priority
+                             , int update_every
+                             , RRDSET_TYPE chart_type) {
+    return rrdset_create(
+        localhost, type, id, name, family, context, title, units, plugin, module, priority, update_every, chart_type);
+}
 
 void rrdhost_free_all(void);
 
-void rrdhost_system_info_free(struct rrdhost_system_info *system_info);
 void rrdhost_free___while_having_rrd_wrlock(RRDHOST *host, bool force);
 
-int rrdhost_should_be_removed(RRDHOST *host, RRDHOST *protected_host, time_t now_s);
+bool rrdhost_should_be_removed(RRDHOST *host, RRDHOST *protected_host, time_t now_s);
+bool rrdhost_should_run_health(RRDHOST *host);
 
 void rrdset_update_heterogeneous_flag(RRDSET *st);
 
@@ -1564,7 +1505,6 @@ void rrddim_store_metric(RRDDIM *rd, usec_t point_end_time_ut, NETDATA_DOUBLE n,
 // ----------------------------------------------------------------------------
 // Miscellaneous functions
 
-char *rrdset_strncpyz_name(char *to, const char *from, size_t length);
 void reload_host_labels(void);
 void rrdhost_set_is_parent_label(void);
 
@@ -1588,7 +1528,6 @@ void set_host_properties(
     const char *os, const char *tzone, const char *abbrev_tzone, int32_t utc_offset,
     const char *prog_name, const char *prog_version);
 
-size_t get_tier_grouping(size_t tier);
 void store_metric_collection_completed(void);
 
 static inline void rrdhost_retention(RRDHOST *host, time_t now, bool online, time_t *from, time_t *to) {
@@ -1624,6 +1563,11 @@ static inline double rrddim_get_last_stored_value(RRDDIM *rd_dim, double *max_va
     *max_value = MAX(*max_value, value);
 
     return value;
+}
+
+static inline uint32_t get_uint32_id()
+{
+    return now_realtime_sec() & UINT32_MAX;
 }
 
 //

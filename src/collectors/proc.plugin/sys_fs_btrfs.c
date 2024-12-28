@@ -270,8 +270,8 @@ static inline int find_btrfs_disks(BTRFS_NODE *node, const char *path) {
 
     DIR *dir = opendir(path);
     if (!dir) {
-        if(!node->logged_error) {
-            collector_error("BTRFS: Cannot open directory '%s'.", path);
+        if (!node->logged_error) {
+            nd_log(NDLS_COLLECTORS, errno == ENOENT ? NDLP_INFO : NDLP_ERR, "BTRFS: Cannot open directory '%s'.", path);
             node->logged_error = 1;
         }
         return 1;
@@ -374,8 +374,8 @@ static inline int find_btrfs_devices(BTRFS_NODE *node, const char *path) {
 
     DIR *dir = opendir(path);
     if (!dir) {
-        if(!node->logged_error) {
-            collector_error("BTRFS: Cannot open directory '%s'.", path);
+        if (!node->logged_error) {
+            nd_log(NDLS_COLLECTORS, errno == ENOENT ? NDLP_INFO : NDLP_ERR, "BTRFS: Cannot open directory '%s'.", path);
             node->logged_error = 1;
         }
         return 1;
@@ -474,8 +474,8 @@ static inline int find_all_btrfs_pools(const char *path, int update_every) {
 
     DIR *dir = opendir(path);
     if (!dir) {
-        if(!logged_error) {
-            collector_error("BTRFS: Cannot open directory '%s'.", path);
+        if (!logged_error) {
+            nd_log(NDLS_COLLECTORS, errno == ENOENT ? NDLP_INFO : NDLP_ERR, "BTRFS: Cannot open directory '%s'.", path);
             logged_error = 1;
         }
         return 1;
@@ -678,7 +678,7 @@ int do_sys_fs_btrfs(int update_every, usec_t dt) {
         , do_error_stats = CONFIG_BOOLEAN_AUTO;
 
     static usec_t refresh_delta = 0, refresh_every = 60 * USEC_PER_SEC;
-    static char *btrfs_path = NULL;
+    static const char *btrfs_path = NULL;
 
     (void)dt;
 
@@ -689,7 +689,7 @@ int do_sys_fs_btrfs(int update_every, usec_t dt) {
         snprintfz(filename, FILENAME_MAX, "%s%s", netdata_configured_host_prefix, "/sys/fs/btrfs");
         btrfs_path = config_get("plugin:proc:/sys/fs/btrfs", "path to monitor", filename);
 
-        refresh_every = config_get_number("plugin:proc:/sys/fs/btrfs", "check for btrfs changes every", refresh_every / USEC_PER_SEC) * USEC_PER_SEC;
+        refresh_every = config_get_duration_seconds("plugin:proc:/sys/fs/btrfs", "check for btrfs changes every", refresh_every / USEC_PER_SEC) * USEC_PER_SEC;
         refresh_delta = refresh_every;
 
         do_allocation_disks = config_get_boolean_ondemand("plugin:proc:/sys/fs/btrfs", "physical disks allocation", do_allocation_disks);

@@ -50,17 +50,16 @@ static struct {
         ND_THREAD *list;
     } running;
 
-    pthread_attr_t *attr;
+    pthread_attr_t attr;
 } threads_globals = {
     .exited = {
-        .spinlock = NETDATA_SPINLOCK_INITIALIZER,
+        .spinlock = SPINLOCK_INITIALIZER,
         .list = NULL,
     },
     .running = {
-        .spinlock = NETDATA_SPINLOCK_INITIALIZER,
+        .spinlock = SPINLOCK_INITIALIZER,
         .list = NULL,
     },
-    .attr = NULL,
 };
 
 static __thread ND_THREAD *_nd_thread_info = NULL;
@@ -186,20 +185,15 @@ void nd_thread_rwspinlock_write_unlocked(void) { if(_nd_thread_info) _nd_thread_
 // early initialization
 
 size_t netdata_threads_init(void) {
-    int i;
+    memset(&threads_globals.attr, 0, sizeof(threads_globals.attr));
 
-    if(!threads_globals.attr) {
-        threads_globals.attr = callocz(1, sizeof(pthread_attr_t));
-        i = pthread_attr_init(threads_globals.attr);
-        if (i != 0)
-            fatal("pthread_attr_init() failed with code %d.", i);
-    }
+    if(pthread_attr_init(&threads_globals.attr) != 0)
+        fatal("pthread_attr_init() failed.");
 
     // get the required stack size of the threads of netdata
     size_t stacksize = 0;
-    i = pthread_attr_getstacksize(threads_globals.attr, &stacksize);
-    if(i != 0)
-        fatal("pthread_attr_getstacksize() failed with code %d.", i);
+    if(pthread_attr_getstacksize(&threads_globals.attr, &stacksize) != 0)
+        fatal("pthread_attr_getstacksize() failed with code.");
 
     return stacksize;
 }
@@ -211,8 +205,8 @@ void netdata_threads_init_after_fork(size_t stacksize) {
     int i;
 
     // set pthread stack size
-    if(threads_globals.attr && stacksize > (size_t)PTHREAD_STACK_MIN) {
-        i = pthread_attr_setstacksize(threads_globals.attr, stacksize);
+    if(stacksize > (size_t)PTHREAD_STACK_MIN) {
+        i = pthread_attr_setstacksize(&threads_globals.attr, stacksize);
         if(i != 0)
             nd_log(NDLS_DAEMON, NDLP_WARNING, "pthread_attr_setstacksize() to %zu bytes, failed with code %d.", stacksize, i);
         else
@@ -236,7 +230,7 @@ void netdata_threads_init_for_external_plugins(size_t stacksize) {
 // ----------------------------------------------------------------------------
 
 void rrdset_thread_rda_free(void);
-void sender_thread_buffer_free(void);
+void sender_commit_thread_buffer_free(void);
 void query_target_free(void);
 void service_exits(void);
 void rrd_collector_finished(void);
@@ -305,7 +299,7 @@ static void nd_thread_exit(void *pptr) {
         nd_log(NDLS_DAEMON, NDLP_DEBUG, "thread with task id %d finished", nti->tid);
 
     rrd_collector_finished();
-    sender_thread_buffer_free();
+    sender_commit_thread_buffer_free();
     rrdset_thread_rda_free();
     query_target_free();
     thread_cache_destroy();
@@ -371,7 +365,7 @@ ND_THREAD *nd_thread_create(const char *tag, NETDATA_THREAD_OPTIONS options, voi
     DOUBLE_LINKED_LIST_APPEND_ITEM_UNSAFE(threads_globals.running.list, nti, prev, next);
     spinlock_unlock(&threads_globals.running.spinlock);
 
-    int ret = pthread_create(&nti->thread, threads_globals.attr, nd_thread_starting_point, nti);
+    int ret = pthread_create(&nti->thread, &threads_globals.attr, nd_thread_starting_point, nti);
     if(ret != 0) {
         nd_log(NDLS_DAEMON, NDLP_ERR,
                "failed to create new thread for %s. pthread_create() failed with code %d",

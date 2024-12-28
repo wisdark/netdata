@@ -4,9 +4,7 @@
 #include "database/KolmogorovSmirnovDist.h"
 
 #define MAX_POINTS 10000
-int enable_metric_correlations = CONFIG_BOOLEAN_YES;
 int metric_correlations_version = 1;
-WEIGHTS_METHOD default_metric_correlations_method = WEIGHTS_METHOD_MC_KS2;
 
 typedef struct weights_stats {
     NETDATA_DOUBLE max_base_high_ratio;
@@ -36,7 +34,7 @@ WEIGHTS_METHOD weights_string_to_method(const char *method) {
         if(strcmp(method, weights_methods[i].name) == 0)
             return weights_methods[i].value;
 
-    return default_metric_correlations_method;
+    return WEIGHTS_METHOD_MC_KS2;
 }
 
 const char *weights_method_to_string(WEIGHTS_METHOD method) {
@@ -44,7 +42,7 @@ const char *weights_method_to_string(WEIGHTS_METHOD method) {
         if(weights_methods[i].value == method)
             return weights_methods[i].name;
 
-    return "unknown";
+    return "ks2";
 }
 
 // ----------------------------------------------------------------------------
@@ -978,6 +976,12 @@ static size_t registered_results_to_json_multinode_group_by(
     BUFFER *key = buffer_create(0, NULL);
     BUFFER *name = buffer_create(0, NULL);
     dfe_start_read(results, t) {
+        char node_uuid[UUID_STR_LEN];
+
+        if(UUIDiszero(t->host->node_id))
+            uuid_unparse_lower(t->host->host_id.uuid, node_uuid);
+        else
+            uuid_unparse_lower(t->host->node_id.uuid, node_uuid);
 
         buffer_flush(key);
         buffer_flush(name);
@@ -998,7 +1002,7 @@ static size_t registered_results_to_json_multinode_group_by(
             if(!(qwd->qwr->group_by.group_by & RRDR_GROUP_BY_NODE)) {
                 buffer_fast_strcat(key, "@", 1);
                 buffer_fast_strcat(name, "@", 1);
-                buffer_strcat(key, t->host->machine_guid);
+                buffer_strcat(key, node_uuid);
                 buffer_strcat(name, rrdhost_hostname(t->host));
             }
         }
@@ -1008,7 +1012,7 @@ static size_t registered_results_to_json_multinode_group_by(
                 buffer_fast_strcat(name, ",", 1);
             }
 
-            buffer_strcat(key, t->host->machine_guid);
+            buffer_strcat(key, node_uuid);
             buffer_strcat(name, rrdhost_hostname(t->host));
         }
         if(qwd->qwr->group_by.group_by & RRDR_GROUP_BY_CONTEXT) {
@@ -1277,11 +1281,14 @@ NETDATA_DOUBLE *rrd2rrdr_ks2(
             .time_group_options = time_group_options,
             .tier = tier,
             .query_source = QUERY_SOURCE_API_WEIGHTS,
-            .priority = STORAGE_PRIORITY_SYNCHRONOUS,
+            .priority = STORAGE_PRIORITY_SYNCHRONOUS_FIRST,
     };
 
     QUERY_TARGET *qt = query_target_create(&qtr);
+    stream_control_user_weights_query_started();
     RRDR *r = rrd2rrdr(owa, qt);
+    stream_control_user_weights_query_finished();
+
     if(!r)
         goto cleanup;
 
@@ -1413,7 +1420,7 @@ static void rrdset_metric_correlations_volume(
 
     QUERY_VALUE baseline_average = rrdmetric2value(host, rca, ria, rma, baseline_after, baseline_before,
                                                    options, time_group_method, time_group_options, tier, 0,
-                                                   QUERY_SOURCE_API_WEIGHTS, STORAGE_PRIORITY_SYNCHRONOUS);
+                                                   QUERY_SOURCE_API_WEIGHTS, STORAGE_PRIORITY_SYNCHRONOUS_FIRST);
     merge_query_value_to_stats(&baseline_average, stats, 1);
 
     if(!netdata_double_isnumber(baseline_average.value)) {
@@ -1423,7 +1430,7 @@ static void rrdset_metric_correlations_volume(
 
     QUERY_VALUE highlight_average = rrdmetric2value(host, rca, ria, rma, after, before,
                                                     options, time_group_method, time_group_options, tier, 0,
-                                                    QUERY_SOURCE_API_WEIGHTS, STORAGE_PRIORITY_SYNCHRONOUS);
+                                                    QUERY_SOURCE_API_WEIGHTS, STORAGE_PRIORITY_SYNCHRONOUS_FIRST);
     merge_query_value_to_stats(&highlight_average, stats, 1);
 
     if(!netdata_double_isnumber(highlight_average.value))
@@ -1443,7 +1450,7 @@ static void rrdset_metric_correlations_volume(
     snprintfz(highlight_countif_options, 50, "%s" NETDATA_DOUBLE_FORMAT, highlight_average.value < baseline_average.value ? "<" : ">", baseline_average.value);
     QUERY_VALUE highlight_countif = rrdmetric2value(host, rca, ria, rma, after, before,
                                                     options, RRDR_GROUPING_COUNTIF, highlight_countif_options, tier, 0,
-                                                    QUERY_SOURCE_API_WEIGHTS, STORAGE_PRIORITY_SYNCHRONOUS);
+                                                    QUERY_SOURCE_API_WEIGHTS, STORAGE_PRIORITY_SYNCHRONOUS_FIRST);
     merge_query_value_to_stats(&highlight_countif, stats, 1);
 
     if(!netdata_double_isnumber(highlight_countif.value)) {
@@ -1487,7 +1494,7 @@ static void rrdset_weights_value(
 
     QUERY_VALUE qv = rrdmetric2value(host, rca, ria, rma, after, before,
                                      options, time_group_method, time_group_options, tier, 0,
-                                     QUERY_SOURCE_API_WEIGHTS, STORAGE_PRIORITY_SYNCHRONOUS);
+                                     QUERY_SOURCE_API_WEIGHTS, STORAGE_PRIORITY_SYNCHRONOUS_FIRST);
 
     merge_query_value_to_stats(&qv, stats, 1);
 
@@ -1520,7 +1527,9 @@ static void rrdset_weights_multi_dimensional_value(struct query_weights_data *qw
 
     ONEWAYALLOC *owa = onewayalloc_create(16 * 1024);
     QUERY_TARGET *qt = query_target_create(&qtr);
+    stream_control_user_weights_query_started();
     RRDR *r = rrd2rrdr(owa, qt);
+    stream_control_user_weights_query_finished();
 
     if(!r || rrdr_rows(r) != 1 || !r->d || r->d != r->internal.qt->query.used)
         goto cleanup;

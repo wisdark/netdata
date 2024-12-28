@@ -2,10 +2,6 @@
 
 #include "../libnetdata.h"
 
-#if defined(OS_WINDOWS)
-#include <windows.h>
-#endif
-
 pid_t os_gettid(void) {
 #if defined(HAVE_GETTID)
     return gettid();
@@ -30,4 +26,9 @@ pid_t gettid_cached(void) {
         gettid_cached_tid = os_gettid();
 
     return gettid_cached_tid;
+}
+
+pid_t gettid_uncached(void) {
+    gettid_cached_tid = 0;
+    return gettid_cached();
 }

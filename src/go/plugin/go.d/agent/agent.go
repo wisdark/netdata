@@ -13,6 +13,9 @@ import (
 	"time"
 
 	"github.com/netdata/netdata/go/plugins/logger"
+	"github.com/netdata/netdata/go/plugins/pkg/multipath"
+	"github.com/netdata/netdata/go/plugins/pkg/netdataapi"
+	"github.com/netdata/netdata/go/plugins/pkg/safewriter"
 	"github.com/netdata/netdata/go/plugins/plugin/go.d/agent/confgroup"
 	"github.com/netdata/netdata/go/plugins/plugin/go.d/agent/discovery"
 	"github.com/netdata/netdata/go/plugins/plugin/go.d/agent/filelock"
@@ -20,10 +23,6 @@ import (
 	"github.com/netdata/netdata/go/plugins/plugin/go.d/agent/functions"
 	"github.com/netdata/netdata/go/plugins/plugin/go.d/agent/jobmgr"
 	"github.com/netdata/netdata/go/plugins/plugin/go.d/agent/module"
-	"github.com/netdata/netdata/go/plugins/plugin/go.d/agent/netdataapi"
-	"github.com/netdata/netdata/go/plugins/plugin/go.d/agent/safewriter"
-	"github.com/netdata/netdata/go/plugins/plugin/go.d/agent/vnodes"
-	"github.com/netdata/netdata/go/plugins/plugin/go.d/pkg/multipath"
 
 	"github.com/mattn/go-isatty"
 )
@@ -32,37 +31,41 @@ var isTerminal = isatty.IsTerminal(os.Stdout.Fd())
 
 // Config is an Agent configuration.
 type Config struct {
-	Name                 string
-	ConfDir              []string
-	ModulesConfDir       []string
-	ModulesConfSDDir     []string
-	ModulesConfWatchPath []string
-	VnodesConfDir        []string
-	StateFile            string
-	LockDir              string
-	ModuleRegistry       module.Registry
-	RunModule            string
-	MinUpdateEvery       int
+	Name                      string
+	PluginConfigDir           []string
+	CollectorsConfigDir       []string
+	CollectorsConfigWatchPath []string
+	ServiceDiscoveryConfigDir []string
+	StateFile                 string
+	LockDir                   string
+	ModuleRegistry            module.Registry
+	RunModule                 string
+	MinUpdateEvery            int
 }
 
 // Agent represents orchestrator.
 type Agent struct {
 	*logger.Logger
 
-	Name              string
-	ConfDir           multipath.MultiPath
-	ModulesConfDir    multipath.MultiPath
-	ModulesConfSDDir  multipath.MultiPath
-	ModulesSDConfPath []string
-	VnodesConfDir     multipath.MultiPath
-	StateFile         string
-	LockDir           string
-	RunModule         string
-	MinUpdateEvery    int
-	ModuleRegistry    module.Registry
-	Out               io.Writer
+	Name string
+
+	ConfigDir                 multipath.MultiPath
+	CollectorsConfDir         multipath.MultiPath
+	CollectorsConfigWatchPath []string
+	ServiceDiscoveryConfigDir multipath.MultiPath
+
+	StateFile string
+	LockDir   string
+
+	RunModule      string
+	MinUpdateEvery int
+
+	ModuleRegistry module.Registry
+	Out            io.Writer
 
 	api *netdataapi.API
+
+	quitCh chan struct{}
 }
 
 // New creates a new Agent.
@@ -71,19 +74,19 @@ func New(cfg Config) *Agent {
 		Logger: logger.New().With(
 			slog.String("component", "agent"),
 		),
-		Name:              cfg.Name,
-		ConfDir:           cfg.ConfDir,
-		ModulesConfDir:    cfg.ModulesConfDir,
-		ModulesConfSDDir:  cfg.ModulesConfSDDir,
-		ModulesSDConfPath: cfg.ModulesConfWatchPath,
-		VnodesConfDir:     cfg.VnodesConfDir,
-		StateFile:         cfg.StateFile,
-		LockDir:           cfg.LockDir,
-		RunModule:         cfg.RunModule,
-		MinUpdateEvery:    cfg.MinUpdateEvery,
-		ModuleRegistry:    module.DefaultRegistry,
-		Out:               safewriter.Stdout,
-		api:               netdataapi.New(safewriter.Stdout),
+		Name:                      cfg.Name,
+		ConfigDir:                 cfg.PluginConfigDir,
+		CollectorsConfDir:         cfg.CollectorsConfigDir,
+		ServiceDiscoveryConfigDir: cfg.ServiceDiscoveryConfigDir,
+		CollectorsConfigWatchPath: cfg.CollectorsConfigWatchPath,
+		StateFile:                 cfg.StateFile,
+		LockDir:                   cfg.LockDir,
+		RunModule:                 cfg.RunModule,
+		MinUpdateEvery:            cfg.MinUpdateEvery,
+		ModuleRegistry:            module.DefaultRegistry,
+		Out:                       safewriter.Stdout,
+		api:                       netdataapi.New(safewriter.Stdout),
+		quitCh:                    make(chan struct{}),
 	}
 }
 
@@ -101,17 +104,25 @@ func serve(a *Agent) {
 	var exit bool
 
 	for {
+		module.ObsoleteCharts(false)
+
 		ctx, cancel := context.WithCancel(context.Background())
 
 		wg.Add(1)
 		go func() { defer wg.Done(); a.run(ctx) }()
 
-		switch sig := <-ch; sig {
-		case syscall.SIGHUP:
-			a.Infof("received %s signal (%d). Restarting running instance", sig, sig)
-		default:
-			a.Infof("received %s signal (%d). Terminating...", sig, sig)
-			module.DontObsoleteCharts()
+		select {
+		case sig := <-ch:
+			switch sig {
+			case syscall.SIGHUP:
+				a.Infof("received %s signal (%d). Restarting running instance", sig, sig)
+				module.ObsoleteCharts(true)
+			default:
+				a.Infof("received %s signal (%d). Terminating...", sig, sig)
+				exit = true
+			}
+		case <-a.quitCh:
+			a.Infof("received QUIT command. Terminating...")
 			exit = true
 		}
 
@@ -153,7 +164,7 @@ func (a *Agent) run(ctx context.Context) {
 		if isTerminal {
 			os.Exit(0)
 		}
-		_ = a.api.DISABLE()
+		a.api.DISABLE()
 		return
 	}
 
@@ -163,7 +174,7 @@ func (a *Agent) run(ctx context.Context) {
 		if isTerminal {
 			os.Exit(0)
 		}
-		_ = a.api.DISABLE()
+		a.api.DISABLE()
 		return
 	}
 
@@ -187,9 +198,7 @@ func (a *Agent) run(ctx context.Context) {
 	jobMgr.ConfigDefaults = discCfg.Registry
 	jobMgr.FnReg = fnMgr
 
-	if reg := a.setupVnodeRegistry(); reg == nil || reg.Len() == 0 {
-		vnodes.Disabled = true
-	} else {
+	if reg := a.setupVnodeRegistry(); len(reg) > 0 {
 		jobMgr.Vnodes = reg
 	}
 
@@ -212,7 +221,7 @@ func (a *Agent) run(ctx context.Context) {
 	var wg sync.WaitGroup
 
 	wg.Add(1)
-	go func() { defer wg.Done(); fnMgr.Run(ctx) }()
+	go func() { defer wg.Done(); fnMgr.Run(ctx, a.quitCh) }()
 
 	wg.Add(1)
 	go func() { defer wg.Done(); jobMgr.Run(ctx, in) }()

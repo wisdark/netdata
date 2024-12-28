@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "sqlite_metadata.h"
-#include "sqlite3recover.h"
+#include "database/sqlite/vendored/sqlite3recover.h"
+#include "health/health-alert-entry.h"
+
 //#include "sqlite_db_migration.h"
 
 #define DB_METADATA_VERSION 18
@@ -27,6 +29,17 @@ const char *database_config[] = {
 
     "CREATE TABLE IF NOT EXISTS chart_label(chart_id blob, source_type int, label_key text, "
     "label_value text, date_created int, PRIMARY KEY (chart_id, label_key))",
+
+    "CREATE TRIGGER IF NOT EXISTS del_chart_label AFTER DELETE ON chart "
+    "BEGIN DELETE FROM chart_label WHERE chart_id = old.chart_id; END",
+
+    "CREATE TRIGGER IF NOT EXISTS del_chart "
+    "AFTER DELETE ON dimension "
+    "FOR EACH ROW "
+    "BEGIN"
+    "  DELETE FROM chart WHERE chart_id = OLD.chart_id "
+    "  AND NOT EXISTS (SELECT 1 FROM dimension WHERE chart_id = OLD.chart_id);"
+    "END",
 
     "CREATE TABLE IF NOT EXISTS node_instance (host_id blob PRIMARY KEY, claim_id, node_id, date_created)",
 
@@ -66,6 +79,19 @@ const char *database_config[] = {
     "CREATE INDEX IF NOT EXISTS health_log_d_ind_6 on health_log_detail (health_log_id, when_key)",
     "CREATE INDEX IF NOT EXISTS health_log_d_ind_7 on health_log_detail (alarm_id)",
     "CREATE INDEX IF NOT EXISTS health_log_d_ind_8 on health_log_detail (new_status, updated_by_id)",
+
+    "CREATE TABLE IF NOT EXISTS agent_event_log (id INTEGER PRIMARY KEY, version TEXT, event_type INT, value, date_created INT)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_event_log1 on agent_event_log (event_type)",
+
+    "CREATE TABLE IF NOT EXISTS alert_queue "
+    " (host_id BLOB, health_log_id INT, unique_id INT, alarm_id INT, status INT, date_scheduled INT, "
+    " UNIQUE(host_id, health_log_id, alarm_id))",
+
+    "CREATE TABLE IF NOT EXISTS alert_version (health_log_id INTEGER PRIMARY KEY, unique_id INT, status INT, "
+    "version INT, date_submitted INT)",
+
+    "CREATE TABLE IF NOT EXISTS aclk_queue (sequence_id INTEGER PRIMARY KEY, host_id blob, health_log_id INT, "
+    "unique_id INT, date_created INT,  UNIQUE(host_id, health_log_id))",
 
     NULL
 };
@@ -149,8 +175,7 @@ sqlite3 *db_meta = NULL;
 #define METADATA_RUNTIME_THRESHOLD (5)              // Run time threshold for cleanup task
 
 #define METADATA_HOST_CHECK_FIRST_CHECK (5)         // First check for pending metadata
-#define METADATA_HOST_CHECK_INTERVAL (30)           // Repeat check for pending metadata
-#define METADATA_HOST_CHECK_IMMEDIATE (5)           // Repeat immediate run because we have more metadata to write
+#define METADATA_HOST_CHECK_INTERVAL (5)            // Repeat check for pending metadata
 #define MAX_METADATA_CLEANUP (500)                  // Maximum metadata write operations (e.g  deletes before retrying)
 #define METADATA_MAX_BATCH_SIZE (512)               // Maximum commands to execute before running the event loop
 
@@ -166,6 +191,8 @@ enum metadata_opcode {
     METADATA_SCAN_HOSTS,
     METADATA_LOAD_HOST_CONTEXT,
     METADATA_DELETE_HOST_CHART_LABELS,
+    METADATA_ADD_HOST_AE,
+    METADATA_DEL_HOST_AE,
     METADATA_MAINTENANCE,
     METADATA_SYNC_SHUTDOWN,
     METADATA_UNITTEST,
@@ -193,12 +220,14 @@ struct metadata_wc {
     uv_async_t async;
     uv_timer_t timer_req;
     time_t metadata_check_after;
+    Pvoid_t ae_DelJudyL;
     METADATA_FLAG flags;
     struct completion start_stop_complete;
     struct completion *scan_complete;
     /* FIFO command queue */
     SPINLOCK cmd_queue_lock;
     struct metadata_cmd *cmd_base;
+    ARAL *ar;
 };
 
 #define metadata_flag_check(target_flags, flag) (__atomic_load_n(&((target_flags)->flags), __ATOMIC_SEQ_CST) & (flag))
@@ -234,26 +263,21 @@ static inline void set_host_node_id(RRDHOST *host, nd_uuid_t *node_id)
         return;
 
     if (unlikely(!node_id)) {
-        freez(host->node_id);
-        __atomic_store_n(&host->node_id, NULL, __ATOMIC_RELAXED);
+        host->node_id = UUID_ZERO;
         return;
     }
 
     struct aclk_sync_cfg_t  *wc = host->aclk_config;
 
-    if (unlikely(!host->node_id)) {
-        nd_uuid_t *t = mallocz(sizeof(*host->node_id));
-        uuid_copy(*t, *node_id);
-        __atomic_store_n(&host->node_id, t, __ATOMIC_RELAXED);
-    }
-    else {
-        uuid_copy(*(host->node_id), *node_id);
-    }
+    uuid_copy(host->node_id.uuid, *node_id);
 
     if (unlikely(!wc))
-        sql_create_aclk_table(host, &host->host_uuid, node_id);
+        create_aclk_config(host, &host->host_id.uuid, node_id);
     else
         uuid_unparse_lower(*node_id, wc->node_id);
+
+    stream_receiver_send_node_and_claim_id_to_child(host);
+    stream_path_node_id_updated(host);
 }
 
 #define SQL_SET_HOST_LABEL                                                                                             \
@@ -292,7 +316,7 @@ done:
 
 #define SQL_UPDATE_NODE_ID  "UPDATE node_instance SET node_id = @node_id WHERE host_id = @host_id"
 
-int update_node_id(nd_uuid_t *host_id, nd_uuid_t *node_id)
+int sql_update_node_id(nd_uuid_t *host_id, nd_uuid_t *node_id)
 {
     sqlite3_stmt *res = NULL;
     RRDHOST *host = NULL;
@@ -426,7 +450,8 @@ struct node_instance_list *get_node_list(void)
                 continue;
 
             if (rrdhost_flag_check(host, RRDHOST_FLAG_PENDING_CONTEXT_LOAD)) {
-                netdata_log_info(
+                nd_log_limit_static_global_var(erl, 1, 0);
+                nd_log_limit(&erl, NDLS_DAEMON, NDLP_INFO,
                     "ACLK: 'host:%s' skipping get node list because context is initializing", rrdhost_hostname(host));
                 continue;
             }
@@ -435,8 +460,8 @@ struct node_instance_list *get_node_list(void)
             node_list[row].queryable = 1;
             node_list[row].live =
                 (host == localhost || host->receiver || !(rrdhost_flag_check(host, RRDHOST_FLAG_ORPHAN))) ? 1 : 0;
-            node_list[row].hops = host->system_info ? host->system_info->hops :
-                                  uuid_eq(*host_id, localhost->host_uuid) ? 0 : 1;
+            node_list[row].hops = host->system_info ? rrdhost_system_info_hops(host->system_info) :
+                                  uuid_eq(*host_id, localhost->host_id.uuid) ? 0 : 1;
             node_list[row].hostname =
                 sqlite3_column_bytes(res, 2) ? strdupz((char *)sqlite3_column_text(res, 2)) : NULL;
         }
@@ -465,7 +490,7 @@ void sql_load_node_id(RRDHOST *host)
         return;
 
     int param = 0;
-    SQLITE_BIND_FAIL(done, sqlite3_bind_blob(res, ++param, &host->host_uuid, sizeof(host->host_uuid), SQLITE_STATIC));
+    SQLITE_BIND_FAIL(done, sqlite3_bind_blob(res, ++param, &host->host_id.uuid, sizeof(host->host_id.uuid), SQLITE_STATIC));
 
     param = 0;
     int rc = sqlite3_step_monitored(res);
@@ -495,7 +520,7 @@ void sql_build_host_system_info(nd_uuid_t *host_id, struct rrdhost_system_info *
 
     param = 0;
     while (sqlite3_step_monitored(res) == SQLITE_ROW) {
-        rrdhost_set_system_info_variable(
+        rrdhost_system_info_set_by_name(
             system_info, (char *)sqlite3_column_text(res, 0), (char *)sqlite3_column_text(res, 1));
     }
 
@@ -812,24 +837,6 @@ static int chart_label_store_to_sql_callback(const char *name, const char *value
     return 1;
 }
 
-#define SQL_DELETE_CHART_LABEL "DELETE FROM chart_label WHERE chart_id = @chart_id"
-#define SQL_DELETE_CHART_LABEL_HISTORY "DELETE FROM chart_label WHERE date_created < %ld AND chart_id = @chart_id"
-
-static void clean_old_chart_labels(RRDSET *st)
-{
-    char sql[512];
-    time_t first_time_s = rrdset_first_entry_s(st);
-
-    if (unlikely(!first_time_s))
-        snprintfz(sql, sizeof(sql) - 1, SQL_DELETE_CHART_LABEL);
-    else
-        snprintfz(sql, sizeof(sql) - 1, SQL_DELETE_CHART_LABEL_HISTORY, first_time_s);
-
-    int rc = exec_statement_with_uuid(sql, &st->chart_uuid);
-    if (unlikely(rc))
-        error_report("METADATA: 'host:%s' Failed to clean old labels for chart %s", rrdhost_hostname(st->rrdhost), rrdset_name(st));
-}
-
 static int check_and_update_chart_labels(RRDSET *st, BUFFER *work_buffer, size_t *query_counter)
 {
     size_t old_version = st->rrdlabels_last_saved_version;
@@ -848,7 +855,6 @@ static int check_and_update_chart_labels(RRDSET *st, BUFFER *work_buffer, size_t
         (*query_counter)++;
     }
 
-    clean_old_chart_labels(st);
     return rc;
 }
 
@@ -925,22 +931,22 @@ static int store_host_metadata(RRDHOST *host)
         return false;
 
     int param = 0;
-    SQLITE_BIND_FAIL(bind_fail, sqlite3_bind_blob(res, ++param, &host->host_uuid, sizeof(host->host_uuid), SQLITE_STATIC));
+    SQLITE_BIND_FAIL(bind_fail, sqlite3_bind_blob(res, ++param, &host->host_id.uuid, sizeof(host->host_id.uuid), SQLITE_STATIC));
     SQLITE_BIND_FAIL(bind_fail, bind_text_null(res, ++param, rrdhost_hostname(host), 0));
     SQLITE_BIND_FAIL(bind_fail, bind_text_null(res, ++param, rrdhost_registry_hostname(host), 1));
     SQLITE_BIND_FAIL(bind_fail, sqlite3_bind_int(res, ++param, host->rrd_update_every));
     SQLITE_BIND_FAIL(bind_fail, bind_text_null(res, ++param, rrdhost_os(host), 1));
     SQLITE_BIND_FAIL(bind_fail, bind_text_null(res, ++param, rrdhost_timezone(host), 1));
     SQLITE_BIND_FAIL(bind_fail, bind_text_null(res, ++param, "", 1));
-    SQLITE_BIND_FAIL(bind_fail, sqlite3_bind_int(res, ++param, host->system_info ? host->system_info->hops : 0));
+    SQLITE_BIND_FAIL(bind_fail, sqlite3_bind_int(res, ++param, host->system_info ? rrdhost_system_info_hops(host->system_info) : 0));
     SQLITE_BIND_FAIL(bind_fail, sqlite3_bind_int(res, ++param, host->rrd_memory_mode));
     SQLITE_BIND_FAIL(bind_fail, bind_text_null(res, ++param, rrdhost_abbrev_timezone(host), 1));
     SQLITE_BIND_FAIL(bind_fail, sqlite3_bind_int(res, ++param, host->utc_offset));
     SQLITE_BIND_FAIL(bind_fail, bind_text_null(res, ++param, rrdhost_program_name(host), 1));
     SQLITE_BIND_FAIL(bind_fail, bind_text_null(res, ++param, rrdhost_program_version(host), 1));
     SQLITE_BIND_FAIL(bind_fail, sqlite3_bind_int64(res, ++param, host->rrd_history_entries));
-    SQLITE_BIND_FAIL(bind_fail, sqlite3_bind_int(res, ++param, (int ) host->health.health_enabled));
-    SQLITE_BIND_FAIL(bind_fail, sqlite3_bind_int64(res, ++param, (sqlite3_int64) host->last_connected));
+    SQLITE_BIND_FAIL(bind_fail, sqlite3_bind_int(res, ++param, (int)host->health.enabled));
+    SQLITE_BIND_FAIL(bind_fail, sqlite3_bind_int64(res, ++param, (sqlite3_int64) host->stream.snd.status.last_connected));
 
     int store_rc = sqlite3_step_monitored(res);
 
@@ -993,34 +999,7 @@ static bool store_host_systeminfo(RRDHOST *host)
     if (unlikely(!system_info))
         return false;
 
-    int ret = 0;
-
-    ret += add_host_sysinfo_key_value("NETDATA_CONTAINER_OS_NAME", system_info->container_os_name, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_CONTAINER_OS_ID", system_info->container_os_id, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_CONTAINER_OS_ID_LIKE", system_info->container_os_id_like, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_CONTAINER_OS_VERSION", system_info->container_os_version, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_CONTAINER_OS_VERSION_ID", system_info->container_os_version_id, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_CONTAINER_OS_DETECTION", system_info->host_os_detection, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_HOST_OS_NAME", system_info->host_os_name, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_HOST_OS_ID", system_info->host_os_id, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_HOST_OS_ID_LIKE", system_info->host_os_id_like, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_HOST_OS_VERSION", system_info->host_os_version, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_HOST_OS_VERSION_ID", system_info->host_os_version_id, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_HOST_OS_DETECTION", system_info->host_os_detection, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_SYSTEM_KERNEL_NAME", system_info->kernel_name, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_SYSTEM_CPU_LOGICAL_CPU_COUNT", system_info->host_cores, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_SYSTEM_CPU_FREQ", system_info->host_cpu_freq, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_SYSTEM_TOTAL_RAM", system_info->host_ram_total, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_SYSTEM_TOTAL_DISK_SIZE", system_info->host_disk_space, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_SYSTEM_KERNEL_VERSION", system_info->kernel_version, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_SYSTEM_ARCHITECTURE", system_info->architecture, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_SYSTEM_VIRTUALIZATION", system_info->virtualization, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_SYSTEM_VIRT_DETECTION", system_info->virt_detection, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_SYSTEM_CONTAINER", system_info->container, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_SYSTEM_CONTAINER_DETECTION", system_info->container_detection, &host->host_uuid);
-    ret += add_host_sysinfo_key_value("NETDATA_HOST_IS_K8S_NODE", system_info->is_k8s_node, &host->host_uuid);
-
-    return !(24 == ret);
+    return (24 != rrdhost_system_info_foreach(system_info, add_host_sysinfo_key_value, &host->host_id.uuid));
 }
 
 
@@ -1037,7 +1016,7 @@ static int store_chart_metadata(RRDSET *st)
 
     int param = 0;
     SQLITE_BIND_FAIL(bind_fail, sqlite3_bind_blob(res, ++param, &st->chart_uuid, sizeof(st->chart_uuid), SQLITE_STATIC));
-    SQLITE_BIND_FAIL(bind_fail, sqlite3_bind_blob(res, ++param, &st->rrdhost->host_uuid, sizeof(st->rrdhost->host_uuid), SQLITE_STATIC));
+    SQLITE_BIND_FAIL(bind_fail, sqlite3_bind_blob(res, ++param, &st->rrdhost->host_id.uuid, sizeof(st->rrdhost->host_id.uuid), SQLITE_STATIC));
     SQLITE_BIND_FAIL(bind_fail, sqlite3_bind_text(res, ++param, string2str(st->parts.type), -1, SQLITE_STATIC));
     SQLITE_BIND_FAIL(bind_fail, sqlite3_bind_text(res, ++param, string2str(st->parts.id), -1, SQLITE_STATIC));
 
@@ -1442,11 +1421,10 @@ static void cleanup_health_log(struct metadata_wc *wc)
 
     RRDHOST *host;
 
-    bool is_claimed = claimed();
     dfe_start_reentrant(rrdhost_root_index, host){
         if (rrdhost_flag_check(host, RRDHOST_FLAG_ARCHIVED))
             continue;
-        sql_health_alarm_log_cleanup(host, is_claimed);
+        sql_health_alarm_log_cleanup(host);
         if (unlikely(metadata_flag_check(wc, METADATA_FLAG_SHUTDOWN)))
             break;
     }
@@ -1457,6 +1435,7 @@ static void cleanup_health_log(struct metadata_wc *wc)
 
     (void) db_execute(db_meta,"DELETE FROM health_log WHERE host_id NOT IN (SELECT host_id FROM host)");
     (void) db_execute(db_meta,"DELETE FROM health_log_detail WHERE health_log_id NOT IN (SELECT health_log_id FROM health_log)");
+    (void) db_execute(db_meta,"DELETE FROM alert_version WHERE health_log_id NOT IN (SELECT health_log_id FROM health_log)");
 }
 
 //
@@ -1469,7 +1448,7 @@ static void metadata_free_cmd_queue(struct metadata_wc *wc)
     while(wc->cmd_base) {
         struct metadata_cmd *t = wc->cmd_base;
         DOUBLE_LINKED_LIST_REMOVE_ITEM_UNSAFE(wc->cmd_base, t, prev, next);
-        freez(t);
+        aral_freez(wc->ar, t);
     }
     spinlock_unlock(&wc->cmd_queue_lock);
 }
@@ -1484,7 +1463,7 @@ static void metadata_enq_cmd(struct metadata_wc *wc, struct metadata_cmd *cmd)
     if (unlikely(metadata_flag_check(wc, METADATA_FLAG_SHUTDOWN)))
         goto wakeup_event_loop;
 
-    struct metadata_cmd *t = mallocz(sizeof(*t));
+    struct metadata_cmd *t = aral_mallocz(wc->ar);
     *t = *cmd;
     t->prev = t->next = NULL;
 
@@ -1498,20 +1477,22 @@ wakeup_event_loop:
 
 static struct metadata_cmd metadata_deq_cmd(struct metadata_wc *wc)
 {
-    struct metadata_cmd ret;
+    struct metadata_cmd ret, *to_free = NULL;
 
     spinlock_lock(&wc->cmd_queue_lock);
     if(wc->cmd_base) {
         struct metadata_cmd *t = wc->cmd_base;
         DOUBLE_LINKED_LIST_REMOVE_ITEM_UNSAFE(wc->cmd_base, t, prev, next);
         ret = *t;
-        freez(t);
+        to_free = t;
     }
     else {
         ret.opcode = METADATA_DATABASE_NOOP;
         ret.completion = NULL;
     }
     spinlock_unlock(&wc->cmd_queue_lock);
+
+    aral_freez(wc->ar, to_free);
 
     return ret;
 }
@@ -1583,7 +1564,8 @@ void run_metadata_cleanup(struct metadata_wc *wc)
 struct scan_metadata_payload {
     uv_work_t request;
     struct metadata_wc *wc;
-    void *data;
+    void *chart_label_cleanup;
+    void *pending_alert_list;
     BUFFER *work_buffer;
     uint32_t max_count;
 };
@@ -1606,9 +1588,7 @@ static void restore_host_context(void *arg)
 
     rrdhost_flag_clear(host, RRDHOST_FLAG_PENDING_CONTEXT_LOAD);
 
-#ifdef ENABLE_ACLK
     aclk_queue_node_info(host, false);
-#endif
 
     nd_log(
         NDLS_DAEMON,
@@ -1675,7 +1655,7 @@ static void start_all_host_load_context(uv_work_t *req __maybe_unused)
 
     RRDHOST *host;
 
-    size_t max_threads = MIN(get_netdata_cpus() / 2, 6);
+    size_t max_threads = netdata_conf_cpus() / 2;
     if (max_threads < 1)
         max_threads = 1;
 
@@ -1731,6 +1711,19 @@ static void after_metadata_hosts(uv_work_t *req, int status __maybe_unused)
 {
     struct scan_metadata_payload *data = req->data;
     struct metadata_wc *wc = data->wc;
+
+    bool first = false;
+    Word_t Index = 0;
+    Pvoid_t *Pvalue;
+    while ((Pvalue = JudyLFirstThenNext(wc->ae_DelJudyL, &Index, &first))) {
+        ALARM_ENTRY *ae = (ALARM_ENTRY *) Index;
+        if(!__atomic_load_n(&ae->pending_save_count, __ATOMIC_RELAXED)) {
+            health_alarm_log_free_one_nochecks_nounlink(ae);
+            (void) JudyLDel(&wc->ae_DelJudyL, Index, PJE0);
+            first = false;
+            Index = 0;
+        }
+    }
 
     metadata_flag_clear(wc, METADATA_FLAG_PROCESSING);
 
@@ -1838,12 +1831,46 @@ static void store_host_and_system_info(RRDHOST *host, size_t *query_counter)
     }
 }
 
-struct host_chart_label_cleanup {
+struct judy_list_t {
     Pvoid_t JudyL;
     Word_t count;
 };
 
-static void do_chart_label_cleanup(struct host_chart_label_cleanup *cl_cleanup_data)
+static void store_alert_transitions(struct judy_list_t *pending_alert_list)
+{
+    if (!pending_alert_list)
+        return;
+
+    usec_t started_ut = now_monotonic_usec(); (void)started_ut;
+
+    size_t entries = pending_alert_list->count;
+    Word_t Index = 0;
+    bool first = true;
+    Pvoid_t *PValue;
+    while ((PValue = JudyLFirstThenNext(pending_alert_list->JudyL, &Index, &first))) {
+        RRDHOST *host = *PValue;
+
+        PValue = JudyLGet(pending_alert_list->JudyL, ++Index, PJE0);
+        ALARM_ENTRY *ae = *PValue;
+
+        sql_health_alarm_log_save(host, ae);
+
+        __atomic_add_fetch(&ae->pending_save_count, -1, __ATOMIC_RELAXED);
+        __atomic_add_fetch(&host->health.pending_transitions, -1, __ATOMIC_RELAXED);
+    }
+    (void) JudyLFreeArray(&pending_alert_list->JudyL, PJE0);
+    freez(pending_alert_list);
+
+    usec_t ended_ut = now_monotonic_usec(); (void)ended_ut;
+    nd_log(
+        NDLS_DAEMON,
+        NDLP_DEBUG,
+        "Stored and processed %zu alert transitions in %0.2f ms",
+        entries,
+        (double)(ended_ut - started_ut) / USEC_PER_MS);
+}
+
+static void do_chart_label_cleanup(struct judy_list_t *cl_cleanup_data)
 {
     if (!cl_cleanup_data)
         return;
@@ -1883,7 +1910,8 @@ static void start_metadata_hosts(uv_work_t *req __maybe_unused)
     nd_log(NDLS_DAEMON, NDLP_DEBUG, "Checking all hosts started");
     usec_t started_ut = now_monotonic_usec(); (void)started_ut;
 
-    do_chart_label_cleanup((struct host_chart_label_cleanup *) data->data);
+    store_alert_transitions((struct judy_list_t *)data->pending_alert_list);
+    do_chart_label_cleanup((struct judy_list_t *)data->chart_label_cleanup);
 
     bool run_again = false;
     worker_is_busy(UV_EVENT_METADATA_STORE);
@@ -1892,6 +1920,7 @@ static void start_metadata_hosts(uv_work_t *req __maybe_unused)
         transaction_started = !db_execute(db_meta, "BEGIN TRANSACTION");
 
     dfe_start_reentrant(rrdhost_root_index, host) {
+
         if (rrdhost_flag_check(host, RRDHOST_FLAG_ARCHIVED) || !rrdhost_flag_check(host, RRDHOST_FLAG_METADATA_UPDATE))
             continue;
 
@@ -1902,13 +1931,13 @@ static void start_metadata_hosts(uv_work_t *req __maybe_unused)
         if (unlikely(rrdhost_flag_check(host, RRDHOST_FLAG_METADATA_LABELS))) {
             rrdhost_flag_clear(host, RRDHOST_FLAG_METADATA_LABELS);
 
-            int rc = exec_statement_with_uuid(SQL_DELETE_HOST_LABELS, &host->host_uuid);
+            int rc = exec_statement_with_uuid(SQL_DELETE_HOST_LABELS, &host->host_id.uuid);
             if (likely(!rc)) {
                 query_counter++;
 
                 buffer_flush(work_buffer);
                 struct query_build tmp = {.sql = work_buffer, .count = 0};
-                uuid_unparse_lower(host->host_uuid, tmp.uuid_str);
+                uuid_unparse_lower(host->host_id.uuid, tmp.uuid_str);
                 rrdlabels_walkthrough_read(host->rrdlabels, host_label_store_to_sql_callback, &tmp);
                 buffer_strcat(work_buffer, " ON CONFLICT (host_id, label_key) DO UPDATE SET source_type = excluded.source_type, label_value=excluded.label_value, date_created=UNIXEPOCH()");
                 rc = db_execute(db_meta, buffer_tostring(work_buffer));
@@ -1927,12 +1956,12 @@ static void start_metadata_hosts(uv_work_t *req __maybe_unused)
 
         if (unlikely(rrdhost_flag_check(host, RRDHOST_FLAG_METADATA_CLAIMID))) {
             rrdhost_flag_clear(host, RRDHOST_FLAG_METADATA_CLAIMID);
-            nd_uuid_t uuid;
             int rc;
-            if (likely(host->aclk_state.claimed_id && !uuid_parse(host->aclk_state.claimed_id, uuid)))
-                rc = store_claim_id(&host->host_uuid, &uuid);
+            ND_UUID uuid = claim_id_get_uuid();
+            if(!UUIDiszero(uuid))
+                rc = store_claim_id(&host->host_id.uuid, &uuid.uuid);
             else
-                rc = store_claim_id(&host->host_uuid, NULL);
+                rc = store_claim_id(&host->host_id.uuid, NULL);
 
             if (unlikely(rc))
                 rrdhost_flag_set(host, RRDHOST_FLAG_METADATA_CLAIMID | RRDHOST_FLAG_METADATA_UPDATE);
@@ -1971,12 +2000,10 @@ static void start_metadata_hosts(uv_work_t *req __maybe_unused)
         "Checking all hosts completed in %0.2f ms",
         (double)(all_ended_ut - all_started_ut) / USEC_PER_MS);
 
-    if (unlikely(run_again))
-        wc->metadata_check_after = now_realtime_sec() + METADATA_HOST_CHECK_IMMEDIATE;
-    else {
-        wc->metadata_check_after = now_realtime_sec() + METADATA_HOST_CHECK_INTERVAL;
+    if (likely(!run_again))
         run_metadata_cleanup(wc);
-    }
+
+    wc->metadata_check_after = now_realtime_sec() + METADATA_HOST_CHECK_INTERVAL;
     worker_is_idle();
 }
 
@@ -1995,6 +2022,8 @@ static void metadata_event_loop(void *arg)
     unsigned cmd_batch_size;
     struct metadata_wc *wc = arg;
     enum metadata_opcode opcode;
+
+    wc->ar = aral_by_size_acquire(sizeof(struct metadata_cmd));
 
     uv_thread_set_name_np("METASYNC");
     loop = wc->loop = mallocz(sizeof(uv_loop_t));
@@ -2032,11 +2061,15 @@ static void metadata_event_loop(void *arg)
     completion_mark_complete(&wc->start_stop_complete);
     BUFFER *work_buffer = buffer_create(1024, &netdata_buffers_statistics.buffers_sqlite);
     struct scan_metadata_payload *data;
-    struct host_chart_label_cleanup *cl_cleanup_data = NULL;
+    struct judy_list_t *cl_cleanup_data = NULL;
+    Pvoid_t *PValue;
+    struct judy_list_t *pending_ae_list = NULL;
 
     while (shutdown == 0 || (wc->flags & METADATA_FLAG_PROCESSING)) {
         nd_uuid_t  *uuid;
         RRDHOST *host = NULL;
+        ALARM_ENTRY *ae = NULL;
+//        struct aclk_sync_cfg_t *host_aclk_sync;
 
         worker_is_idle();
         uv_run(loop, UV_RUN_DEFAULT);
@@ -2089,9 +2122,11 @@ static void metadata_event_loop(void *arg)
                     data = mallocz(sizeof(*data));
                     data->request.data = data;
                     data->wc = wc;
-                    data->data = cl_cleanup_data;
+                    data->chart_label_cleanup = cl_cleanup_data;
+                    data->pending_alert_list = pending_ae_list;
                     data->work_buffer = work_buffer;
                     cl_cleanup_data = NULL;
+                    pending_ae_list = NULL;
 
                     if (unlikely(cmd.completion)) {
                         data->max_count = 0;            // 0 will process all pending updates
@@ -2101,13 +2136,11 @@ static void metadata_event_loop(void *arg)
                         data->max_count = 5000;
 
                     metadata_flag_set(wc, METADATA_FLAG_PROCESSING);
-                    if (unlikely(
-                            uv_queue_work(loop,&data->request,
-                                          start_metadata_hosts,
-                                          after_metadata_hosts))) {
+                    if (uv_queue_work(loop, &data->request, start_metadata_hosts, after_metadata_hosts)) {
                         // Failed to launch worker -- let the event loop handle completion
                         cmd.completion = wc->scan_complete;
-                        cl_cleanup_data = data->data;
+                        cl_cleanup_data = data->chart_label_cleanup;
+                        pending_ae_list = data->pending_alert_list;
                         freez(data);
                         metadata_flag_clear(wc, METADATA_FLAG_PROCESSING);
                     }
@@ -2119,9 +2152,7 @@ static void metadata_event_loop(void *arg)
                     data = callocz(1,sizeof(*data));
                     data->request.data = data;
                     data->wc = wc;
-                    if (unlikely(
-                            uv_queue_work(loop,&data->request, start_all_host_load_context,
-                                          after_start_host_load_context))) {
+                    if (uv_queue_work(loop, &data->request, start_all_host_load_context, after_start_host_load_context)) {
                         freez(data);
                     }
                     break;
@@ -2129,10 +2160,28 @@ static void metadata_event_loop(void *arg)
                     if (!cl_cleanup_data)
                         cl_cleanup_data = callocz(1,sizeof(*cl_cleanup_data));
 
-                    Pvoid_t *PValue = JudyLIns(&cl_cleanup_data->JudyL, (Word_t) ++cl_cleanup_data->count, PJE0);
+                    PValue = JudyLIns(&cl_cleanup_data->JudyL, (Word_t) ++cl_cleanup_data->count, PJE0);
                     if (PValue)
                         *PValue = (void *) cmd.param[0];
 
+                    break;
+                case METADATA_ADD_HOST_AE:
+                    host = (RRDHOST *) cmd.param[0];
+                    ae = (ALARM_ENTRY *) cmd.param[1];
+
+                    if (!pending_ae_list)
+                        pending_ae_list = callocz(1, sizeof(*pending_ae_list));
+
+                    PValue = JudyLIns(&pending_ae_list->JudyL, ++pending_ae_list->count, PJE0);
+                    if (PValue)
+                        *PValue = (void *)host;
+
+                    PValue = JudyLIns(&pending_ae_list->JudyL, ++pending_ae_list->count, PJE0);
+                    if (PValue)
+                        *PValue = (void *)ae;
+                    break;
+                case METADATA_DEL_HOST_AE:;
+                    (void) JudyLIns(&wc->ae_DelJudyL, (Word_t) (void *) cmd.param[0], PJE0);
                     break;
                 case METADATA_UNITTEST:;
                     struct thread_unittest *tu = (struct thread_unittest *) cmd.param[0];
@@ -2176,6 +2225,7 @@ error_after_async_init:
     fatal_assert(0 == uv_loop_close(loop));
 error_after_loop_init:
     freez(loop);
+    aral_by_size_release(wc->ar);
     worker_unregister();
 }
 
@@ -2227,6 +2277,22 @@ void metadata_sync_shutdown_prepare(void)
     nd_log(NDLS_DAEMON, NDLP_DEBUG, "METADATA: Waiting for host scan completion");
     completion_wait_for(wc->scan_complete);
     nd_log(NDLS_DAEMON, NDLP_DEBUG, "METADATA: Host scan complete; can continue with shutdown");
+}
+
+void *metadata_sync_shutdown_thread(void *ptr __maybe_unused) {
+    metadata_sync_shutdown_prepare();
+    return NULL;
+}
+
+static ND_THREAD *metdata_sync_shutdown_background_wait_thread = NULL;
+void metadata_sync_shutdown_background(void) {
+    metdata_sync_shutdown_background_wait_thread = nd_thread_create(
+        "METASYNC-SHUTDOWN", NETDATA_THREAD_OPTION_JOINABLE, metadata_sync_shutdown_thread, NULL);
+}
+
+void metadata_sync_shutdown_background_wait(void) {
+    nd_thread_join(metdata_sync_shutdown_background_wait_thread);
+    metadata_sync_shutdown();
 }
 
 // -------------------------------------------------------------
@@ -2318,9 +2384,107 @@ void metadata_delete_host_chart_labels(char *machine_guid)
     nd_log(NDLS_DAEMON, NDLP_DEBUG, "Queued command delete chart labels for host %s", machine_guid);
 }
 
+void metadata_queue_ae_save(RRDHOST *host, ALARM_ENTRY *ae)
+{
+    if (unlikely(!metasync_worker.loop))
+        return;
+    __atomic_add_fetch(&host->health.pending_transitions, 1, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&ae->pending_save_count, 1, __ATOMIC_RELAXED);
+    queue_metadata_cmd(METADATA_ADD_HOST_AE, host, ae);
+}
+
+void metadata_queue_ae_deletion(ALARM_ENTRY *ae)
+{
+    if (unlikely(!metasync_worker.loop))
+        return;
+
+    queue_metadata_cmd(METADATA_DEL_HOST_AE, ae, NULL);
+}
+
+void commit_alert_transitions(RRDHOST *host __maybe_unused)
+{
+    if (unlikely(!metasync_worker.loop))
+        return;
+
+    queue_metadata_cmd(METADATA_SCAN_HOSTS, NULL, NULL);
+}
+
 uint64_t sqlite_get_meta_space(void)
 {
     return sqlite_get_db_space(db_meta);
+}
+
+#define SQL_ADD_AGENT_EVENT_LOG      \
+    "INSERT INTO agent_event_log (event_type, version, value, date_created) VALUES " \
+    " (@event_type, @version, @value, UNIXEPOCH())"
+
+void add_agent_event(event_log_type_t event_id, int64_t value)
+{
+    sqlite3_stmt *res = NULL;
+
+    if (!PREPARE_STATEMENT(db_meta, SQL_ADD_AGENT_EVENT_LOG, &res))
+        return;
+
+    int param = 0;
+    SQLITE_BIND_FAIL(done, sqlite3_bind_int(res, ++param, event_id));
+    SQLITE_BIND_FAIL(done, sqlite3_bind_text(res, ++param, NETDATA_VERSION, -1, SQLITE_STATIC));
+    SQLITE_BIND_FAIL(done, sqlite3_bind_int64(res, ++param, value));
+
+    param = 0;
+    int rc = execute_insert(res);
+    if (rc != SQLITE_DONE)
+        error_report("Failed to store agent event information, rc = %d", rc);
+done:
+    REPORT_BIND_FAIL(res, param);
+    SQLITE_FINALIZE(res);
+}
+
+void cleanup_agent_event_log(void)
+{
+    (void) db_execute(db_meta, "DELETE FROM agent_event_log WHERE date_created < UNIXEPOCH() - 30 * 86400");
+}
+
+#define SQL_GET_AGENT_EVENT_TYPE_MEDIAN                                                                                \
+    "SELECT AVG(value) AS median FROM "                                                                                \
+    "(SELECT value FROM agent_event_log WHERE event_type = @event ORDER BY value "                                     \
+    " LIMIT 2 - (SELECT COUNT(*) FROM agent_event_log WHERE event_type = @event) % 2 "                                 \
+    "OFFSET(SELECT(COUNT(*) - 1) / 2 FROM agent_event_log WHERE event_type = @event)) "
+
+usec_t get_agent_event_time_median(event_log_type_t event_id)
+{
+    static bool initialized[EVENT_AGENT_MAX] = { 0 };
+    static usec_t median[EVENT_AGENT_MAX] = { 0 };
+
+    if(event_id >= EVENT_AGENT_MAX)
+        return 0;
+
+    if(initialized[event_id])
+        return median[event_id];
+
+    sqlite3_stmt *res = NULL;
+    if (!PREPARE_STATEMENT(db_meta, SQL_GET_AGENT_EVENT_TYPE_MEDIAN, &res))
+        return 0;
+
+    usec_t avg_time = 0;
+    int param = 0;
+    SQLITE_BIND_FAIL(done, sqlite3_bind_int(res, ++param, event_id));
+
+    param = 0;
+    if (sqlite3_step_monitored(res) == SQLITE_ROW)
+        avg_time = sqlite3_column_int64(res, 0);
+
+done:
+    REPORT_BIND_FAIL(res, param);
+    SQLITE_FINALIZE(res);
+
+    median[event_id] = avg_time;
+    initialized[event_id] = true;
+    return avg_time;
+}
+
+void get_agent_event_time_median_init(void) {
+    for(event_log_type_t event_id = 1; event_id < EVENT_AGENT_MAX; event_id++)
+        get_agent_event_time_median(event_id);
 }
 
 //

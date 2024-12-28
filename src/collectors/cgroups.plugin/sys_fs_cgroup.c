@@ -39,7 +39,7 @@ SIMPLE_PATTERN *search_cgroup_paths = NULL;
 SIMPLE_PATTERN *enabled_cgroup_renames = NULL;
 SIMPLE_PATTERN *systemd_services_cgroups = NULL;
 SIMPLE_PATTERN *entrypoint_parent_process_comm = NULL;
-char *cgroups_network_interface_script = NULL;
+const char *cgroups_network_interface_script = NULL;
 int cgroups_check = 0;
 uint32_t Read_hash = 0;
 uint32_t Write_hash = 0;
@@ -82,7 +82,7 @@ static enum cgroups_systemd_setting cgroups_detect_systemd(const char *exec)
         return retval;
 
     struct pollfd pfd;
-    pfd.fd = spawn_server_instance_read_fd(pi->si);
+    pfd.fd = spawn_popen_read_fd(pi);
     pfd.events = POLLIN;
 
     int timeout = 3000; // milliseconds
@@ -93,7 +93,7 @@ static enum cgroups_systemd_setting cgroups_detect_systemd(const char *exec)
     } else if (ret == 0) {
         collector_info("Cannot get the output of \"%s\" within timeout (%d ms)", exec, timeout);
     } else {
-        while (fgets(buf, MAXSIZE_PROC_CMDLINE, pi->child_stdout_fp) != NULL) {
+        while (fgets(buf, MAXSIZE_PROC_CMDLINE, spawn_popen_stdout(pi)) != NULL) {
             if ((begin = strstr(buf, SYSTEMD_HIERARCHY_STRING))) {
                 end = begin = begin + strlen(SYSTEMD_HIERARCHY_STRING);
                 if (!*begin)
@@ -153,18 +153,18 @@ static enum cgroups_type cgroups_try_detect_version()
     int cgroups2_available = 0;
 
     // 1. check if cgroups2 available on system at all
-    POPEN_INSTANCE *instance = spawn_popen_run("grep cgroup /proc/filesystems");
-    if(!instance) {
+    POPEN_INSTANCE *pi = spawn_popen_run("grep cgroup /proc/filesystems");
+    if(!pi) {
         collector_error("cannot run 'grep cgroup /proc/filesystems'");
         return CGROUPS_AUTODETECT_FAIL;
     }
-    while (fgets(buf, MAXSIZE_PROC_CMDLINE, instance->child_stdout_fp) != NULL) {
+    while (fgets(buf, MAXSIZE_PROC_CMDLINE, spawn_popen_stdout(pi)) != NULL) {
         if (strstr(buf, "cgroup2")) {
             cgroups2_available = 1;
             break;
         }
     }
-    if(spawn_popen_wait(instance) != 0)
+    if(spawn_popen_wait(pi) != 0)
         return CGROUPS_AUTODETECT_FAIL;
 
     if(!cgroups2_available)
@@ -229,13 +229,17 @@ void read_cgroup_plugin_configuration() {
     throttled_time_hash = simple_hash("throttled_time");
     throttled_usec_hash = simple_hash("throttled_usec");
 
-    cgroup_update_every = (int)config_get_number("plugin:cgroups", "update every", localhost->rrd_update_every);
-    if(cgroup_update_every < localhost->rrd_update_every)
+    cgroup_update_every = (int)config_get_duration_seconds("plugin:cgroups", "update every", localhost->rrd_update_every);
+    if(cgroup_update_every < localhost->rrd_update_every) {
         cgroup_update_every = localhost->rrd_update_every;
+        config_set_duration_seconds("plugin:cgroups", "update every", localhost->rrd_update_every);
+    }
 
-    cgroup_check_for_new_every = (int)config_get_number("plugin:cgroups", "check for new cgroups every", cgroup_check_for_new_every);
-    if(cgroup_check_for_new_every < cgroup_update_every)
+    cgroup_check_for_new_every = (int)config_get_duration_seconds("plugin:cgroups", "check for new cgroups every", cgroup_check_for_new_every);
+    if(cgroup_check_for_new_every < cgroup_update_every) {
         cgroup_check_for_new_every = cgroup_update_every;
+        config_set_duration_seconds("plugin:cgroups", "check for new cgroups every", cgroup_check_for_new_every);
+    }
 
     cgroup_use_unified_cgroups = config_get_boolean_ondemand("plugin:cgroups", "use unified cgroups", CONFIG_BOOLEAN_AUTO);
     if (cgroup_use_unified_cgroups == CONFIG_BOOLEAN_AUTO)
@@ -1323,7 +1327,6 @@ static void cgroup_main_cleanup(void *pptr) {
 
     static_thread->enabled = NETDATA_MAIN_THREAD_EXITING;
 
-    collector_info("cleaning up...");
     worker_unregister();
 
     usec_t max = 2 * USEC_PER_SEC, step = 50000;
@@ -1401,24 +1404,25 @@ void *cgroups_main(void *ptr) {
     cgroup_netdev_link_init();
 
     rrd_function_add_inline(localhost, NULL, "containers-vms", 10,
-                            RRDFUNCTIONS_PRIORITY_DEFAULT / 2, RRDFUNCTIONS_CGTOP_HELP,
+                            RRDFUNCTIONS_PRIORITY_DEFAULT / 2, RRDFUNCTIONS_VERSION_DEFAULT,
+                            RRDFUNCTIONS_CGTOP_HELP,
                             "top", HTTP_ACCESS_ANONYMOUS_DATA,
                             cgroup_function_cgroup_top);
 
     rrd_function_add_inline(localhost, NULL, "systemd-services", 10,
-                            RRDFUNCTIONS_PRIORITY_DEFAULT / 3, RRDFUNCTIONS_SYSTEMD_SERVICES_HELP,
+                            RRDFUNCTIONS_PRIORITY_DEFAULT / 3, RRDFUNCTIONS_VERSION_DEFAULT,
+                            RRDFUNCTIONS_SYSTEMD_SERVICES_HELP,
                             "top", HTTP_ACCESS_ANONYMOUS_DATA,
                             cgroup_function_systemd_top);
 
     heartbeat_t hb;
-    heartbeat_init(&hb);
-    usec_t step = cgroup_update_every * USEC_PER_SEC;
+    heartbeat_init(&hb, cgroup_update_every * USEC_PER_SEC);
     usec_t find_every = cgroup_check_for_new_every * USEC_PER_SEC, find_dt = 0;
 
     while(service_running(SERVICE_COLLECTORS)) {
         worker_is_idle();
 
-        usec_t hb_dt = heartbeat_next(&hb, step);
+        usec_t hb_dt = heartbeat_next(&hb);
 
         if (unlikely(!service_running(SERVICE_COLLECTORS)))
             break;

@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
-#shellcheck disable=SC2001
-
-# netdata
-# real-time performance and health monitoring, done right!
-# (C) 2023 Netdata Inc.
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Script to find a better name for cgroups
 #
+#shellcheck disable=SC2001
 
 export PATH="${PATH}:/sbin:/usr/sbin:/usr/local/sbin:@sbindir_POST@"
 export LC_ALL=C
@@ -155,7 +151,7 @@ function docker_like_get_name_api() {
     info "Running API command: curl \"${host}${path}\""
     JSON=$(curl -sS "${host}${path}")
   fi
-  if OUTPUT=$(echo "${JSON}" | jq -r '.Config.Env[],"CONT_NAME=\(.Name)","IMAGE_NAME=\(.Config.Image)"') && [ -n "$OUTPUT" ]; then
+  if OUTPUT=$(echo "${JSON}" | jq -r '.Config.Env[]?,"CONT_NAME=\(.Name)","IMAGE_NAME=\(.Config.Image)"') && [ -n "$OUTPUT" ]; then
     parse_docker_like_inspect_output "$OUTPUT"
   fi
   return 0
@@ -610,7 +606,7 @@ function podman_validate_id() {
 DOCKER_HOST="${DOCKER_HOST:=/var/run/docker.sock}"
 PODMAN_HOST="${PODMAN_HOST:=/run/podman/podman.sock}"
 CGROUP_PATH="${1}" # the path as it is (e.g. '/docker/efcf4c409')
-CGROUP="${2}"      # the modified path (e.g. 'docker_efcf4c409')
+CGROUP="${2//\//_}" # the modified path (e.g. 'docker_efcf4c409')
 EXIT_SUCCESS=0
 EXIT_RETRY=2
 EXIT_DISABLE=3

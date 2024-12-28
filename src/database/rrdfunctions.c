@@ -7,70 +7,6 @@
 
 #define MAX_FUNCTION_LENGTH (PLUGINSD_LINE_MAX - 512) // we need some space for the rest of the line
 
-static unsigned char functions_allowed_chars[256] = {
-        [0] = '\0', [1] = '_', [2] = '_', [3] = '_', [4] = '_', [5] = '_', [6] = '_', [7] = '_', [8] = '_',
-
-        // control
-        ['\t'] = ' ', ['\n'] = ' ', ['\v'] = ' ', [12] = ' ', ['\r'] = ' ',
-
-        [14] = '_', [15] = '_', [16] = '_', [17] = '_', [18] = '_', [19] = '_', [20] = '_', [21] = '_',
-        [22] = '_', [23] = '_', [24] = '_', [25] = '_', [26] = '_', [27] = '_', [28] = '_', [29] = '_',
-        [30] = '_', [31] = '_',
-
-        // symbols
-        [' '] = ' ', ['!'] = '!', ['"'] = '\'', ['#'] = '#', ['$'] = '$', ['%'] = '%', ['&'] = '&', ['\''] = '\'',
-        ['('] = '(', [')'] = ')', ['*'] = '*', ['+'] = '+', [','] = ',', ['-'] = '-', ['.'] = '.', ['/'] = '/',
-
-        // numbers
-        ['0'] = '0', ['1'] = '1', ['2'] = '2', ['3'] = '3', ['4'] = '4', ['5'] = '5', ['6'] = '6', ['7'] = '7',
-        ['8'] = '8', ['9'] = '9',
-
-        // symbols
-        [':'] = ':', [';'] = ';', ['<'] = '<', ['='] = '=', ['>'] = '>', ['?'] = '?', ['@'] = '@',
-
-        // capitals
-        ['A'] = 'A', ['B'] = 'B', ['C'] = 'C', ['D'] = 'D', ['E'] = 'E', ['F'] = 'F', ['G'] = 'G', ['H'] = 'H',
-        ['I'] = 'I', ['J'] = 'J', ['K'] = 'K', ['L'] = 'L', ['M'] = 'M', ['N'] = 'N', ['O'] = 'O', ['P'] = 'P',
-        ['Q'] = 'Q', ['R'] = 'R', ['S'] = 'S', ['T'] = 'T', ['U'] = 'U', ['V'] = 'V', ['W'] = 'W', ['X'] = 'X',
-        ['Y'] = 'Y', ['Z'] = 'Z',
-
-        // symbols
-        ['['] = '[', ['\\'] = '\\', [']'] = ']', ['^'] = '^', ['_'] = '_', ['`'] = '`',
-
-        // lower
-        ['a'] = 'a', ['b'] = 'b', ['c'] = 'c', ['d'] = 'd', ['e'] = 'e', ['f'] = 'f', ['g'] = 'g', ['h'] = 'h',
-        ['i'] = 'i', ['j'] = 'j', ['k'] = 'k', ['l'] = 'l', ['m'] = 'm', ['n'] = 'n', ['o'] = 'o', ['p'] = 'p',
-        ['q'] = 'q', ['r'] = 'r', ['s'] = 's', ['t'] = 't', ['u'] = 'u', ['v'] = 'v', ['w'] = 'w', ['x'] = 'x',
-        ['y'] = 'y', ['z'] = 'z',
-
-        // symbols
-        ['{'] = '{', ['|'] = '|', ['}'] = '}', ['~'] = '~',
-
-        // rest
-        [127] = '_', [128] = '_', [129] = '_', [130] = '_', [131] = '_', [132] = '_', [133] = '_', [134] = '_',
-        [135] = '_', [136] = '_', [137] = '_', [138] = '_', [139] = '_', [140] = '_', [141] = '_', [142] = '_',
-        [143] = '_', [144] = '_', [145] = '_', [146] = '_', [147] = '_', [148] = '_', [149] = '_', [150] = '_',
-        [151] = '_', [152] = '_', [153] = '_', [154] = '_', [155] = '_', [156] = '_', [157] = '_', [158] = '_',
-        [159] = '_', [160] = '_', [161] = '_', [162] = '_', [163] = '_', [164] = '_', [165] = '_', [166] = '_',
-        [167] = '_', [168] = '_', [169] = '_', [170] = '_', [171] = '_', [172] = '_', [173] = '_', [174] = '_',
-        [175] = '_', [176] = '_', [177] = '_', [178] = '_', [179] = '_', [180] = '_', [181] = '_', [182] = '_',
-        [183] = '_', [184] = '_', [185] = '_', [186] = '_', [187] = '_', [188] = '_', [189] = '_', [190] = '_',
-        [191] = '_', [192] = '_', [193] = '_', [194] = '_', [195] = '_', [196] = '_', [197] = '_', [198] = '_',
-        [199] = '_', [200] = '_', [201] = '_', [202] = '_', [203] = '_', [204] = '_', [205] = '_', [206] = '_',
-        [207] = '_', [208] = '_', [209] = '_', [210] = '_', [211] = '_', [212] = '_', [213] = '_', [214] = '_',
-        [215] = '_', [216] = '_', [217] = '_', [218] = '_', [219] = '_', [220] = '_', [221] = '_', [222] = '_',
-        [223] = '_', [224] = '_', [225] = '_', [226] = '_', [227] = '_', [228] = '_', [229] = '_', [230] = '_',
-        [231] = '_', [232] = '_', [233] = '_', [234] = '_', [235] = '_', [236] = '_', [237] = '_', [238] = '_',
-        [239] = '_', [240] = '_', [241] = '_', [242] = '_', [243] = '_', [244] = '_', [245] = '_', [246] = '_',
-        [247] = '_', [248] = '_', [249] = '_', [250] = '_', [251] = '_', [252] = '_', [253] = '_', [254] = '_',
-        [255] = '_'
-};
-
-size_t rrd_functions_sanitize(char *dst, const char *src, size_t dst_len) {
-    return text_sanitize((unsigned char *)dst, (const unsigned char *)src, dst_len,
-                         functions_allowed_chars, true, "", NULL);
-}
-
 // ----------------------------------------------------------------------------
 
 // we keep a dictionary per RRDSET with these functions
@@ -79,11 +15,12 @@ size_t rrd_functions_sanitize(char *dst, const char *src, size_t dst_len) {
 // ----------------------------------------------------------------------------
 
 static void rrd_functions_insert_callback(const DICTIONARY_ITEM *item __maybe_unused, void *func, void *rrdhost) {
-    RRDHOST *host = rrdhost; (void)host;
+    RRDHOST *host = rrdhost;
     struct rrd_host_function *rdcf = func;
 
     rrd_collector_started();
     rdcf->collector = rrd_collector_acquire_current_thread();
+    rdcf->rrdhost_state_id = rrdhost_state_id(host);
 
     if(!rdcf->priority)
         rdcf->priority = RRDFUNCTIONS_PRIORITY_DEFAULT;
@@ -118,6 +55,17 @@ static bool rrd_functions_conflict_callback(const DICTIONARY_ITEM *item __maybe_
         struct rrd_collector *old_rdc = rdcf->collector;
         rdcf->collector = rrd_collector_acquire_current_thread();
         rrd_collector_release(old_rdc);
+        changed = true;
+    }
+
+    if(rdcf->rrdhost_state_id != rrdhost_state_id(host)) {
+        nd_log(NDLS_DAEMON, NDLP_DEBUG,
+               "FUNCTIONS: function '%s' of host '%s' changed state id from %u to %u",
+               dictionary_acquired_item_name(item), rrdhost_hostname(host),
+               rdcf->rrdhost_state_id,
+            rrdhost_state_id(host));
+
+        rdcf->rrdhost_state_id = rrdhost_state_id(host);
         changed = true;
     }
 
@@ -158,10 +106,21 @@ static bool rrd_functions_conflict_callback(const DICTIONARY_ITEM *item __maybe_
 
     if(rdcf->timeout != new_rdcf->timeout) {
         nd_log(NDLS_DAEMON, NDLP_DEBUG,
-               "FUNCTIONS: function '%s' of host '%s' changed timeout",
-               dictionary_acquired_item_name(item), rrdhost_hostname(host));
+               "FUNCTIONS: function '%s' of host '%s' changed timeout (from %d to %d)",
+               dictionary_acquired_item_name(item), rrdhost_hostname(host),
+               rdcf->timeout, new_rdcf->timeout);
 
         rdcf->timeout = new_rdcf->timeout;
+        changed = true;
+    }
+
+    if(rdcf->version != new_rdcf->version) {
+        nd_log(NDLS_DAEMON, NDLP_DEBUG,
+               "FUNCTIONS: function '%s' of host '%s' changed version (from %"PRIu32", to %"PRIu32")",
+               dictionary_acquired_item_name(item), rrdhost_hostname(host),
+               rdcf->version, new_rdcf->version);
+
+        rdcf->version = new_rdcf->version;
         changed = true;
     }
 
@@ -225,6 +184,10 @@ void rrd_functions_host_destroy(RRDHOST *host) {
 
 // ----------------------------------------------------------------------------
 
+static inline bool is_function_restricted(const char *name, const char *tags) {
+    return (name && name[0] == '_' && name[1] == '_') || (tags && strstr(tags, RRDFUNCTIONS_TAG_HIDDEN) != NULL);
+}
+
 static inline bool is_function_dyncfg(const char *name) {
     if(!name || !*name)
         return false;
@@ -239,7 +202,16 @@ static inline bool is_function_dyncfg(const char *name) {
     return false;
 }
 
-void rrd_function_add(RRDHOST *host, RRDSET *st, const char *name, int timeout, int priority,
+static inline RRD_FUNCTION_OPTIONS get_function_options(RRDSET *st, const char *name, const char *tags) {
+    if(is_function_dyncfg(name))
+        return RRD_FUNCTION_DYNCFG;
+
+    RRD_FUNCTION_OPTIONS options = st ? RRD_FUNCTION_LOCAL : RRD_FUNCTION_GLOBAL;
+
+    return options | (is_function_restricted(name, tags) ? RRD_FUNCTION_RESTRICTED : 0);
+}
+
+void rrd_function_add(RRDHOST *host, RRDSET *st, const char *name, int timeout, int priority, uint32_t version,
                       const char *help, const char *tags,
                       HTTP_ACCESS access, bool sync,
                       rrd_function_execute_cb_t execute_cb, void *execute_cb_data) {
@@ -263,13 +235,14 @@ void rrd_function_add(RRDHOST *host, RRDSET *st, const char *name, int timeout, 
     struct rrd_host_function tmp = {
         .sync = sync,
         .timeout = timeout,
-        .options = st ? RRD_FUNCTION_LOCAL: (is_function_dyncfg(name) ? RRD_FUNCTION_DYNCFG : RRD_FUNCTION_GLOBAL),
+        .version = version,
+        .priority = priority,
+        .options = get_function_options(st, name, tags),
         .access = access,
         .execute_cb = execute_cb,
         .execute_cb_data = execute_cb_data,
         .help = string_strdupz(help),
         .tags = string_strdupz(tags),
-        .priority = priority,
     };
     const DICTIONARY_ITEM *item = dictionary_set_and_acquire_item(host->functions, key, &tmp, sizeof(tmp));
 
@@ -294,21 +267,12 @@ void rrd_function_del(RRDHOST *host, RRDSET *st, const char *name) {
     dictionary_garbage_collect(host->functions);
 }
 
-int rrd_call_function_error(BUFFER *wb, const char *msg, int code) {
-    char buffer[PLUGINSD_LINE_MAX];
-    json_escape_string(buffer, msg, PLUGINSD_LINE_MAX);
-
-    buffer_flush(wb);
-    buffer_sprintf(wb, "{\"status\":%d,\"error_message\":\"%s\"}", code, buffer);
-    wb->content_type = CT_APPLICATION_JSON;
-    buffer_no_cacheable(wb);
-    return code;
-}
-
 int rrd_functions_find_by_name(RRDHOST *host, BUFFER *wb, const char *name, size_t key_length, const DICTIONARY_ITEM **item) {
     char buffer[MAX_FUNCTION_LENGTH + 1];
     strncpyz(buffer, name, sizeof(buffer) - 1);
     char *s = NULL;
+
+    RRDHOST_STATE state_id = rrdhost_state_id(host);
 
     bool found = false;
     *item = NULL;
@@ -318,10 +282,23 @@ int rrd_functions_find_by_name(RRDHOST *host, BUFFER *wb, const char *name, size
                 found = true;
 
                 struct rrd_host_function *rdcf = dictionary_acquired_item_value(*item);
-                if(rrd_collector_running(rdcf->collector)) {
+                if(rrd_collector_running(rdcf->collector) && rdcf->rrdhost_state_id == state_id) {
                     break;
                 }
                 else {
+
+                    nd_log(NDLS_DAEMON, NDLP_DEBUG,
+                           "Function '%s' is not available. "
+                           "host '%s', collector = { tid: %d, running: %s }, host tid { rcv: %d, snd: %d }, host state { id: %u, expected %u }, hops: %d",
+                           name,
+                           rrdhost_hostname(host),
+                           rrd_collector_tid(rdcf->collector),
+                           rrd_collector_running(rdcf->collector) ? "yes" : "no",
+                           host->stream.rcv.status.tid, host->stream.snd.status.tid,
+                           state_id, rdcf->rrdhost_state_id,
+                           rrdhost_system_info_hops(host->system_info)
+                           );
+
                     dictionary_acquired_item_release(host->functions, *item);
                     *item = NULL;
                 }
@@ -345,11 +322,11 @@ int rrd_functions_find_by_name(RRDHOST *host, BUFFER *wb, const char *name, size
     if(!(*item)) {
         if(found)
             return rrd_call_function_error(wb,
-                                           "The collector that registered this function, is not currently running.",
+                                           "The plugin that registered this feature, is not currently running.",
                                            HTTP_RESP_SERVICE_UNAVAILABLE);
         else
             return rrd_call_function_error(wb,
-                                           "No collector is supplying this function on this host at this time.",
+                                           "This feature is not available on this host at this time.",
                                            HTTP_RESP_NOT_FOUND);
     }
 
@@ -364,7 +341,7 @@ bool rrd_function_available(RRDHOST *host, const char *function) {
     const DICTIONARY_ITEM *item = dictionary_get_and_acquire_item(host->functions, function);
     if(item) {
         struct rrd_host_function *rdcf = dictionary_acquired_item_value(item);
-        if(rrd_collector_running(rdcf->collector))
+        if(rrd_collector_running(rdcf->collector) && rdcf->rrdhost_state_id == rrdhost_state_id(host))
             ret = true;
 
         dictionary_acquired_item_release(host->functions, item);

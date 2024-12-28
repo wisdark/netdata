@@ -3,11 +3,7 @@
 #include "ebpf.h"
 #include "ebpf_softirq.h"
 
-struct config softirq_config = { .first_section = NULL,
-    .last_section = NULL,
-    .mutex = NETDATA_MUTEX_INITIALIZER,
-    .index = { .avl_tree = { .root = NULL, .compar = appconfig_section_compare },
-        .rwlock = AVL_LOCK_INITIALIZER } };
+struct config softirq_config = APPCONFIG_INITIALIZER;
 
 #define SOFTIRQ_MAP_LATENCY 0
 static ebpf_local_maps_t softirq_maps[] = {
@@ -213,7 +209,7 @@ static void softirq_collector(ebpf_module_t *em)
 
     // loop and read from published data until ebpf plugin is closed.
     heartbeat_t hb;
-    heartbeat_init(&hb);
+    heartbeat_init(&hb, USEC_PER_SEC);
     int update_every = em->update_every;
     int counter = update_every - 1;
     int maps_per_core = em->maps_per_core;
@@ -221,7 +217,7 @@ static void softirq_collector(ebpf_module_t *em)
     uint32_t running_time = 0;
     uint32_t lifetime = em->lifetime;
     while (!ebpf_plugin_stop() && running_time < lifetime) {
-        (void)heartbeat_next(&hb, USEC_PER_SEC);
+        heartbeat_next(&hb);
         if (ebpf_plugin_stop() || ++counter != update_every)
             continue;
 

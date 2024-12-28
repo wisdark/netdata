@@ -53,7 +53,7 @@ static void rrddim_insert_callback(const DICTIONARY_ITEM *item __maybe_unused, v
 
     rd->rrdset = st;
 
-    rd->rrdpush.sender.dim_slot = __atomic_add_fetch(&st->rrdpush.sender.dim_last_slot_used, 1, __ATOMIC_RELAXED);
+    rd->stream.snd.dim_slot = __atomic_add_fetch(&st->stream.snd.dim_last_slot_used, 1, __ATOMIC_RELAXED);
 
     if(rrdset_flag_check(st, RRDSET_FLAG_STORE_FIRST))
         rd->collector.counter = 1;
@@ -63,13 +63,13 @@ static void rrddim_insert_callback(const DICTIONARY_ITEM *item __maybe_unused, v
         if(!entries) entries = 5;
 
         rd->db.data = netdata_mmap(NULL, entries * sizeof(storage_number), MAP_PRIVATE, 1, false, NULL);
-        if(!rd->db.data) {
-            netdata_log_info("Failed to use memory mode ram for chart '%s', dimension '%s', falling back to alloc", rrdset_name(st), rrddim_name(rd));
-            ctr->memory_mode = RRD_MEMORY_MODE_ALLOC;
+        if(rd->db.data) {
+            rd->db.memsize = entries * sizeof(storage_number);
+            pulse_db_rrd_memory_add(rd->db.memsize);
         }
         else {
-            rd->db.memsize = entries * sizeof(storage_number);
-            __atomic_add_fetch(&rrddim_db_memory_size, rd->db.memsize, __ATOMIC_RELAXED);
+            netdata_log_info("Failed to use memory mode ram for chart '%s', dimension '%s', falling back to alloc", rrdset_name(st), rrddim_name(rd));
+            ctr->memory_mode = RRD_MEMORY_MODE_ALLOC;
         }
     }
 
@@ -79,7 +79,7 @@ static void rrddim_insert_callback(const DICTIONARY_ITEM *item __maybe_unused, v
 
         rd->db.data = rrddim_alloc_db(entries);
         rd->db.memsize = entries * sizeof(storage_number);
-        __atomic_add_fetch(&rrddim_db_memory_size, rd->db.memsize, __ATOMIC_RELAXED);
+        pulse_db_rrd_memory_add(rd->db.memsize);
     }
 
     rd->rrd_memory_mode = ctr->memory_mode;
@@ -223,7 +223,7 @@ static void rrddim_delete_callback(const DICTIONARY_ITEM *item __maybe_unused, v
     }
 
     if(rd->db.data) {
-        __atomic_sub_fetch(&rrddim_db_memory_size, rd->db.memsize, __ATOMIC_RELAXED);
+        pulse_db_rrd_memory_sub(rd->db.memsize);
 
         if(rd->rrd_memory_mode == RRD_MEMORY_MODE_RAM)
             netdata_munmap(rd->db.data, rd->db.memsize);
@@ -289,7 +289,7 @@ size_t rrddim_size(void) {
 void rrddim_index_init(RRDSET *st) {
     if(!st->rrddim_root_index) {
         st->rrddim_root_index = dictionary_create_advanced(DICT_OPTION_DONT_OVERWRITE_VALUE | DICT_OPTION_FIXED_SIZE,
-                                                           &dictionary_stats_category_rrdset_rrddim, rrddim_size());
+                                                           &dictionary_stats_category_rrddim, rrddim_size());
 
         dictionary_register_insert_callback(st->rrddim_root_index, rrddim_insert_callback, NULL);
         dictionary_register_conflict_callback(st->rrddim_root_index, rrddim_conflict_callback, NULL);
@@ -556,6 +556,12 @@ collected_number rrddim_timed_set_by_pointer(RRDSET *st __maybe_unused, RRDDIM *
     rd->collector.collected_value = value;
     rrddim_set_updated(rd);
     rd->collector.counter++;
+
+//    spinlock_lock(&st->rrdhost->accounting.spinlock);
+//    Pvoid_t *Pvalue = JudyLIns(&st->rrdhost->accounting.JudySecL, (Word_t) collected_time.tv_sec, PJE0);
+//    if (Pvalue)
+//        *((int64_t *)Pvalue) = *((int64_t *)Pvalue) + 1;
+//    spinlock_unlock(&st->rrdhost->accounting.spinlock);
 
     collected_number v = (value >= 0) ? value : -value;
     if (unlikely(v > rd->collector.collected_value_max))

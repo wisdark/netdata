@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "health_internals.h"
+#include "health-alert-entry.h"
 
 // ---------------------------------------------------------------------------------------------------------------------
 
@@ -642,7 +643,7 @@ void health_apply_prototype_to_host(RRDHOST *host, RRD_ALERT_PROTOTYPE *ap) {
     if(!ap->_internal.enabled)
         return;
 
-    if(unlikely(!host->health.health_enabled) && !rrdhost_flag_check(host, RRDHOST_FLAG_INITIALIZED_HEALTH))
+    if(unlikely(!host->health.enabled) && !rrdhost_flag_check(host, RRDHOST_FLAG_INITIALIZED_HEALTH))
         return;
 
     RRDSET *st;
@@ -666,7 +667,7 @@ void health_prototype_apply_to_all_hosts(RRD_ALERT_PROTOTYPE *ap) {
 // ---------------------------------------------------------------------------------------------------------------------
 
 void health_apply_prototypes_to_host(RRDHOST *host) {
-    if(unlikely(!host->health.health_enabled) && !rrdhost_flag_check(host, RRDHOST_FLAG_INITIALIZED_HEALTH))
+    if(unlikely(!host->health.enabled) && !rrdhost_flag_check(host, RRDHOST_FLAG_INITIALIZED_HEALTH))
         return;
 
     // free all running alarms
@@ -687,15 +688,6 @@ void health_apply_prototypes_to_host(RRDHOST *host) {
         health_prototype_reset_alerts_for_rrdset(st);
     }
     rrdset_foreach_done(st);
-
-#ifdef ENABLE_ACLK
-    if (netdata_cloud_enabled) {
-        struct aclk_sync_cfg_t *wc = host->aclk_config;
-        if (likely(wc)) {
-            wc->alert_queue_removed = SEND_REMOVED_AFTER_HEALTH_LOOPS;
-        }
-    }
-#endif
 }
 
 void health_apply_prototypes_to_all_hosts(void) {

@@ -57,11 +57,7 @@ ebpf_process_stat_t *process_stat_vector = NULL;
 static netdata_syscall_stat_t process_aggregated_data[NETDATA_KEY_PUBLISH_PROCESS_END];
 static netdata_publish_syscall_t process_publish_aggregated[NETDATA_KEY_PUBLISH_PROCESS_END];
 
-struct config process_config = { .first_section = NULL,
-    .last_section = NULL,
-    .mutex = NETDATA_MUTEX_INITIALIZER,
-    .index = { .avl_tree = { .root = NULL, .compar = appconfig_section_compare },
-        .rwlock = AVL_LOCK_INITIALIZER } };
+struct config process_config = APPCONFIG_INITIALIZER;
 
 /*****************************************************************
  *
@@ -229,13 +225,13 @@ static void ebpf_update_process_cgroup()
         struct pid_on_target2 *pids;
         for (pids = ect->pids; pids; pids = pids->next) {
             int pid = pids->pid;
-            ebpf_process_stat_t *out = &pids->ps;
-            ebpf_pid_stat_t *local_pid = ebpf_get_pid_entry(pid, 0);
-            if (local_pid) {
-                ebpf_process_stat_t *in = &local_pid->process;
+            ebpf_publish_process_t *out = &pids->ps;
+            ebpf_pid_data_t *local_pid = ebpf_get_pid_data(pid, 0, NULL, EBPF_PIDS_PROCESS_IDX);
+            ebpf_publish_process_t *in = local_pid->process;
+            if (!in)
+                continue;
 
-                memcpy(out, in, sizeof(ebpf_process_stat_t));
-            }
+            memcpy(out, in, sizeof(ebpf_publish_process_t));
         }
     }
     pthread_mutex_unlock(&mutex_cgroup_shm);
@@ -691,8 +687,13 @@ static void ebpf_process_disable_tracepoints()
  */
 static void ebpf_process_exit(void *pptr)
 {
+    pids_fd[EBPF_PIDS_PROCESS_IDX] = -1;
     ebpf_module_t *em = CLEANUP_FUNCTION_GET_PTR(pptr);
     if(!em) return;
+
+    pthread_mutex_lock(&lock);
+    collect_pids &= ~(1<<EBPF_MODULE_PROCESS_IDX);
+    pthread_mutex_unlock(&lock);
 
     if (em->enabled == NETDATA_THREAD_EBPF_FUNCTION_RUNNING) {
         pthread_mutex_lock(&lock);
@@ -746,13 +747,13 @@ static void ebpf_process_exit(void *pptr)
  * @param ps  structure used to store data
  * @param pids input data
  */
-static void ebpf_process_sum_cgroup_pids(ebpf_process_stat_t *ps, struct pid_on_target2 *pids)
+static void ebpf_process_sum_cgroup_pids(ebpf_publish_process_t *ps, struct pid_on_target2 *pids)
 {
-    ebpf_process_stat_t accumulator;
+    ebpf_publish_process_t accumulator;
     memset(&accumulator, 0, sizeof(accumulator));
 
     while (pids) {
-        ebpf_process_stat_t *pps = &pids->ps;
+        ebpf_publish_process_t *pps = &pids->ps;
 
         accumulator.exit_call += pps->exit_call;
         accumulator.release_call += pps->release_call;
@@ -781,7 +782,7 @@ static void ebpf_process_sum_cgroup_pids(ebpf_process_stat_t *ps, struct pid_on_
  * @param values structure with values that will be sent to netdata
  * @param em   the structure with thread information
  */
-static void ebpf_send_specific_process_data(char *type, ebpf_process_stat_t *values, ebpf_module_t *em)
+static void ebpf_send_specific_process_data(char *type, ebpf_publish_process_t *values, ebpf_module_t *em)
 {
     ebpf_write_begin_chart(type, NETDATA_SYSCALL_APPS_TASK_PROCESS, "");
     write_chart_dimension(process_publish_aggregated[NETDATA_KEY_PUBLISH_PROCESS_FORK].name,
@@ -1119,8 +1120,6 @@ void ebpf_process_update_cgroup_algorithm()
  */
 static void process_collector(ebpf_module_t *em)
 {
-    heartbeat_t hb;
-    heartbeat_init(&hb);
     int publish_global = em->global_charts;
     int cgroups = em->cgroup_charts;
     pthread_mutex_lock(&ebpf_exit_cleanup);
@@ -1136,9 +1135,11 @@ static void process_collector(ebpf_module_t *em)
     uint32_t lifetime = em->lifetime;
     netdata_idx_t *stats = em->hash_table_stats;
     memset(stats, 0, sizeof(em->hash_table_stats));
+    heartbeat_t hb;
+    heartbeat_init(&hb, USEC_PER_SEC);
     while (!ebpf_plugin_stop() && running_time < lifetime) {
-        usec_t dt = heartbeat_next(&hb, USEC_PER_SEC);
-        (void)dt;
+        heartbeat_next(&hb);
+
         if (ebpf_plugin_stop())
             break;
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#define RRDHOST_SYSTEM_INFO_INTERNALS
 #include <stdio.h>
 #include "./config.h"
 #include "common.h"
@@ -54,6 +55,7 @@ typedef enum __attribute__((packed)) {
     BIB_FEATURE_CONTEXTS,
     BIB_FEATURE_TIERING,
     BIB_FEATURE_ML,
+    BIB_FEATURE_ALLOCATOR,
     BIB_DB_DBENGINE,
     BIB_DB_ALLOC,
     BIB_DB_RAM,
@@ -97,7 +99,6 @@ typedef enum __attribute__((packed)) {
     BIB_PLUGIN_SLABINFO,
     BIB_PLUGIN_XEN,
     BIB_PLUGIN_XEN_VBD_ERROR,
-    BIB_PLUGIN_LOGS_MANAGEMENT,
     BIB_EXPORT_AWS_KINESIS,
     BIB_EXPORT_GCP_PUBSUB,
     BIB_EXPORT_MONGOC,
@@ -531,6 +532,14 @@ static struct {
                 .json = "ml",
                 .value = NULL,
         },
+        [BIB_FEATURE_ALLOCATOR] = {
+                .category = BIC_FEATURE,
+                .type = BIT_STRING,
+                .analytics = "allocator",
+                .print = "Memory Allocator",
+                .json = "allocator",
+                .value = NULL,
+        },
         [BIB_DB_DBENGINE] = {
                 .category = BIC_DATABASE,
                 .type = BIT_BOOLEAN,
@@ -875,14 +884,6 @@ static struct {
                 .json = "xen-vbd-error",
                 .value = NULL,
         },
-        [BIB_PLUGIN_LOGS_MANAGEMENT] = {
-                .category = BIC_PLUGINS,
-                .type = BIT_BOOLEAN,
-                .analytics = "Logs Management",
-                .print = "Logs Management",
-                .json = "logs-management",
-                .value = NULL,
-        },
         [BIB_EXPORT_MONGOC] = {
                 .category = BIC_EXPORTERS,
                 .type = BIT_BOOLEAN,
@@ -1078,18 +1079,8 @@ __attribute__((constructor)) void initialize_build_info(void) {
 #endif
 #endif
 
-#ifdef ENABLE_ACLK
     build_info_set_status(BIB_FEATURE_CLOUD, true);
     build_info_set_status(BIB_CONNECTIVITY_ACLK, true);
-#else
-    build_info_set_status(BIB_FEATURE_CLOUD, false);
-#ifdef DISABLE_CLOUD
-    build_info_set_value(BIB_FEATURE_CLOUD, "disabled");
-#else
-    build_info_set_value(BIB_FEATURE_CLOUD, "unavailable");
-#endif
-#endif
-
     build_info_set_status(BIB_FEATURE_HEALTH, true);
     build_info_set_status(BIB_FEATURE_STREAMING, true);
     build_info_set_status(BIB_FEATURE_BACKFILLING, true);
@@ -1115,6 +1106,15 @@ __attribute__((constructor)) void initialize_build_info(void) {
     build_info_set_status(BIB_FEATURE_ML, true);
 #endif
 
+#if defined(ENABLE_MIMALLOC)
+    build_info_set_status(BIB_FEATURE_ALLOCATOR, true);
+    build_info_set_value(BIB_FEATURE_ALLOCATOR, "mimalloc");
+#else
+    build_info_set_status(BIB_FEATURE_ALLOCATOR, true);
+    build_info_set_value(BIB_FEATURE_ALLOCATOR, "system");
+#endif
+
+
 #ifdef ENABLE_DBENGINE
     build_info_set_status(BIB_DB_DBENGINE, true);
 #ifdef ENABLE_ZSTD
@@ -1135,9 +1135,7 @@ __attribute__((constructor)) void initialize_build_info(void) {
 #ifdef ENABLE_WEBRTC
     build_info_set_status(BIB_CONNECTIVITY_WEBRTC, true);
 #endif
-#ifdef ENABLE_HTTPS
     build_info_set_status(BIB_CONNECTIVITY_NATIVE_HTTPS, true);
-#endif
 #if defined(HAVE_X509_VERIFY_PARAM_set1_host) && HAVE_X509_VERIFY_PARAM_set1_host == 1
     build_info_set_status(BIB_CONNECTIVITY_TLS_HOST_VERIFY, true);
 #endif
@@ -1171,9 +1169,7 @@ __attribute__((constructor)) void initialize_build_info(void) {
 #ifdef HAVE_LIBDATACHANNEL
     build_info_set_status(BIB_LIB_LIBDATACHANNEL, true);
 #endif
-#ifdef ENABLE_OPENSSL
     build_info_set_status(BIB_LIB_OPENSSL, true);
-#endif
 #ifdef ENABLE_JSONC
     build_info_set_status(BIB_LIB_JSONC, true);
 #endif
@@ -1229,9 +1225,6 @@ __attribute__((constructor)) void initialize_build_info(void) {
 #ifdef HAVE_XENSTAT_VBD_ERROR
     build_info_set_status(BIB_PLUGIN_XEN_VBD_ERROR, true);
 #endif
-#ifdef ENABLE_LOGSMANAGEMENT
-    build_info_set_status(BIB_PLUGIN_LOGS_MANAGEMENT, true);
-#endif
 
     build_info_set_status(BIB_EXPORT_PROMETHEUS_EXPORTER, true);
     build_info_set_status(BIB_EXPORT_GRAPHITE, true);
@@ -1268,10 +1261,9 @@ __attribute__((constructor)) void initialize_build_info(void) {
 // ----------------------------------------------------------------------------
 // system info
 
-int get_system_info(struct rrdhost_system_info *system_info);
 static void populate_system_info(void) {
     static bool populated = false;
-    static SPINLOCK spinlock = NETDATA_SPINLOCK_INITIALIZER;
+    static SPINLOCK spinlock = SPINLOCK_INITIALIZER;
 
     if(populated)
         return;
@@ -1296,8 +1288,8 @@ static void populate_system_info(void) {
             netdata_main_spawn_server_init(NULL, 0, NULL);
         }
 
-        system_info = callocz(1, sizeof(struct rrdhost_system_info));
-        get_system_info(system_info);
+        system_info = rrdhost_system_info_create();
+        rrdhost_system_info_detect(system_info);
         free_system_info = true;
 
         if(started_spawn_server)
@@ -1357,10 +1349,11 @@ char *get_value_from_key(char *buffer, char *key) {
     return s;
 }
 
-void get_install_type(char **install_type, char **prebuilt_arch, char **prebuilt_dist) {
+void get_install_type_internal(char **install_type, char **prebuilt_arch __maybe_unused, char **prebuilt_dist __maybe_unused) {
+#ifndef OS_WINDOWS
     char *install_type_filename;
 
-    int install_type_filename_len = (strlen(netdata_configured_user_config_dir) + strlen(".install-type") + 3);
+    unsigned long install_type_filename_len = (strlen(netdata_configured_user_config_dir) + strlen(".install-type") + 3);
     install_type_filename = mallocz(sizeof(char) * install_type_filename_len);
     snprintfz(install_type_filename, install_type_filename_len - 1, "%s/%s", netdata_configured_user_config_dir, ".install-type");
 
@@ -1380,6 +1373,13 @@ void get_install_type(char **install_type, char **prebuilt_arch, char **prebuilt
         fclose(fp);
     }
     freez(install_type_filename);
+#else
+    *install_type = strdupz("netdata_installer.exe");
+#endif
+}
+
+void get_install_type(struct rrdhost_system_info *system_info) {
+    get_install_type_internal(&system_info->install_type, &system_info->prebuilt_arch, &system_info->prebuilt_dist);
 }
 
 static struct {
@@ -1396,7 +1396,7 @@ static void populate_packaging_info() {
         if(!BUILD_PACKAGING_INFO.populated) {
             BUILD_PACKAGING_INFO.populated = true;
 
-            get_install_type(&BUILD_PACKAGING_INFO.install_type, &BUILD_PACKAGING_INFO.prebuilt_arch, &BUILD_PACKAGING_INFO.prebuilt_distro);
+            get_install_type_internal(&BUILD_PACKAGING_INFO.install_type, &BUILD_PACKAGING_INFO.prebuilt_arch, &BUILD_PACKAGING_INFO.prebuilt_distro);
 
             if(!BUILD_PACKAGING_INFO.install_type)
                 BUILD_PACKAGING_INFO.install_type = "unknown";

@@ -1,15 +1,10 @@
-
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "aclk_otp.h"
 #include "aclk_util.h"
 #include "aclk.h"
 
-#include "daemon/common.h"
-
-#include "mqtt_websockets/c-rbuf/cringbuffer.h"
-
-static int aclk_https_request(https_req_t *request, https_req_response_t *response) {
+static int aclk_https_request(https_req_t *request, https_req_response_t *response, bool *fallback_ipv4) {
     int rc;
     // wrapper for ACLK only which loads ACLK specific proxy settings
     // then only calls https_request
@@ -23,7 +18,7 @@ static int aclk_https_request(https_req_t *request, https_req_response_t *respon
         request->proxy_password = proxy_conf.password;
     }
 
-    rc = https_request(request, response);
+    rc = https_request(request, response, fallback_ipv4);
     freez((char*)proxy_conf.host);
     freez((char*)proxy_conf.username);
     freez((char*)proxy_conf.password);
@@ -272,43 +267,11 @@ exit:
 }
 #endif
 
-#if defined(OPENSSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER < OPENSSL_VERSION_110
-static EVP_ENCODE_CTX *EVP_ENCODE_CTX_new(void)
-{
-	EVP_ENCODE_CTX *ctx = OPENSSL_malloc(sizeof(*ctx));
-
-	if (ctx != NULL) {
-		memset(ctx, 0, sizeof(*ctx));
-	}
-	return ctx;
-}
-static void EVP_ENCODE_CTX_free(EVP_ENCODE_CTX *ctx)
-{
-	OPENSSL_free(ctx);
-	return;
-}
-#endif
-
 #define CHALLENGE_LEN 256
 #define CHALLENGE_LEN_BASE64 344
-inline static int base64_decode_helper(unsigned char *out, int *outl, const unsigned char *in, int in_len)
-{
-    unsigned char remaining_data[CHALLENGE_LEN];
-    EVP_ENCODE_CTX *ctx = EVP_ENCODE_CTX_new();
-    EVP_DecodeInit(ctx);
-    EVP_DecodeUpdate(ctx, out, outl, in, in_len);
-    int remainder = 0;
-    EVP_DecodeFinal(ctx, remaining_data, &remainder);
-    EVP_ENCODE_CTX_free(ctx);
-    if (remainder) {
-        netdata_log_error("Unexpected data at EVP_DecodeFinal");
-        return 1;
-    }
-    return 0;
-}
 
 #define OTP_URL_PREFIX "/api/v1/auth/node/"
-int aclk_get_otp_challenge(url_t *target, const char *agent_id, unsigned char **challenge, int *challenge_bytes)
+int aclk_get_otp_challenge(url_t *target, const char *agent_id, unsigned char **challenge, int *challenge_bytes, bool *fallback_ipv4)
 {
     int rc = 1;
     https_req_t req = HTTPS_REQ_T_INITIALIZER;
@@ -321,7 +284,7 @@ int aclk_get_otp_challenge(url_t *target, const char *agent_id, unsigned char **
     buffer_sprintf(url, "%s/node/%s/challenge", target->path, agent_id);
     req.url = (char *)buffer_tostring(url);
 
-    if (aclk_https_request(&req, &resp)) {
+    if (aclk_https_request(&req, &resp, fallback_ipv4)) {
         netdata_log_error("ACLK_OTP Challenge failed");
         buffer_free(url);
         return 1;
@@ -352,7 +315,7 @@ int aclk_get_otp_challenge(url_t *target, const char *agent_id, unsigned char **
         goto cleanup_json;
     }
     const char *challenge_base64;
-    if (!(challenge_base64 = json_object_get_string(challenge_json))) {
+    if (!((challenge_base64 = json_object_get_string(challenge_json)))) {
         netdata_log_error("Failed to extract challenge from JSON object");
         goto cleanup_json;
     }
@@ -361,8 +324,9 @@ int aclk_get_otp_challenge(url_t *target, const char *agent_id, unsigned char **
         goto cleanup_json;
     }
 
-    *challenge = mallocz((CHALLENGE_LEN_BASE64 / 4) * 3);
-    base64_decode_helper(*challenge, challenge_bytes, (const unsigned char*)challenge_base64, strlen(challenge_base64));
+    *challenge = mallocz((CHALLENGE_LEN_BASE64 / 4) * 3 + 1);
+    *challenge_bytes = netdata_base64_decode(*challenge, (const unsigned char *) challenge_base64, CHALLENGE_LEN_BASE64);
+
     if (*challenge_bytes != CHALLENGE_LEN) {
         netdata_log_error("Unexpected challenge length of %d instead of %d", *challenge_bytes, CHALLENGE_LEN);
         freez(*challenge);
@@ -378,9 +342,8 @@ cleanup_resp:
     return rc;
 }
 
-int aclk_send_otp_response(const char *agent_id, const unsigned char *response, int response_bytes, url_t *target, struct auth_data *mqtt_auth)
+int aclk_send_otp_response(const char *agent_id, const unsigned char *response, int response_bytes, url_t *target, struct auth_data *mqtt_auth, bool *fallback_ipv4)
 {
-    int len;
     int rc = 1;
     https_req_t req = HTTPS_REQ_T_INITIALIZER;
     https_req_response_t resp = HTTPS_REQ_RESPONSE_T_INITIALIZER;
@@ -392,7 +355,7 @@ int aclk_send_otp_response(const char *agent_id, const unsigned char *response, 
     unsigned char base64[CHALLENGE_LEN_BASE64 + 1];
     memset(base64, 0, CHALLENGE_LEN_BASE64 + 1);
 
-    base64_encode_helper(base64, &len, response, response_bytes);
+    (void) netdata_base64_encode(base64, response, response_bytes);
 
     BUFFER *url = buffer_create(strlen(OTP_URL_PREFIX) + UUID_STR_LEN + 20, &netdata_buffers_statistics.buffers_aclk);
     BUFFER *resp_json = buffer_create(strlen(OTP_URL_PREFIX) + UUID_STR_LEN + 20, &netdata_buffers_statistics.buffers_aclk);
@@ -404,7 +367,7 @@ int aclk_send_otp_response(const char *agent_id, const unsigned char *response, 
     req.payload = (char *)buffer_tostring(resp_json);
     req.payload_size = strlen(req.payload);
 
-    if (aclk_https_request(&req, &resp)) {
+    if (aclk_https_request(&req, &resp, fallback_ipv4)) {
         netdata_log_error("ACLK_OTP Password error trying to post result to password");
         goto cleanup_buffers;
     }
@@ -480,24 +443,23 @@ static int private_decrypt(RSA *p_key, unsigned char * enc_data, int data_len, u
 }
 
 #if OPENSSL_VERSION_NUMBER >= OPENSSL_VERSION_300
-int aclk_get_mqtt_otp(EVP_PKEY *p_key, char **mqtt_id, char **mqtt_usr, char **mqtt_pass, url_t *target)
+int aclk_get_mqtt_otp(EVP_PKEY *p_key, char **mqtt_id, char **mqtt_usr, char **mqtt_pass, url_t *target, bool *fallback_ipv4)
 #else
-int aclk_get_mqtt_otp(RSA *p_key, char **mqtt_id, char **mqtt_usr, char **mqtt_pass, url_t *target)
+int aclk_get_mqtt_otp(RSA *p_key, char **mqtt_id, char **mqtt_usr, char **mqtt_pass, url_t *target, bool *fallback_ipv4)
 #endif
 {
     unsigned char *challenge = NULL;
     int challenge_bytes;
 
-    char *agent_id = get_agent_claimid();
-    if (agent_id == NULL) {
+    CLAIM_ID claim_id = claim_id_get();
+    if (!claim_id_is_set(claim_id)) {
         netdata_log_error("Agent was not claimed - cannot perform challenge/response");
         return 1;
     }
 
     // Get Challenge
-    if (aclk_get_otp_challenge(target, agent_id, &challenge, &challenge_bytes)) {
+    if (aclk_get_otp_challenge(target, claim_id.str, &challenge, &challenge_bytes, fallback_ipv4)) {
         netdata_log_error("Error getting challenge");
-        freez(agent_id);
         return 1;
     }
 
@@ -508,17 +470,15 @@ int aclk_get_mqtt_otp(RSA *p_key, char **mqtt_id, char **mqtt_usr, char **mqtt_p
         netdata_log_error("Couldn't decrypt the challenge received");
         freez(response_plaintext);
         freez(challenge);
-        freez(agent_id);
         return 1;
     }
     freez(challenge);
 
     // Encode and Send Challenge
     struct auth_data data = { .client_id = NULL, .passwd = NULL, .username = NULL };
-    if (aclk_send_otp_response(agent_id, response_plaintext, response_plaintext_bytes, target, &data)) {
+    if (aclk_send_otp_response(claim_id.str, response_plaintext, response_plaintext_bytes, target, &data, fallback_ipv4)) {
         netdata_log_error("Error getting response");
         freez(response_plaintext);
-        freez(agent_id);
         return 1;
     }
 
@@ -527,7 +487,6 @@ int aclk_get_mqtt_otp(RSA *p_key, char **mqtt_id, char **mqtt_usr, char **mqtt_p
     *mqtt_id = data.client_id;
 
     freez(response_plaintext);
-    freez(agent_id);
     return 0;
 }
 
@@ -823,7 +782,7 @@ exit:
     return 1;
 }
 
-int aclk_get_env(aclk_env_t *env, const char* aclk_hostname, int aclk_port) {
+int aclk_get_env(aclk_env_t *env, const char* aclk_hostname, int aclk_port, bool *fallback_ipv4) {
     BUFFER *buf = buffer_create(1024, &netdata_buffers_statistics.buffers_aclk);
 
     https_req_t req = HTTPS_REQ_T_INITIALIZER;
@@ -831,22 +790,19 @@ int aclk_get_env(aclk_env_t *env, const char* aclk_hostname, int aclk_port) {
 
     req.request_type = HTTP_REQ_GET;
 
-    char *agent_id = get_agent_claimid();
-    if (agent_id == NULL)
-    {
+    CLAIM_ID claim_id = claim_id_get();
+    if (!claim_id_is_set(claim_id)) {
         netdata_log_error("Agent was not claimed - cannot perform challenge/response");
         buffer_free(buf);
         return 1;
     }
 
-    buffer_sprintf(buf, "/api/v1/env?v=%s&cap=proto,ctx&claim_id=%s", &(NETDATA_VERSION[1]) /* skip 'v' at beginning */, agent_id);
-
-    freez(agent_id);
+    buffer_sprintf(buf, "/api/v1/env?v=%s&cap=proto,ctx&claim_id=%s", &(NETDATA_VERSION[1]) /* skip 'v' at beginning */, claim_id.str);
 
     req.host = (char*)aclk_hostname;
     req.port = aclk_port;
     req.url = buf->buffer;
-    if (aclk_https_request(&req, &resp)) {
+    if (aclk_https_request(&req, &resp, fallback_ipv4)) {
         netdata_log_error("Error trying to contact env endpoint");
         https_req_response_free(&resp);
         buffer_free(buf);

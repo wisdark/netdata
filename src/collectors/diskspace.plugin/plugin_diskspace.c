@@ -516,8 +516,6 @@ static void diskspace_slow_worker_cleanup(void *pptr) {
     struct slow_worker_data *data = CLEANUP_FUNCTION_GET_PTR(pptr);
     if(data) return;
 
-    collector_info("cleaning up...");
-
     worker_unregister();
 }
 
@@ -544,11 +542,11 @@ void *diskspace_slow_worker(void *ptr)
     usec_t step = slow_update_every * USEC_PER_SEC;
     usec_t real_step = USEC_PER_SEC;
     heartbeat_t hb;
-    heartbeat_init(&hb);
+    heartbeat_init(&hb, USEC_PER_SEC);
 
     while(service_running(SERVICE_COLLECTORS)) {
         worker_is_idle();
-        heartbeat_next(&hb, USEC_PER_SEC);
+        heartbeat_next(&hb);
 
         if (real_step < step) {
             real_step += USEC_PER_SEC;
@@ -608,8 +606,6 @@ static void diskspace_main_cleanup(void *pptr) {
 
     static_thread->enabled = NETDATA_MAIN_THREAD_EXITING;
 
-    collector_info("cleaning up...");
-
     rrd_collector_finished();
     worker_unregister();
 
@@ -629,7 +625,7 @@ static void diskspace_main_cleanup(void *pptr) {
 #error WORKER_UTILIZATION_MAX_JOB_TYPES has to be at least 3
 #endif
 
-int diskspace_function_mount_points(BUFFER *wb, const char *function __maybe_unused) {
+static int diskspace_function_mount_points(BUFFER *wb, const char *function __maybe_unused, BUFFER *payload __maybe_unused, const char *source __maybe_unused) {
     netdata_mutex_lock(&slow_mountinfo_mutex);
 
     buffer_flush(wb);
@@ -849,17 +845,20 @@ void *diskspace_main(void *ptr) {
     worker_register_job_name(WORKER_JOB_CLEANUP, "cleanup");
 
     rrd_function_add_inline(localhost, NULL, "mount-points", 10,
-                            RRDFUNCTIONS_PRIORITY_DEFAULT, RRDFUNCTIONS_DISKSPACE_HELP,
+                            RRDFUNCTIONS_PRIORITY_DEFAULT, RRDFUNCTIONS_VERSION_DEFAULT,
+                            RRDFUNCTIONS_DISKSPACE_HELP,
                             "top", HTTP_ACCESS_ANONYMOUS_DATA,
                             diskspace_function_mount_points);
 
     cleanup_mount_points = config_get_boolean(CONFIG_SECTION_DISKSPACE, "remove charts of unmounted disks" , cleanup_mount_points);
 
-    int update_every = (int)config_get_number(CONFIG_SECTION_DISKSPACE, "update every", localhost->rrd_update_every);
-    if(update_every < localhost->rrd_update_every)
+    int update_every = (int)config_get_duration_seconds(CONFIG_SECTION_DISKSPACE, "update every", localhost->rrd_update_every);
+    if(update_every < localhost->rrd_update_every) {
         update_every = localhost->rrd_update_every;
+        config_set_duration_seconds(CONFIG_SECTION_DISKSPACE, "update every", update_every);
+    }
 
-    check_for_new_mountpoints_every = (int)config_get_number(CONFIG_SECTION_DISKSPACE, "check for new mount points every", check_for_new_mountpoints_every);
+    check_for_new_mountpoints_every = (int)config_get_duration_seconds(CONFIG_SECTION_DISKSPACE, "check for new mount points every", check_for_new_mountpoints_every);
     if(check_for_new_mountpoints_every < update_every)
         check_for_new_mountpoints_every = update_every;
 
@@ -873,12 +872,11 @@ void *diskspace_main(void *ptr) {
         diskspace_slow_worker,
         &slow_worker_data);
 
-    usec_t step = update_every * USEC_PER_SEC;
     heartbeat_t hb;
-    heartbeat_init(&hb);
+    heartbeat_init(&hb, update_every * USEC_PER_SEC);
     while(service_running(SERVICE_COLLECTORS)) {
         worker_is_idle();
-        /* usec_t hb_dt = */ heartbeat_next(&hb, step);
+        /* usec_t hb_dt = */ heartbeat_next(&hb);
 
         if(unlikely(!service_running(SERVICE_COLLECTORS))) break;
 

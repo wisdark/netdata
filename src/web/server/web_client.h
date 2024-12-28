@@ -12,18 +12,15 @@ extern int web_enable_gzip, web_gzip_level, web_gzip_strategy;
 #define HTTP_REQ_MAX_HEADER_FETCH_TRIES 100
 
 extern int respect_web_browser_do_not_track_policy;
-extern char *web_x_frame_options;
+extern const char *web_x_frame_options;
 
 typedef enum __attribute__((packed)) {
     HTTP_VALIDATION_OK,
     HTTP_VALIDATION_NOT_SUPPORTED,
     HTTP_VALIDATION_TOO_MANY_READ_RETRIES,
-    HTTP_VALIDATION_EXCESS_REQUEST_DATA,
     HTTP_VALIDATION_MALFORMED_URL,
     HTTP_VALIDATION_INCOMPLETE,
-#ifdef ENABLE_HTTPS
     HTTP_VALIDATION_REDIRECT
-#endif
 } HTTP_VALIDATION;
 
 typedef enum __attribute__((packed)) {
@@ -58,19 +55,20 @@ typedef enum __attribute__((packed)) {
     WEB_CLIENT_FLAG_PATH_IS_V0              = (1 << 16), // v0 dashboard found on the path
     WEB_CLIENT_FLAG_PATH_IS_V1              = (1 << 17), // v1 dashboard found on the path
     WEB_CLIENT_FLAG_PATH_IS_V2              = (1 << 18), // v2 dashboard found on the path
-    WEB_CLIENT_FLAG_PATH_HAS_TRAILING_SLASH = (1 << 19), // the path has a trailing hash
-    WEB_CLIENT_FLAG_PATH_HAS_FILE_EXTENSION = (1 << 20), // the path ends with a filename extension
+    WEB_CLIENT_FLAG_PATH_IS_V3              = (1 << 19), // v3 dashboard found on the path
+    WEB_CLIENT_FLAG_PATH_HAS_TRAILING_SLASH = (1 << 20), // the path has a trailing hash
+    WEB_CLIENT_FLAG_PATH_HAS_FILE_EXTENSION = (1 << 21), // the path ends with a filename extension
 
     // authorization
-    WEB_CLIENT_FLAG_AUTH_CLOUD              = (1 << 21),
-    WEB_CLIENT_FLAG_AUTH_BEARER             = (1 << 22),
-    WEB_CLIENT_FLAG_AUTH_GOD                = (1 << 23),
+    WEB_CLIENT_FLAG_AUTH_CLOUD              = (1 << 22),
+    WEB_CLIENT_FLAG_AUTH_BEARER             = (1 << 23),
+    WEB_CLIENT_FLAG_AUTH_GOD                = (1 << 24),
 
     // transient settings
-    WEB_CLIENT_FLAG_PROGRESS_TRACKING       = (1 << 24), // flag to avoid redoing progress work
+    WEB_CLIENT_FLAG_PROGRESS_TRACKING       = (1 << 25), // flag to avoid redoing progress work
 } WEB_CLIENT_FLAGS;
 
-#define WEB_CLIENT_FLAG_PATH_WITH_VERSION (WEB_CLIENT_FLAG_PATH_IS_V0|WEB_CLIENT_FLAG_PATH_IS_V1|WEB_CLIENT_FLAG_PATH_IS_V2)
+#define WEB_CLIENT_FLAG_PATH_WITH_VERSION (WEB_CLIENT_FLAG_PATH_IS_V0|WEB_CLIENT_FLAG_PATH_IS_V1|WEB_CLIENT_FLAG_PATH_IS_V2|WEB_CLIENT_FLAG_PATH_IS_V3)
 #define web_client_reset_path_flags(w) (w)->flags &= ~(WEB_CLIENT_FLAG_PATH_WITH_VERSION|WEB_CLIENT_FLAG_PATH_HAS_TRAILING_SLASH|WEB_CLIENT_FLAG_PATH_HAS_FILE_EXTENSION)
 
 #define web_client_flag_check(w, flag) ((w)->flags & (flag))
@@ -112,9 +110,9 @@ typedef enum __attribute__((packed)) {
 #define web_client_check_conn_tcp(w) web_client_flag_check(w, WEB_CLIENT_FLAG_CONN_TCP)
 #define web_client_check_conn_cloud(w) web_client_flag_check(w, WEB_CLIENT_FLAG_CONN_CLOUD)
 #define web_client_check_conn_webrtc(w) web_client_flag_check(w, WEB_CLIENT_FLAG_CONN_WEBRTC)
-
-#define WEB_CLIENT_FLAG_ALL_AUTHS (WEB_CLIENT_FLAG_AUTH_CLOUD | WEB_CLIENT_FLAG_AUTH_BEARER)
 #define web_client_flags_clear_conn(w) web_client_flag_clear(w, WEB_CLIENT_FLAG_CONN_TCP | WEB_CLIENT_FLAG_CONN_UNIX | WEB_CLIENT_FLAG_CONN_CLOUD | WEB_CLIENT_FLAG_CONN_WEBRTC)
+
+#define WEB_CLIENT_FLAG_ALL_AUTHS (WEB_CLIENT_FLAG_AUTH_CLOUD | WEB_CLIENT_FLAG_AUTH_BEARER | WEB_CLIENT_FLAG_AUTH_GOD)
 #define web_client_flags_check_auth(w) web_client_flag_check(w, WEB_CLIENT_FLAG_ALL_AUTHS)
 #define web_client_flags_clear_auth(w) web_client_flag_clear(w, WEB_CLIENT_FLAG_ALL_AUTHS)
 
@@ -136,7 +134,7 @@ void web_client_set_conn_webrtc(struct web_client *w);
 #define NETDATA_WEB_REQUEST_MAX_SIZE 65536
 #define NETDATA_WEB_DECODED_URL_INITIAL_SIZE 512
 
-#define CLOUD_USER_NAME_LENGTH 64
+#define CLOUD_CLIENT_NAME_LENGTH 64
 
 struct response {
     BUFFER *header;         // our response header
@@ -202,14 +200,12 @@ struct web_client {
     size_t pollinfo_slot;               // POLLINFO slot of the web client
     size_t pollinfo_filecopy_slot;      // POLLINFO slot of the file read
 
-#ifdef ENABLE_HTTPS
     NETDATA_SSL ssl;
-#endif
 
     struct {
         nd_uuid_t bearer_token;
         nd_uuid_t cloud_account_id;
-        char client_name[CLOUD_USER_NAME_LENGTH];
+        char client_name[CLOUD_CLIENT_NAME_LENGTH];
     } auth;
 
     struct {                            // A callback to check if the query should be interrupted / stopped

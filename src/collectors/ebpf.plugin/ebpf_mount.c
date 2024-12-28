@@ -22,9 +22,7 @@ static char *mount_dimension_name[NETDATA_EBPF_MOUNT_SYSCALL] = { "mount", "umou
 static netdata_syscall_stat_t mount_aggregated_data[NETDATA_EBPF_MOUNT_SYSCALL];
 static netdata_publish_syscall_t mount_publish_aggregated[NETDATA_EBPF_MOUNT_SYSCALL];
 
-struct config mount_config = { .first_section = NULL, .last_section = NULL, .mutex = NETDATA_MUTEX_INITIALIZER,
-                               .index = {.avl_tree = { .root = NULL, .compar = appconfig_section_compare },
-                                         .rwlock = AVL_LOCK_INITIALIZER } };
+struct config mount_config = APPCONFIG_INITIALIZER;
 
 static netdata_idx_t mount_hash_values[NETDATA_MOUNT_END];
 
@@ -363,15 +361,15 @@ static void mount_collector(ebpf_module_t *em)
 {
     memset(mount_hash_values, 0, sizeof(mount_hash_values));
 
-    heartbeat_t hb;
-    heartbeat_init(&hb);
     int update_every = em->update_every;
     int counter = update_every - 1;
     int maps_per_core = em->maps_per_core;
     uint32_t running_time = 0;
     uint32_t lifetime = em->lifetime;
+    heartbeat_t hb;
+    heartbeat_init(&hb, USEC_PER_SEC);
     while (!ebpf_plugin_stop() && running_time < lifetime) {
-        (void)heartbeat_next(&hb, USEC_PER_SEC);
+        heartbeat_next(&hb);
         if (ebpf_plugin_stop() || ++counter != update_every)
             continue;
 

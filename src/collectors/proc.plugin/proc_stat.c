@@ -293,7 +293,7 @@ static void* wake_cpu_thread(void* core) {
     return 0;
 }
 
-static int read_schedstat(char *schedstat_filename, struct per_core_cpuidle_chart **cpuidle_charts_address, size_t *schedstat_cores_found) {
+static int read_schedstat(const char *schedstat_filename, struct per_core_cpuidle_chart **cpuidle_charts_address, size_t *schedstat_cores_found) {
     static size_t cpuidle_charts_len = 0;
     static procfile *ff = NULL;
     struct per_core_cpuidle_chart *cpuidle_charts = *cpuidle_charts_address;
@@ -373,7 +373,7 @@ static int read_one_state(char *buf, const char *filename, int *fd) {
     return 1;
 }
 
-static int read_cpuidle_states(char *cpuidle_name_filename , char *cpuidle_time_filename, struct per_core_cpuidle_chart *cpuidle_charts, size_t core) {
+static int read_cpuidle_states(const char *cpuidle_name_filename, const char *cpuidle_time_filename, struct per_core_cpuidle_chart *cpuidle_charts, size_t core) {
     char filename[FILENAME_MAX + 1];
     static char next_state_filename[FILENAME_MAX + 1];
     struct stat stbuf;
@@ -484,7 +484,7 @@ int do_proc_stat(int update_every, usec_t dt) {
     static int do_cpu = -1, do_cpu_cores = -1, do_interrupts = -1, do_context = -1, do_forks = -1, do_processes = -1,
            do_core_throttle_count = -1, do_package_throttle_count = -1, do_cpu_freq = -1, do_cpuidle = -1;
     static uint32_t hash_intr, hash_ctxt, hash_processes, hash_procs_running, hash_procs_blocked;
-    static char *core_throttle_count_filename = NULL, *package_throttle_count_filename = NULL, *scaling_cur_freq_filename = NULL,
+    static const char *core_throttle_count_filename = NULL, *package_throttle_count_filename = NULL, *scaling_cur_freq_filename = NULL,
            *time_in_state_filename = NULL, *schedstat_filename = NULL, *cpuidle_name_filename = NULL, *cpuidle_time_filename = NULL;
     static const RRDVAR_ACQUIRED *cpus_var = NULL;
     static int accurate_freq_avail = 0, accurate_freq_is_used = 0;
@@ -729,7 +729,7 @@ int do_proc_stat(int update_every, usec_t dt) {
 
                     if (core > 0) {
                         char cpu_core[50 + 1];
-                        snprintfz(cpu_core, 50, "cpu%lu", core - 1);
+                        snprintfz(cpu_core, 50, "cpu%zu", core - 1);
                         rrdlabels_add(cpu_chart->st->rrdlabels, "cpu", cpu_core, RRDLABEL_SRC_AUTO);
                     }
 
@@ -794,7 +794,6 @@ int do_proc_stat(int update_every, usec_t dt) {
                     , update_every
                     , RRDSET_TYPE_LINE
             );
-            rrdset_flag_set(st_forks, RRDSET_FLAG_DETAIL);
 
             rd_started = rrddim_add(st_forks, "started", NULL, 1, 1, RRD_ALGORITHM_INCREMENTAL);
         }

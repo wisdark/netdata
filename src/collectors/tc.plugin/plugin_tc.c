@@ -845,8 +845,6 @@ static void tc_main_cleanup(void *pptr) {
 
     static_thread->enabled = NETDATA_MAIN_THREAD_EXITING;
 
-    collector_info("cleaning up...");
-
     if(tc_child_instance) {
         collector_info("TC: stopping the running tc-qos-helper script");
         int code = spawn_popen_wait(tc_child_instance); (void)code;
@@ -912,7 +910,7 @@ void *tc_main(void *ptr) {
     uint32_t first_hash;
 
     snprintfz(command, TC_LINE_MAX, "%s/tc-qos-helper.sh", netdata_configured_primary_plugins_dir);
-    char *tc_script = config_get("plugin:tc", "script to run to get tc values", command);
+    const char *tc_script = config_get("plugin:tc", "script to run to get tc values", command);
 
     while(service_running(SERVICE_COLLECTORS)) {
         struct tc_device *device = NULL;
@@ -928,7 +926,7 @@ void *tc_main(void *ptr) {
         }
 
         char buffer[TC_LINE_MAX+1] = "";
-        while(fgets(buffer, TC_LINE_MAX, tc_child_instance->child_stdout_fp) != NULL) {
+        while(fgets(buffer, TC_LINE_MAX, spawn_popen_stdout(tc_child_instance)) != NULL) {
             if(unlikely(!service_running(SERVICE_COLLECTORS))) break;
 
             buffer[TC_LINE_MAX] = '\0';
@@ -1135,7 +1133,7 @@ void *tc_main(void *ptr) {
         }
 
         // fgets() failed or loop broke
-        int code = spawn_popen_kill(tc_child_instance);
+        int code = spawn_popen_kill(tc_child_instance, 0);
         tc_child_instance = NULL;
 
         if(unlikely(device)) {

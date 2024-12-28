@@ -4,11 +4,9 @@ extern "C" {
 #include "libnetdata/libnetdata.h"
 
 int netdata_main(int argc, char *argv[]);
-void signals_handle(void);
+void nd_process_signals(void);
 
 }
-
-#include <windows.h>
 
 __attribute__((format(printf, 1, 2)))
 static void netdata_service_log(const char *fmt, ...)
@@ -74,7 +72,7 @@ static HANDLE CreateEventHandle(const char *msg)
 
     if (!h)
     {
-        netdata_service_log(msg);
+        netdata_service_log("%s", msg);
 
         if (!ReportSvcStatus(SERVICE_STOPPED, GetLastError(), 1000, 0))
         {
@@ -219,7 +217,11 @@ static bool update_path() {
 
 int main(int argc, char *argv[])
 {
+#if defined(OS_WINDOWS) && defined(RUN_UNDER_CLION)
+    bool tty = true;
+#else
     bool tty = isatty(fileno(stdin)) == 1;
+#endif
 
     if (!update_path()) {
         return 1;
@@ -231,7 +233,7 @@ int main(int argc, char *argv[])
         if (rc != 10)
             return rc;
 
-        signals_handle();
+        nd_process_signals();
         return 1;
     }
     else

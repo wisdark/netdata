@@ -93,7 +93,7 @@ int registry_init(void) {
 
     // configuration options
     registry.save_registry_every_entries = (unsigned long long)config_get_number(CONFIG_SECTION_REGISTRY, "registry save db every new entries", 1000000);
-    registry.persons_expiration = config_get_number(CONFIG_SECTION_REGISTRY, "registry expire idle persons days", 365) * 86400;
+    registry.persons_expiration = config_get_duration_days(CONFIG_SECTION_REGISTRY, "registry expire idle persons", 365) * 86400;
     registry.registry_domain = config_get(CONFIG_SECTION_REGISTRY, "registry domain", "");
     registry.registry_to_announce = config_get(CONFIG_SECTION_REGISTRY, "registry to announce", "https://registry.my-netdata.io");
     registry.hostname = config_get(CONFIG_SECTION_REGISTRY, "registry hostname", netdata_configured_hostname);
@@ -101,8 +101,8 @@ int registry_init(void) {
     registry.enable_cookies_samesite_secure = config_get_boolean(CONFIG_SECTION_REGISTRY, "enable cookies SameSite and Secure", 1);
 
     registry_update_cloud_base_url();
-    setenv("NETDATA_REGISTRY_HOSTNAME", registry.hostname, 1);
-    setenv("NETDATA_REGISTRY_URL", registry.registry_to_announce, 1);
+    nd_setenv("NETDATA_REGISTRY_HOSTNAME", registry.hostname, 1);
+    nd_setenv("NETDATA_REGISTRY_URL", registry.registry_to_announce, 1);
 
     registry.max_url_length = (size_t)config_get_number(CONFIG_SECTION_REGISTRY, "max URL length", 1024);
     if(registry.max_url_length < 10) {

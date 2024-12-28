@@ -6,11 +6,7 @@
 #include "ebpf.h"
 #include "ebpf_disk.h"
 
-struct config disk_config = { .first_section = NULL,
-    .last_section = NULL,
-    .mutex = NETDATA_MUTEX_INITIALIZER,
-    .index = { .avl_tree = { .root = NULL, .compar = appconfig_section_compare },
-        .rwlock = AVL_LOCK_INITIALIZER } };
+struct config disk_config = APPCONFIG_INITIALIZER;
 
 static ebpf_local_maps_t disk_maps[] = {{.name = "tbl_disk_iocall", .internal_input = NETDATA_DISK_HISTOGRAM_LENGTH,
                                          .user_input = 0, .type = NETDATA_EBPF_MAP_STATIC,
@@ -775,13 +771,13 @@ static void disk_collector(ebpf_module_t *em)
 
     int update_every = em->update_every;
     heartbeat_t hb;
-    heartbeat_init(&hb);
+    heartbeat_init(&hb, USEC_PER_SEC);
     int counter = update_every - 1;
     int maps_per_core = em->maps_per_core;
     uint32_t running_time = 0;
     uint32_t lifetime = em->lifetime;
     while (!ebpf_plugin_stop() && running_time < lifetime) {
-        (void)heartbeat_next(&hb, USEC_PER_SEC);
+        heartbeat_next(&hb);
 
         if (ebpf_plugin_stop() || ++counter != update_every)
             continue;

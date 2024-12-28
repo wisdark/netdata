@@ -12,15 +12,13 @@ do
 done
 if [ "$pybinary" = "" ]
 then
-    echo "ERROR python IS NOT AVAILABLE IN THIS SYSTEM"
+    echo 1>&2 "python.d ERROR: python is not installed on this system"
+    echo "EXIT"
     exit 1
 fi
 exec "$pybinary"  "$0" "${filtered[@]}" # '''
 
 # -*- coding: utf-8 -*-
-# Description:
-# Author: Pawel Krupa (paulfantom)
-# Author: Ilya Mashchenko (l2isbad)
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import collections

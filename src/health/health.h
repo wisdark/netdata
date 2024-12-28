@@ -34,8 +34,8 @@ void health_entry_flags_to_json_array(BUFFER *wb, const char *key, HEALTH_ENTRY_
 #define HEALTH_LISTEN_BACKLOG 4096
 #endif
 
-#ifndef HEALTH_LOG_DEFAULT_HISTORY
-#define HEALTH_LOG_DEFAULT_HISTORY 432000
+#ifndef HEALTH_LOG_RETENTION_DEFAULT
+#define HEALTH_LOG_RETENTION_DEFAULT (5 * 86400)
 #endif
 
 #ifndef HEALTH_LOG_MINIMUM_HISTORY
@@ -51,14 +51,14 @@ void health_plugin_reload(void);
 
 void health_aggregate_alarms(RRDHOST *host, BUFFER *wb, BUFFER* context, RRDCALC_STATUS status);
 void health_alarms2json(RRDHOST *host, BUFFER *wb, int all);
-void health_alert2json_conf(RRDHOST *host, BUFFER *wb, CONTEXTS_V2_OPTIONS all);
+void health_alert2json_conf(RRDHOST *host, BUFFER *wb, CONTEXTS_OPTIONS all);
 void health_alarms_values2json(RRDHOST *host, BUFFER *wb, int all);
 
 void health_api_v1_chart_variables2json(RRDSET *st, BUFFER *wb);
 void health_api_v1_chart_custom_variables2json(RRDSET *st, BUFFER *buf);
 
 int health_alarm_log_open(RRDHOST *host);
-void health_alarm_log_save(RRDHOST *host, ALARM_ENTRY *ae);
+void health_alarm_log_save(RRDHOST *host, ALARM_ENTRY *ae, bool async);
 void health_alarm_log_load(RRDHOST *host);
 
 ALARM_ENTRY* health_create_alarm_entry(
@@ -73,10 +73,10 @@ ALARM_ENTRY* health_create_alarm_entry(
     int delay,
     HEALTH_ENTRY_FLAGS flags);
 
-void health_alarm_log_add_entry(RRDHOST *host, ALARM_ENTRY *ae);
+void health_alarm_log_add_entry(RRDHOST *host, ALARM_ENTRY *ae, bool async);
 
-char *health_user_config_dir(void);
-char *health_stock_config_dir(void);
+const char *health_user_config_dir(void);
+const char *health_stock_config_dir(void);
 void health_alarm_log_free(RRDHOST *host);
 
 void health_alarm_log_free_one_nochecks_nounlink(ALARM_ENTRY *ae);

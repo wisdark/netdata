@@ -11,7 +11,7 @@ int do_proc_net_stat_conntrack(int update_every, usec_t dt) {
     static int do_sockets = -1, do_new = -1, do_changes = -1, do_expect = -1, do_search = -1, do_errors = -1;
     static usec_t get_max_every = 10 * USEC_PER_SEC, usec_since_last_max = 0;
     static int read_full = 1;
-    static char *nf_conntrack_filename, *nf_conntrack_count_filename, *nf_conntrack_max_filename;
+    static const char *nf_conntrack_filename, *nf_conntrack_count_filename, *nf_conntrack_max_filename;
     static const RRDVAR_ACQUIRED *rrdvar_max = NULL;
 
     unsigned long long aentries = 0, asearched = 0, afound = 0, anew = 0, ainvalid = 0, aignore = 0, adelete = 0, adelete_list = 0,
@@ -217,7 +217,6 @@ int do_proc_net_stat_conntrack(int update_every, usec_t dt) {
                     , update_every
                     , RRDSET_TYPE_LINE
             );
-            rrdset_flag_set(st, RRDSET_FLAG_DETAIL);
 
             rd_inserted = rrddim_add(st, "inserted", NULL, 1, 1, RRD_ALGORITHM_INCREMENTAL);
             rd_deleted = rrddim_add(st, "deleted", NULL, -1, 1, RRD_ALGORITHM_INCREMENTAL);
@@ -253,7 +252,6 @@ int do_proc_net_stat_conntrack(int update_every, usec_t dt) {
                     , update_every
                     , RRDSET_TYPE_LINE
             );
-            rrdset_flag_set(st, RRDSET_FLAG_DETAIL);
 
             rd_created = rrddim_add(st, "created", NULL,  1, 1, RRD_ALGORITHM_INCREMENTAL);
             rd_deleted = rrddim_add(st, "deleted", NULL, -1, 1, RRD_ALGORITHM_INCREMENTAL);
@@ -289,7 +287,6 @@ int do_proc_net_stat_conntrack(int update_every, usec_t dt) {
                     , update_every
                     , RRDSET_TYPE_LINE
             );
-            rrdset_flag_set(st, RRDSET_FLAG_DETAIL);
 
             rd_searched  = rrddim_add(st, "searched",  NULL,  1, 1, RRD_ALGORITHM_INCREMENTAL);
             rd_restarted = rrddim_add(st, "restarted", NULL, -1, 1, RRD_ALGORITHM_INCREMENTAL);
@@ -326,7 +323,6 @@ int do_proc_net_stat_conntrack(int update_every, usec_t dt) {
                     , update_every
                     , RRDSET_TYPE_LINE
             );
-            rrdset_flag_set(st, RRDSET_FLAG_DETAIL);
 
             rd_icmp_error    = rrddim_add(st, "icmp_error",    NULL,  1, 1, RRD_ALGORITHM_INCREMENTAL);
             rd_insert_failed = rrddim_add(st, "insert_failed", NULL, -1, 1, RRD_ALGORITHM_INCREMENTAL);

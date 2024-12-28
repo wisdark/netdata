@@ -303,6 +303,18 @@ prepare_cmake_options() {
     enable_feature PLUGIN_GO 0
   fi
 
+  if [ "${ENABLE_PYTHON:-1}" -eq 1 ]; then
+    enable_feature PLUGIN_PYTHON 1
+  else
+    enable_feature PLUGIN_PYTHON 0
+  fi
+
+  if [ "${ENABLE_CHARTS:-1}" -eq 1 ]; then
+    enable_feature PLUGIN_CHARTS 1
+  else
+    enable_feature PLUGIN_CHARTS 0
+  fi
+
   if [ "${USE_SYSTEM_PROTOBUF:-0}" -eq 1 ]; then
     enable_feature BUNDLED_PROTOBUF 0
   else
@@ -340,14 +352,10 @@ prepare_cmake_options() {
   enable_feature PLUGIN_LOCAL_LISTENERS "${IS_LINUX}"
   enable_feature PLUGIN_NETWORK_VIEWER "${IS_LINUX}"
   enable_feature PLUGIN_EBPF "${ENABLE_EBPF:-0}"
-  enable_feature PLUGIN_LOGS_MANAGEMENT "${ENABLE_LOGS_MANAGEMENT:-0}"
-  enable_feature LOGS_MANAGEMENT_TESTS "${ENABLE_LOGS_MANAGEMENT_TESTS:-0}"
 
-  enable_feature ACLK "${ENABLE_CLOUD:-1}"
-  enable_feature CLOUD "${ENABLE_CLOUD:-1}"
   enable_feature BUNDLED_JSONC "${NETDATA_BUILD_JSON_C:-0}"
   enable_feature DBENGINE "${ENABLE_DBENGINE:-1}"
-  enable_feature H2O "${ENABLE_H2O:-1}"
+  enable_feature H2O "${ENABLE_H2O:-0}"
   enable_feature ML "${NETDATA_ENABLE_ML:-1}"
   enable_feature PLUGIN_APPS "${ENABLE_APPS:-1}"
 

@@ -108,13 +108,13 @@ static RRDHOST *dbengine_rrdhost_find_or_create(char *name) {
         default_rrd_history_entries,
         RRD_MEMORY_MODE_DBENGINE,
         health_plugin_enabled(),
-        default_rrdpush_enabled,
-        default_rrdpush_destination,
-        default_rrdpush_api_key,
-        default_rrdpush_send_charts_matching,
-        default_rrdpush_enable_replication,
-        default_rrdpush_seconds_to_replicate,
-        default_rrdpush_replication_step,
+        stream_send.enabled,
+        stream_send.parents.destination,
+        stream_send.api_key,
+        stream_send.send_charts_matching,
+        stream_receive.replication.enabled,
+        stream_receive.replication.period,
+        stream_receive.replication.step,
         NULL,
         0
         );
@@ -408,7 +408,7 @@ int test_dbengine(void) {
     }
 
     rrd_wrlock();
-    rrdeng_prepare_exit((struct rrdengine_instance *)host->db[0].si);
+    rrdeng_quiesce((struct rrdengine_instance *)host->db[0].si);
     rrdeng_exit((struct rrdengine_instance *)host->db[0].si);
     rrdeng_enq_cmd(NULL, RRDENG_OPCODE_SHUTDOWN_EVLOOP, NULL, NULL, STORAGE_PRIORITY_BEST_EFFORT, NULL, NULL);
     rrd_wrunlock();

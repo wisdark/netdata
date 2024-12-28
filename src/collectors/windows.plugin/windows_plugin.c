@@ -13,18 +13,26 @@ static struct proc_module {
 } win_modules[] = {
 
     // system metrics
-    {.name = "GetSystemUptime",     .dim = "GetSystemUptime",         .func = do_GetSystemUptime},
-    {.name = "GetSystemRAM",        .dim = "GetSystemRAM",            .func = do_GetSystemRAM},
+    {.name = "GetSystemUptime",     .dim = "GetSystemUptime",      .enabled = CONFIG_BOOLEAN_YES, .func = do_GetSystemUptime},
+    {.name = "GetSystemRAM",        .dim = "GetSystemRAM",         .enabled = CONFIG_BOOLEAN_YES, .func = do_GetSystemRAM},
 
     // the same is provided by PerflibProcessor, with more detailed analysis
-    //{.name = "GetSystemCPU",        .dim = "GetSystemCPU",            .func = do_GetSystemCPU},
+    //{.name = "GetSystemCPU",        .dim = "GetSystemCPU",       .enabled = CONFIG_BOOLEAN_YES, .func = do_GetSystemCPU},
 
-    {.name = "PerflibProcesses",    .dim = "PerflibProcesses",        .func = do_PerflibProcesses},
-    {.name = "PerflibProcessor",    .dim = "PerflibProcessor",        .func = do_PerflibProcessor},
-    {.name = "PerflibMemory",       .dim = "PerflibMemory",           .func = do_PerflibMemory},
-    {.name = "PerflibStorage",      .dim = "PerflibStorage",          .func = do_PerflibStorage},
-    {.name = "PerflibNetwork",      .dim = "PerflibNetwork",          .func = do_PerflibNetwork},
-    {.name = "PerflibObjects",      .dim = "PerflibObjects",          .func = do_PerflibObjects},
+    {.name = "PerflibProcesses",    .dim = "PerflibProcesses",     .enabled = CONFIG_BOOLEAN_YES, .func = do_PerflibProcesses},
+    {.name = "PerflibProcessor",    .dim = "PerflibProcessor",     .enabled = CONFIG_BOOLEAN_YES, .func = do_PerflibProcessor},
+    {.name = "PerflibMemory",       .dim = "PerflibMemory",        .enabled = CONFIG_BOOLEAN_YES, .func = do_PerflibMemory},
+    {.name = "PerflibStorage",      .dim = "PerflibStorage",       .enabled = CONFIG_BOOLEAN_YES, .func = do_PerflibStorage},
+    {.name = "PerflibNetwork",      .dim = "PerflibNetwork",       .enabled = CONFIG_BOOLEAN_YES, .func = do_PerflibNetwork},
+    {.name = "PerflibObjects",      .dim = "PerflibObjects",       .enabled = CONFIG_BOOLEAN_YES, .func = do_PerflibObjects},
+    {.name = "PerflibHyperV",       .dim = "PerflibHyperV",        .enabled = CONFIG_BOOLEAN_YES, .func = do_PerflibHyperV},
+
+    {.name = "PerflibThermalZone",  .dim = "PerflibThermalZone",   .enabled = CONFIG_BOOLEAN_NO, .func = do_PerflibThermalZone},
+
+    {.name = "PerflibWebService",  .dim = "PerflibWebService",     .enabled = CONFIG_BOOLEAN_YES, .func = do_PerflibWebService},
+    {.name = "PerflibMSSQL",  .dim = "PerflibMSSQL",               .enabled = CONFIG_BOOLEAN_YES, .func = do_PerflibMSSQL},
+
+    {.name = "PerflibNetFramework",  .dim = "PerflibNetFramework", .enabled = CONFIG_BOOLEAN_YES, .func = do_PerflibNetFramework},
 
     // the terminator of this array
     {.name = NULL, .dim = NULL, .func = NULL}
@@ -39,8 +47,6 @@ static void windows_main_cleanup(void *pptr) {
     if(!static_thread) return;
 
     static_thread->enabled = NETDATA_MAIN_THREAD_EXITING;
-
-    collector_info("cleaning up...");
 
     static_thread->enabled = NETDATA_MAIN_THREAD_EXITED;
 
@@ -66,15 +72,14 @@ void *win_plugin_main(void *ptr) {
     for(i = 0; win_modules[i].name; i++) {
         struct proc_module *pm = &win_modules[i];
 
-        pm->enabled = config_get_boolean("plugin:windows", pm->name, CONFIG_BOOLEAN_YES);
+        pm->enabled = config_get_boolean("plugin:windows", pm->name, pm->enabled);
         pm->rd = NULL;
 
         worker_register_job_name(i, win_modules[i].dim);
     }
 
-    usec_t step = localhost->rrd_update_every * USEC_PER_SEC;
     heartbeat_t hb;
-    heartbeat_init(&hb);
+    heartbeat_init(&hb, localhost->rrd_update_every * USEC_PER_SEC);
 
 #define LGS_MODULE_ID 0
 
@@ -86,7 +91,7 @@ void *win_plugin_main(void *ptr) {
 
     while(service_running(SERVICE_COLLECTORS)) {
         worker_is_idle();
-        usec_t hb_dt = heartbeat_next(&hb, step);
+        usec_t hb_dt = heartbeat_next(&hb);
 
         if(unlikely(!service_running(SERVICE_COLLECTORS)))
             break;

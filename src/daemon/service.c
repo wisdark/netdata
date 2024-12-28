@@ -166,7 +166,7 @@ static void svc_rrdhost_detect_obsolete_charts(RRDHOST *host) {
     time_t last_entry_t;
     RRDSET *st;
 
-    time_t child_connect_time = host->child_connect_time;
+    time_t child_connect_time = host->stream.rcv.status.last_connected;
 
     rrdset_foreach_read(st, host) {
         if(rrdset_is_replicating(st))
@@ -203,19 +203,19 @@ static void svc_rrd_cleanup_obsolete_charts_from_all_hosts() {
         if (host == localhost)
             continue;
 
-        netdata_mutex_lock(&host->receiver_lock);
+        rrdhost_receiver_lock(host);
 
         time_t now = now_realtime_sec();
 
-        if (host->trigger_chart_obsoletion_check &&
-            ((host->child_last_chart_command &&
-              host->child_last_chart_command + host->health.health_delay_up_to < now) ||
-             (host->child_connect_time + TIME_TO_RUN_OBSOLETIONS_ON_CHILD_CONNECT < now))) {
+        if (host->stream.rcv.status.check_obsolete &&
+            ((host->stream.rcv.status.last_chart &&
+              host->stream.rcv.status.last_chart + host->health.delay_up_to < now) ||
+             (host->stream.rcv.status.last_connected + TIME_TO_RUN_OBSOLETIONS_ON_CHILD_CONNECT < now))) {
             svc_rrdhost_detect_obsolete_charts(host);
-            host->trigger_chart_obsoletion_check = 0;
+            host->stream.rcv.status.check_obsolete = false;
         }
 
-        netdata_mutex_unlock(&host->receiver_lock);
+        rrdhost_receiver_unlock(host);
     }
 
     rrd_rdunlock();
@@ -235,7 +235,8 @@ restart_after_removal:
             continue;
 
         bool force = false;
-        if (rrdhost_option_check(host, RRDHOST_OPTION_EPHEMERAL_HOST) && now - host->last_connected > rrdhost_free_ephemeral_time_s)
+        if (rrdhost_option_check(host, RRDHOST_OPTION_EPHEMERAL_HOST) &&
+            now - host->stream.snd.status.last_connected > rrdhost_free_ephemeral_time_s)
             force = true;
 
         bool is_archived = rrdhost_flag_check(host, RRDHOST_FLAG_ARCHIVED);
@@ -247,14 +248,12 @@ restart_after_removal:
         }
 
         worker_is_busy(WORKER_JOB_FREE_HOST);
-#ifdef ENABLE_ACLK
         // in case we have cloud connection we inform cloud
         // a child disconnected
-        if (netdata_cloud_enabled && force) {
+        if (force) {
             aclk_host_state_update(host, 0, 0);
             unregister_node(host->machine_guid);
         }
-#endif
         rrdhost_free___while_having_rrd_wrlock(host, force);
         goto restart_after_removal;
     }
@@ -269,7 +268,6 @@ static void service_main_cleanup(void *pptr)
 
     static_thread->enabled = NETDATA_MAIN_THREAD_EXITING;
 
-    netdata_log_debug(D_SYSTEM, "Cleaning up...");
     worker_unregister();
 
     static_thread->enabled = NETDATA_MAIN_THREAD_EXITED;
@@ -299,7 +297,7 @@ void *service_main(void *ptr)
     CLEANUP_FUNCTION_REGISTER(service_main_cleanup) cleanup_ptr = ptr;
 
     heartbeat_t hb;
-    heartbeat_init(&hb);
+    heartbeat_init(&hb, USEC_PER_SEC);
     usec_t step = USEC_PER_SEC * SERVICE_HEARTBEAT;
     usec_t real_step = USEC_PER_SEC;
 
@@ -307,7 +305,7 @@ void *service_main(void *ptr)
 
     while (service_running(SERVICE_MAINTENANCE)) {
         worker_is_idle();
-        heartbeat_next(&hb, USEC_PER_SEC);
+        heartbeat_next(&hb);
         if (real_step < step) {
             real_step += USEC_PER_SEC;
             continue;

@@ -100,11 +100,7 @@ ebpf_local_maps_t sync_file_range_maps[] = {{.name = "tbl_syncfr", .internal_inp
 #endif
                                              }};
 
-struct config sync_config = { .first_section = NULL,
-    .last_section = NULL,
-    .mutex = NETDATA_MUTEX_INITIALIZER,
-    .index = { .avl_tree = { .root = NULL, .compar = appconfig_section_compare },
-        .rwlock = AVL_LOCK_INITIALIZER } };
+struct config sync_config = APPCONFIG_INITIALIZER;
 
 netdata_ebpf_targets_t sync_targets[] = { {.name = NETDATA_SYSCALLS_SYNC, .mode = EBPF_LOAD_TRAMPOLINE},
                                           {.name = NETDATA_SYSCALLS_SYNCFS, .mode = EBPF_LOAD_TRAMPOLINE},
@@ -558,15 +554,15 @@ static void sync_send_data()
 */
 static void sync_collector(ebpf_module_t *em)
 {
-    heartbeat_t hb;
-    heartbeat_init(&hb);
     int update_every = em->update_every;
     int counter = update_every - 1;
     int maps_per_core = em->maps_per_core;
     uint32_t running_time = 0;
     uint32_t lifetime = em->lifetime;
+    heartbeat_t hb;
+    heartbeat_init(&hb, USEC_PER_SEC);
     while (!ebpf_plugin_stop() && running_time < lifetime) {
-        (void)heartbeat_next(&hb, USEC_PER_SEC);
+        heartbeat_next(&hb);
         if (ebpf_plugin_stop() || ++counter != update_every)
             continue;
 

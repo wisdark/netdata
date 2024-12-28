@@ -1,7 +1,5 @@
-# Handling for libbpf (used by the eBPF plugin)
-#
-# Copyright (c) 2024 Netdata Inc.
 # SPDX-License-Identifier: GPL-3.0-or-later
+# Handling for libbpf (used by the eBPF plugin)
 
 include(ExternalProject)
 include(NetdataUtil)
@@ -31,7 +29,7 @@ function(netdata_bundle_libbpf)
     if(USE_LEGACY_LIBBPF)
         set(_libbpf_tag 673424c56127bb556e64095f41fd60c26f9083ec) # v0.0.9_netdata-1
     else()
-        set(_libbpf_tag 3d78a726c618560ad7fb03ceaf0fd03e8b2656b4) # v1.4.3p_netdata
+        set(_libbpf_tag ad7c3a4266bf5ce301a5691eb7b405dbb27c7f3d) # v1.5.0p_netdata
     endif()
 
     if(DEFINED BUILD_SHARED_LIBS)

@@ -1,7 +1,5 @@
 #include "../libnetdata.h"
 
-#ifdef ENABLE_HTTPS
-
 SSL_CTX *netdata_ssl_exporting_ctx =NULL;
 SSL_CTX *netdata_ssl_streaming_sender_ctx =NULL;
 SSL_CTX *netdata_ssl_web_server_ctx =NULL;
@@ -608,7 +606,7 @@ static SSL_CTX * netdata_ssl_create_server_ctx(unsigned long mode) {
  *      NETDATA_SSL_CONTEXT_EXPORTING - Starts the OpenTSDB context
  */
 void netdata_ssl_initialize_ctx(int selector) {
-    static SPINLOCK sp = NETDATA_SPINLOCK_INITIALIZER;
+    static SPINLOCK sp = SPINLOCK_INITIALIZER;
     spinlock_lock(&sp);
 
     switch (selector) {
@@ -732,7 +730,10 @@ int security_test_certificate(SSL *ssl) {
  *
  * @return It returns 0 on success and -1 otherwise.
  */
-int ssl_security_location_for_context(SSL_CTX *ctx, char *file, char *path) {
+int ssl_security_location_for_context(SSL_CTX *ctx, const char *file, const char *path) {
+    if(file && !*file) file = NULL;
+    if(path && !*path) path = NULL;
+
     int load_custom = 1, load_default = 1;
     if (file || path) {
         if(!SSL_CTX_load_verify_locations(ctx, file, path)) {
@@ -751,4 +752,3 @@ int ssl_security_location_for_context(SSL_CTX *ctx, char *file, char *path) {
 
     return 0;
 }
-#endif

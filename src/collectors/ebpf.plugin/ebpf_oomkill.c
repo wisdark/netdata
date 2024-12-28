@@ -3,11 +3,7 @@
 #include "ebpf.h"
 #include "ebpf_oomkill.h"
 
-struct config oomkill_config = { .first_section = NULL,
-    .last_section = NULL,
-    .mutex = NETDATA_MUTEX_INITIALIZER,
-    .index = { .avl_tree = { .root = NULL, .compar = appconfig_section_compare },
-        .rwlock = AVL_LOCK_INITIALIZER } };
+struct config oomkill_config = APPCONFIG_INITIALIZER;
 
 #define OOMKILL_MAP_KILLCNT 0
 static ebpf_local_maps_t oomkill_maps[] = {
@@ -132,6 +128,10 @@ static void oomkill_cleanup(void *pptr)
 {
     ebpf_module_t *em = CLEANUP_FUNCTION_GET_PTR(pptr);
     if(!em) return;
+
+    pthread_mutex_lock(&lock);
+    collect_pids &= ~(1<<EBPF_MODULE_OOMKILL_IDX);
+    pthread_mutex_unlock(&lock);
 
     if (em->enabled == NETDATA_THREAD_EBPF_FUNCTION_RUNNING) {
         pthread_mutex_lock(&lock);
@@ -459,14 +459,14 @@ static void oomkill_collector(ebpf_module_t *em)
     memset(keys, 0, sizeof(keys));
 
     // loop and read until ebpf plugin is closed.
-    heartbeat_t hb;
-    heartbeat_init(&hb);
     int counter = update_every - 1;
     uint32_t running_time = 0;
     uint32_t lifetime = em->lifetime;
     netdata_idx_t *stats = em->hash_table_stats;
+    heartbeat_t hb;
+    heartbeat_init(&hb, USEC_PER_SEC);
     while (!ebpf_plugin_stop() && running_time < lifetime) {
-        (void)heartbeat_next(&hb, USEC_PER_SEC);
+        (void)heartbeat_next(&hb);
         if (ebpf_plugin_stop() || ++counter != update_every)
             continue;
 
@@ -549,7 +549,7 @@ void *ebpf_oomkill_thread(void *ptr)
     em->maps = oomkill_maps;
 
 #define NETDATA_DEFAULT_OOM_DISABLED_MSG "Disabling OOMKILL thread, because"
-    if (unlikely(!ebpf_all_pids || !em->apps_charts)) {
+    if (unlikely(!em->apps_charts)) {
         // When we are not running integration with apps, we won't fill necessary variables for this thread to run, so
         // we need to disable it.
         pthread_mutex_lock(&ebpf_exit_cleanup);

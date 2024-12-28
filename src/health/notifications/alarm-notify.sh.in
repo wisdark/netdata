@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-#shellcheck source=/dev/null disable=SC2086,SC2154
-
-# netdata
-# real-time performance and health monitoring, done right!
-# (C) 2023 Netdata Inc.
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Script to send alarm notifications for netdata
@@ -38,6 +33,7 @@
 #  - Opsgenie by @thiaoftsm #9858
 #  - Gotify by @coffeegrind123
 #  - ntfy.sh by @Dim-P
+#shellcheck source=/dev/null disable=SC2086,SC2154
 
 # -----------------------------------------------------------------------------
 # testing notifications
@@ -641,8 +637,12 @@ filter_recipient_by_criticality() {
       ;;
 
     CLEAR)
-      # remove tracking file
-      [ -f "${tracking_file}" ] && rm "${tracking_file}"
+      if [ -f "${tracking_file}" ]; then
+        tracking_file_existed="yes"
+        rm "${tracking_file}"
+      else
+        tracking_file_existed=""
+      fi
 
       # "noclear" modifier set, block notification
       if [ "${mod_noclear}" == "1" ]; then
@@ -657,7 +657,7 @@ filter_recipient_by_criticality() {
       fi
 
       # "critical" modifier set, send notification if tracking file exists
-      if [ "${mod_critical}" == "1" ] && [ -f "${tracking_file}" ]; then
+      if [ "${mod_critical}" == "1" ] && [ -n "${tracking_file_existed}" ]; then
         debug "SEVERITY FILTERING for ${recipient_arg} VIA ${method}: ALLOW: recipient has been notified for this alarm in the past (no status change will be sent from now)"
         return 0
       fi
@@ -765,6 +765,9 @@ fi
 # check custom
 [ -z "${DEFAULT_RECIPIENT_CUSTOM}" ] && SEND_CUSTOM="NO"
 
+# check ilert
+[ -z "${ILERT_ALERT_SOURCE_URL}" ] && SEND_ILERT="NO"
+
 # -----------------------------------------------------------------------------
 # check the availability of targets
 
@@ -794,7 +797,8 @@ check_supported_targets() {
     [ "${SEND_DYNATRACE}" = "YES" ] ||
     [ "${SEND_OPSGENIE}" = "YES" ] ||
     [ "${SEND_GOTIFY}" = "YES" ] ||
-    [ "${SEND_NTFY}" = "YES" ]; then
+    [ "${SEND_NTFY}" = "YES" ] ||
+    [ "${SEND_ILERT}" = "YES" ]; then
     # if we need curl, check for the curl command
     if [ -z "${curl}" ]; then
       curl="$(command -v curl 2>/dev/null)"
@@ -824,6 +828,7 @@ check_supported_targets() {
       SEND_OPSGENIE="NO"
       SEND_GOTIFY="NO"
       SEND_NTFY="NO"
+      SEND_ILERT="NO"
     fi
   fi
 
@@ -979,7 +984,8 @@ for method in "${SEND_EMAIL}" \
   "${SEND_DYNATRACE}" \
   "${SEND_OPSGENIE}" \
   "${SEND_GOTIFY}" \
-  "${SEND_NTFY}" ; do
+  "${SEND_NTFY}" \
+  "${SEND_ILERT}" ; do
 
   if [ "${method}" == "YES" ]; then
     proceed=1
@@ -1515,13 +1521,20 @@ send_telegram() {
       notify_telegram=1
       notify_retries=${TELEGRAM_RETRIES_ON_LIMIT:-0}
 
+      IFS=":" read -r chatID threadID <<< "${chatid}"
+
+      # https://core.telegram.org/bots/api#sendmessage
+      api_url="https://api.telegram.org/bot${bottoken}/sendMessage?chat_id=${chatID}"
+      if [ -n "${threadID}" ]; then
+        api_url+="&message_thread_id=${threadID}"
+      fi
+
       while [ ${notify_telegram} -eq 1 ]; do
-        # https://core.telegram.org/bots/api#sendmessage
         httpcode=$(docurl ${disableNotification} \
           --data-urlencode "parse_mode=HTML" \
           --data-urlencode "disable_web_page_preview=true" \
           --data-urlencode "text=${emoji} ${message}" \
-          "https://api.telegram.org/bot${bottoken}/sendMessage?chat_id=${chatid}")
+          "${api_url}")
 
         notify_telegram=0
 
@@ -2418,6 +2431,50 @@ send_ntfy() {
   [ ${sent} -gt 0 ] && return 0
 
   return 1
+}
+
+# -----------------------------------------------------------------------------
+# ilert sender
+
+send_ilert() {
+  local payload httpcode
+  [ "${SEND_ILERT}" != "YES" ] && return 1
+
+  if [ -z "${ILERT_ALERT_SOURCE_URL}" ] ; then
+    info "Can't send ilert notification, because ILERT_ALERT_SOURCE_URL is not defined"
+    return 1
+  fi
+
+  payload=$(cat <<EOF
+  {
+    "alert" : "${name}",
+    "alert_url" : "${goto_url}",
+    "alarm_id" : ${alarm_id},
+    "chart" : "${chart}",
+    "date" : "${when}",
+    "duration" : "${duration_txt}",
+    "host" : "${host}",
+    "info" : "${info}",
+    "message" : "${status_message}",
+    "severity": ${status},
+    "total_critical" : "${total_critical}",
+    "total_warnings" : "${total_warnings}",
+    "value" : "${value_string}",
+    "image_url": "${image}",
+    "src" : "${src}"
+  }
+EOF
+)
+
+  httpcode=$(docurl -X POST -H "Content-Type: application/json" -d "${payload}" "${ILERT_ALERT_SOURCE_URL}")
+  if [ "${httpcode}" = "200" ] || [ "${httpcode}" = "202" ]; then
+    info "sent ilert event for ${notification_description}"
+  else
+    error "failed to send ilert event for ${notification_description}, with HTTP response status code ${httpcode}."
+    return 1
+  fi
+
+  return 0
 }
 
 # -----------------------------------------------------------------------------
@@ -3593,6 +3650,11 @@ send_ntfy "${DEFAULT_RECIPIENT_NTFY}"
 SENT_NTFY=$?
 
 # -----------------------------------------------------------------------------
+# send messages to ilert
+send_ilert
+SENT_ILERT=$?
+
+# -----------------------------------------------------------------------------
 # let netdata know
 for state in "${SENT_EMAIL}" \
   "${SENT_PUSHOVER}" \
@@ -3621,7 +3683,8 @@ for state in "${SENT_EMAIL}" \
   "${SENT_DYNATRACE}" \
   "${SENT_OPSGENIE}" \
   "${SENT_GOTIFY}" \
-  "${SENT_NTFY}"; do
+  "${SENT_NTFY}" \
+  "${SENT_ILERT}"; do
   if [ "${state}" -eq 0 ]; then
     # we sent something
     exit 0

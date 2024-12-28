@@ -287,7 +287,7 @@ static void ebpf_function_socket_manipulation(const char *transaction,
     ebpf_module_t *em = &ebpf_modules[EBPF_MODULE_SOCKET_IDX];
 
     char *words[PLUGINSD_MAX_WORDS] = {NULL};
-    size_t num_words = quoted_strings_splitter_pluginsd(function, words, PLUGINSD_MAX_WORDS);
+    size_t num_words = quoted_strings_splitter_whitespace(function, words, PLUGINSD_MAX_WORDS);
     const char *name;
     int period = -1;
     rw_spinlock_write_lock(&ebpf_judy_pid.index.rw_spinlock);
@@ -331,7 +331,7 @@ static void ebpf_function_socket_manipulation(const char *transaction,
         "Filters can be combined. Each filter can be given only one time. Default all ports\n"
     };
 
-for (int i = 1; i < PLUGINSD_MAX_WORDS; i++) {
+    for (int i = 1; i < PLUGINSD_MAX_WORDS; i++) {
         const char *keyword = get_word(words, num_words, i);
         if (!keyword)
             break;
@@ -428,6 +428,7 @@ for (int i = 1; i < PLUGINSD_MAX_WORDS; i++) {
         ebpf_socket_clean_judy_array_unsafe();
         rw_spinlock_write_unlock(&ebpf_judy_pid.index.rw_spinlock);
 
+        collect_pids |= 1<<EBPF_MODULE_SOCKET_IDX;
         pthread_mutex_lock(&ebpf_exit_cleanup);
         if (ebpf_function_start_thread(em, period)) {
             ebpf_function_error(transaction,
@@ -711,9 +712,9 @@ void *ebpf_function_thread(void *ptr)
     pthread_mutex_unlock(&lock);
 
     heartbeat_t hb;
-    heartbeat_init(&hb);
+    heartbeat_init(&hb, USEC_PER_SEC);
     while(!ebpf_plugin_stop()) {
-        (void)heartbeat_next(&hb, USEC_PER_SEC);
+        heartbeat_next(&hb);
 
         if (ebpf_plugin_stop()) {
             break;

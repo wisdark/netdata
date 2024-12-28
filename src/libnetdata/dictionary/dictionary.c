@@ -204,25 +204,11 @@ void dictionary_static_items_aral_init(void) {
     if(unlikely(!dict_items_aral || !dict_shared_items_aral)) {
         spinlock_lock(&spinlock);
 
-        // we have to check again
         if(!dict_items_aral)
-            dict_items_aral = aral_create(
-                    "dict-items",
-                    sizeof(DICTIONARY_ITEM),
-                    0,
-                    65536,
-                    aral_by_size_statistics(),
-                    NULL, NULL, false, false);
+            dict_items_aral = aral_by_size_acquire(sizeof(DICTIONARY_ITEM));
 
-        // we have to check again
         if(!dict_shared_items_aral)
-            dict_shared_items_aral = aral_create(
-                    "dict-shared-items",
-                    sizeof(DICTIONARY_ITEM_SHARED),
-                    0,
-                    65536,
-                    aral_by_size_statistics(),
-                    NULL, NULL, false, false);
+            dict_shared_items_aral = aral_by_size_acquire(sizeof(DICTIONARY_ITEM_SHARED));
 
         spinlock_unlock(&spinlock);
     }
@@ -318,10 +304,11 @@ static void dictionary_queue_for_destruction(DICTIONARY *dict) {
 }
 
 void cleanup_destroyed_dictionaries(void) {
-    if(!dictionaries_waiting_to_be_destroyed)
-        return;
-
     netdata_mutex_lock(&dictionaries_waiting_to_be_destroyed_mutex);
+    if (!dictionaries_waiting_to_be_destroyed) {
+        netdata_mutex_unlock(&dictionaries_waiting_to_be_destroyed_mutex);
+        return;
+    }
 
     DICTIONARY *dict, *last = NULL, *next = NULL;
     for(dict = dictionaries_waiting_to_be_destroyed; dict ; dict = next) {
@@ -497,8 +484,8 @@ static DICTIONARY *dictionary_create_internal(DICT_OPTIONS options, struct dicti
     else
         dict->value_aral = NULL;
 
-    if(!(dict->options & (DICT_OPTION_INDEX_JUDY|DICT_OPTION_INDEX_HASHTABLE)))
-        dict->options |= DICT_OPTION_INDEX_JUDY;
+//    if(!(dict->options & (DICT_OPTION_INDEX_JUDY|DICT_OPTION_INDEX_HASHTABLE)))
+    dict->options |= DICT_OPTION_INDEX_JUDY;
 
     size_t dict_size = 0;
     dict_size += sizeof(DICTIONARY);
@@ -539,7 +526,7 @@ DICTIONARY *dictionary_create_view(DICTIONARY *master) {
 #endif
 
     DICTIONARY *dict = dictionary_create_internal(master->options, master->stats,
-                                                  master->value_aral ? aral_element_size(master->value_aral) : 0);
+                                                  master->value_aral ? aral_requested_element_size(master->value_aral) : 0);
 
     dict->master = master;
 

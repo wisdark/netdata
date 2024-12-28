@@ -247,7 +247,7 @@ void buffer_free(BUFFER *b) {
 
     buffer_overflow_check(b);
 
-    netdata_log_debug(D_WEB_BUFFER, "Freeing web buffer of size %zu.", b->size);
+    netdata_log_debug(D_WEB_BUFFER, "Freeing web buffer of size %zu.", (size_t)b->size);
 
     if(b->statistics)
         __atomic_sub_fetch(b->statistics, b->size + sizeof(BUFFER) + sizeof(BUFFER_OVERFLOW_EOF) + 2, __ATOMIC_RELAXED);
@@ -269,7 +269,7 @@ void buffer_increase(BUFFER *b, size_t free_size_required) {
     size_t optimal = (b->size > 5*1024*1024) ? b->size / 2 : b->size;
     if(optimal > increase) increase = optimal;
 
-    netdata_log_debug(D_WEB_BUFFER, "Increasing data buffer from size %zu to %zu.", b->size, b->size + increase);
+    netdata_log_debug(D_WEB_BUFFER, "Increasing data buffer from size %zu to %zu.", (size_t)b->size, (size_t)(b->size + increase));
 
     b->buffer = reallocz(b->buffer, b->size + increase + sizeof(BUFFER_OVERFLOW_EOF) + 2);
     b->size += increase;
@@ -348,6 +348,20 @@ __attribute__((constructor)) void initialize_ascii_maps(void) {
 
     for(size_t i = 0; i < 64 ; i++)
         base64_value_from_ascii[(int)base64_digits[i]] = i;
+}
+
+// ----------------------------------------------------------------------------
+
+void buffer_json_member_add_datetime_rfc3339(BUFFER *wb, const char *key, uint64_t datetime_ut, bool utc) {
+    char buf[RFC3339_MAX_LENGTH];
+    rfc3339_datetime_ut(buf, sizeof(buf), datetime_ut, 2, utc);
+    buffer_json_member_add_string(wb, key, buf);
+}
+
+void buffer_json_member_add_duration_ut(BUFFER *wb, const char *key, int64_t duration_ut) {
+    char buf[64];
+    duration_snprintf(buf, sizeof(buf), duration_ut, "us", true);
+    buffer_json_member_add_string(wb, key, buf);
 }
 
 // ----------------------------------------------------------------------------

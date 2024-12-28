@@ -13,7 +13,7 @@ SQLITE_API int sqlite3_exec_monitored(
     char **errmsg                              /* Error msg written here */
 ) {
     int rc = sqlite3_exec(db, sql, callback, data, errmsg);
-    global_statistics_sqlite3_query_completed(rc == SQLITE_OK, rc == SQLITE_BUSY, rc == SQLITE_LOCKED);
+    pulse_sqlite3_query_completed(rc == SQLITE_OK, rc == SQLITE_BUSY, rc == SQLITE_LOCKED);
     return rc;
 }
 
@@ -25,14 +25,14 @@ SQLITE_API int sqlite3_step_monitored(sqlite3_stmt *stmt) {
         rc = sqlite3_step(stmt);
         switch (rc) {
             case SQLITE_DONE:
-                global_statistics_sqlite3_query_completed(1, 0, 0);
+                pulse_sqlite3_query_completed(1, 0, 0);
                 break;
             case SQLITE_ROW:
-                global_statistics_sqlite3_row_completed();
+                pulse_sqlite3_row_completed();
                 break;
             case SQLITE_BUSY:
             case SQLITE_LOCKED:
-                global_statistics_sqlite3_query_completed(false, rc == SQLITE_BUSY, rc == SQLITE_LOCKED);
+                pulse_sqlite3_query_completed(false, rc == SQLITE_BUSY, rc == SQLITE_LOCKED);
                 usleep(SQLITE_INSERT_DELAY * USEC_PER_MS);
                 continue;
             default:
@@ -137,6 +137,10 @@ int configure_sqlite_database(sqlite3 *database, int target_version, const char 
         return 1;
 
     snprintfz(buf, sizeof(buf) - 1, "PRAGMA user_version=%d", target_version);
+    if (init_database_batch(database, list, description))
+        return 1;
+
+    snprintfz(buf, sizeof(buf) - 1, "PRAGMA optimize=0x10002");
     if (init_database_batch(database, list, description))
         return 1;
 
@@ -248,14 +252,16 @@ int db_execute(sqlite3 *db, const char *cmd)
     int cnt = 0;
 
     while (cnt < SQL_MAX_RETRY) {
-        char *err_msg;
+        char *err_msg = NULL;
         rc = sqlite3_exec_monitored(db, cmd, 0, 0, &err_msg);
         if (likely(rc == SQLITE_OK))
             break;
 
         ++cnt;
-        error_report("Failed to execute '%s', rc = %d (%s) -- attempt %d", cmd, rc, err_msg, cnt);
-        sqlite3_free(err_msg);
+        error_report("Failed to execute '%s', rc = %d (%s) -- attempt %d", cmd, rc, err_msg ? err_msg : "unknown", cnt);
+        if (err_msg) {
+            sqlite3_free(err_msg);
+        }
 
         if (likely(rc == SQLITE_BUSY || rc == SQLITE_LOCKED)) {
             usleep(SQLITE_INSERT_DELAY * USEC_PER_MS);
@@ -338,7 +344,6 @@ void sql_close_database(sqlite3 *database, const char *database_name)
     if (unlikely(!database))
         return;
 
-    (void) db_execute(database, "PRAGMA analysis_limit=10000");
     (void) db_execute(database, "PRAGMA optimize");
 
     netdata_log_info("%s: Closing sqlite database", database_name);
@@ -397,7 +402,7 @@ int sqlite_library_init(void)
     return (SQLITE_OK != rc);
 }
 
-SPINLOCK sqlite_spinlock = NETDATA_SPINLOCK_INITIALIZER;
+SPINLOCK sqlite_spinlock = SPINLOCK_INITIALIZER;
 
 void sqlite_library_shutdown(void)
 {

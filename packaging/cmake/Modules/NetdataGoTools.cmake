@@ -1,8 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Macros and functions to assist in working with Go
-#
-# Copyright (c) 2024 Netdata Inc
-#
-# SPDX-License-Identifier: GPL
 
 if(CMAKE_BUILD_TYPE STREQUAL Debug)
     set(GO_LDFLAGS "-X github.com/netdata/netdata/go/plugins/pkg/buildinfo.Version=${NETDATA_VERSION_STRING}")
@@ -33,7 +30,7 @@ macro(add_go_target target output build_src build_dir)
 
     add_custom_command(
         OUTPUT ${output}
-        COMMAND "${CMAKE_COMMAND}" -E env CGO_ENABLED=0 "${GO_EXECUTABLE}" build -buildvcs=false -ldflags "${GO_LDFLAGS}" -o "${CMAKE_BINARY_DIR}/${output}" "./${build_dir}"
+        COMMAND "${CMAKE_COMMAND}" -E env GOROOT=${GO_ROOT} CGO_ENABLED=0 GOPROXY=https://proxy.golang.org,direct "${GO_EXECUTABLE}" build -buildvcs=false -ldflags "${GO_LDFLAGS}" -o "${CMAKE_BINARY_DIR}/${output}" "./${build_dir}"
         DEPENDS ${${target}_DEPS}
         COMMENT "Building Go component ${output}"
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/${build_src}"

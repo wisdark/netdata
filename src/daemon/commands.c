@@ -47,9 +47,7 @@ static cmd_status_t cmd_ping_execute(char *args, char **message);
 static cmd_status_t cmd_aclk_state(char *args, char **message);
 static cmd_status_t cmd_version(char *args, char **message);
 static cmd_status_t cmd_dumpconfig(char *args, char **message);
-#ifdef ENABLE_ACLK
 static cmd_status_t cmd_remove_node(char *args, char **message);
-#endif
 
 static command_info_t command_info_array[] = {
         {"help", cmd_help_execute, CMD_TYPE_HIGH_PRIORITY},                  // show help menu
@@ -65,9 +63,7 @@ static command_info_t command_info_array[] = {
         {"aclk-state", cmd_aclk_state, CMD_TYPE_ORTHOGONAL},
         {"version", cmd_version, CMD_TYPE_ORTHOGONAL},
         {"dumpconfig", cmd_dumpconfig, CMD_TYPE_ORTHOGONAL},
-#ifdef ENABLE_ACLK
         {"remove-stale-node", cmd_remove_node, CMD_TYPE_ORTHOGONAL}
-#endif
 };
 
 /* Mutexes for commands of type CMD_TYPE_ORTHOGONAL */
@@ -112,33 +108,29 @@ static cmd_status_t cmd_help_execute(char *args, char **message)
 
     *message = mallocz(MAX_COMMAND_LENGTH);
     strncpyz(*message,
-             "\nThe commands are (arguments are in brackets):\n"
+             "\nThe commands are:\n\n"
              "help\n"
-             "    Show this help menu.\n"
+             "    Show this help menu.\n\n"
              "reload-health\n"
-             "    Reload health configuration.\n"
+             "    Reload health configuration.\n\n"
              "reload-labels\n"
-             "    Reload all labels.\n"
-             "save-database\n"
-             "    Save internal DB to disk for memory mode save.\n"
+             "    Reload all labels.\n\n"
              "reopen-logs\n"
-             "    Close and reopen log files.\n"
+             "    Close and reopen log files.\n\n"
              "shutdown-agent\n"
-             "    Cleanup and exit the netdata agent.\n"
+             "    Cleanup and exit the netdata agent.\n\n"
              "fatal-agent\n"
-             "    Log the state and halt the netdata agent.\n"
+             "    Log the state and halt the netdata agent.\n\n"
              "reload-claiming-state\n"
-             "    Reload agent claiming state from disk.\n"
+             "    Reload agent claiming state from disk.\n\n"
              "ping\n"
-             "    Return with 'pong' if agent is alive.\n"
+             "    Return with 'pong' if agent is alive.\n\n"
              "aclk-state [json]\n"
-             "    Returns current state of ACLK and Cloud connection. (optionally in json).\n"
+             "    Returns current state of ACLK and Cloud connection. (optionally in json).\n\n"
              "dumpconfig\n"
-             "    Returns the current netdata.conf on stdout.\n"
-#ifdef ENABLE_ACLK
-             "remove-stale-node node_id|machine_guid\n"
-             "    Unregisters and removes a node from the cloud.\n"
-#endif
+             "    Returns the current netdata.conf on stdout.\n\n"
+             "remove-stale-node <node_id | machine_guid | hostname | ALL_NODES>\n"
+             "    Unregisters and removes a node from the cloud.\n\n"
              "version\n"
              "    Returns the netdata version.\n",
              MAX_COMMAND_LENGTH - 1);
@@ -193,17 +185,42 @@ static cmd_status_t cmd_fatal_execute(char *args, char **message)
     return CMD_STATUS_SUCCESS;
 }
 
-static cmd_status_t cmd_reload_claiming_state_execute(char *args, char **message)
-{
-    (void)args;
-    (void)message;
-#if defined(DISABLE_CLOUD) || !defined(ENABLE_ACLK)
-    netdata_log_info("The claiming feature has been explicitly disabled");
-    *message = strdupz("This agent cannot be claimed, it was built without support for Cloud");
-    return CMD_STATUS_FAILURE;
-#endif
-    netdata_log_info("COMMAND: Reloading Agent Claiming configuration.");
-    claim_reload_all();
+static cmd_status_t cmd_reload_claiming_state_execute(char *args __maybe_unused, char **message) {
+    char msg[1024];
+
+    CLOUD_STATUS status = claim_reload_and_wait_online();
+    switch(status) {
+        case CLOUD_STATUS_ONLINE:
+            snprintfz(msg, sizeof(msg),
+                      "Netdata Agent is claimed to Netdata Cloud and is currently online.");
+            break;
+
+        case CLOUD_STATUS_BANNED:
+            snprintfz(msg, sizeof(msg),
+                      "Netdata Agent is claimed to Netdata Cloud, but it is banned.");
+            break;
+
+        default:
+        case CLOUD_STATUS_AVAILABLE:
+            snprintfz(msg, sizeof(msg),
+                      "Netdata Agent is not claimed to Netdata Cloud: %s",
+                      claim_agent_failure_reason_get());
+            break;
+
+        case CLOUD_STATUS_OFFLINE:
+            snprintfz(msg, sizeof(msg),
+                      "Netdata Agent is claimed to Netdata Cloud, but it is currently offline: %s",
+                      cloud_status_aclk_offline_reason());
+            break;
+
+        case CLOUD_STATUS_INDIRECT:
+            snprintfz(msg, sizeof(msg),
+                      "Netdata Agent is not claimed to Netdata Cloud, but it is currently online via parent.");
+            break;
+    }
+
+    *message = strdupz(msg);
+
     return CMD_STATUS_SUCCESS;
 }
 
@@ -242,9 +259,8 @@ static cmd_status_t cmd_read_config_execute(char *args, char **message)
     const char *conf_file = temp; /* "cloud" is cloud.conf, otherwise netdata.conf */
     struct config *tmp_config = strcmp(conf_file, "cloud") ? &netdata_config : &cloud_config;
 
-    char *value = appconfig_get(tmp_config, temp + offset + 1, temp + offset2 + 1, NULL);
-    if (value == NULL)
-    {
+    const char *value = appconfig_get(tmp_config, temp + offset + 1, temp + offset2 + 1, NULL);
+    if (value == NULL) {
         netdata_log_error("Cannot execute read-config conf_file=%s section=%s / key=%s because no value set",
                           conf_file,
                           temp + offset + 1,
@@ -252,13 +268,11 @@ static cmd_status_t cmd_read_config_execute(char *args, char **message)
         freez(temp);
         return CMD_STATUS_FAILURE;
     }
-    else
-    {
+    else {
         (*message) = strdupz(value);
         freez(temp);
         return CMD_STATUS_SUCCESS;
     }
-
 }
 
 static cmd_status_t cmd_write_config_execute(char *args, char **message)
@@ -331,20 +345,52 @@ static cmd_status_t cmd_dumpconfig(char *args, char **message)
     (void)args;
 
     BUFFER *wb = buffer_create(1024, NULL);
-    config_generate(wb, 0);
+    netdata_conf_generate(wb, 0);
     *message = strdupz(buffer_tostring(wb));
     buffer_free(wb);
     return CMD_STATUS_SUCCESS;
 }
 
-#ifdef ENABLE_ACLK
+static int remove_ephemeral_host(BUFFER *wb, RRDHOST *host, bool report_error)
+{
+    if (host == localhost) {
+        if (report_error)
+            buffer_sprintf(wb, "You cannot unregister the parent node (%s)", rrdhost_hostname(host));
+        return 0;
+    }
+
+    if (rrdhost_is_online(host)) {
+        if (report_error)
+            buffer_sprintf(wb, "Cannot unregister a live node (%s)", rrdhost_hostname(host));
+        return 0;
+    }
+
+    if (!rrdhost_option_check(host, RRDHOST_OPTION_EPHEMERAL_HOST)) {
+        rrdhost_option_set(host, RRDHOST_OPTION_EPHEMERAL_HOST);
+        sql_set_host_label(&host->host_id.uuid, "_is_ephemeral", "true");
+        aclk_host_state_update(host, 0, 0);
+        unregister_node(host->machine_guid);
+        host->node_id = UUID_ZERO;
+        buffer_sprintf(wb, "Unregistering node with machine guid %s, hostname = %s", host->machine_guid, rrdhost_hostname(host));
+        rrd_wrlock();
+        rrdhost_free___while_having_rrd_wrlock(host, true);
+        rrd_wrunlock();
+        return 1;
+    }
+    if (report_error)
+       buffer_sprintf(wb, "Node with machine guid %s, hostname = %s is already unregistered", host->machine_guid, rrdhost_hostname(host));
+    return 0;
+}
+
+#define SQL_HOSTNAME_TO_REMOVE "SELECT host_id FROM host WHERE (hostname = @hostname OR @hostname = 'ALL_NODES')"
+
 static cmd_status_t cmd_remove_node(char *args, char **message)
 {
     (void)args;
 
     BUFFER *wb = buffer_create(1024, NULL);
     if (strlen(args) == 0) {
-        buffer_sprintf(wb, "Please specify a machine or node UUID");
+        buffer_sprintf(wb, "Please specify a machine or node UUID or hostname");
         goto done;
     }
 
@@ -353,39 +399,49 @@ static cmd_status_t cmd_remove_node(char *args, char **message)
     if (!host)
         host = find_host_by_node_id(args);
 
-    if (!host)
-        buffer_sprintf(wb, "Node with machine or node UUID \"%s\" not found", args);
-    else {
+    if (!host) {
+        sqlite3_stmt *res = NULL;
 
-        if (host == localhost) {
-            buffer_sprintf(wb, "You cannot unregister the parent node");
+        bool report_error = strcmp(args, "ALL_NODES");
+
+        if (!PREPARE_STATEMENT(db_meta, SQL_HOSTNAME_TO_REMOVE, &res)) {
+            buffer_sprintf(wb, "Failed to prepare database statement to check for stale nodes");
             goto done;
         }
 
-        if (rrdhost_is_online(host)) {
-            buffer_sprintf(wb, "Cannot unregister a live node");
-            goto done;
-        }
+        int param = 0;
+        SQLITE_BIND_FAIL(done0, sqlite3_bind_text(res, ++param, args, -1, SQLITE_STATIC));
 
-        if (!rrdhost_option_check(host, RRDHOST_OPTION_EPHEMERAL_HOST)) {
-            rrdhost_option_set(host, RRDHOST_OPTION_EPHEMERAL_HOST);
-            sql_set_host_label(&host->host_uuid, "_is_ephemeral", "true");
-            aclk_host_state_update(host, 0, 0);
-            unregister_node(host->machine_guid);
-            freez(host->node_id);
-            host->node_id = NULL;
-            buffer_sprintf(wb, "Unregistering node with machine guid %s, hostname = %s", host->machine_guid, rrdhost_hostname(host));
+        param = 0;
+        int cnt = 0;
+        while (sqlite3_step_monitored(res) == SQLITE_ROW) {
+            char guid[UUID_STR_LEN];
+            uuid_unparse_lower(*(nd_uuid_t *)sqlite3_column_blob(res, 0), guid);
+            host = rrdhost_find_by_guid(guid);
+            if (host) {
+                if (cnt)
+                    buffer_fast_strcat(wb, "\n", 1);
+                cnt += remove_ephemeral_host(wb, host, report_error);
+            }
         }
-        else
-            buffer_sprintf(wb, "Node with machine guid %s, hostname = %s is already unregistered", host->machine_guid, rrdhost_hostname(host));
+        if (!cnt && buffer_strlen(wb) == 0) {
+            if (report_error)
+                buffer_sprintf(wb, "No match for \"%s\"", args);
+            else
+                buffer_sprintf(wb, "No stale nodes found");
+        }
+    done0:
+        REPORT_BIND_FAIL(res, param);
+        SQLITE_FINALIZE(res);
     }
+    else
+        (void) remove_ephemeral_host(wb, host, true);
 
 done:
     *message = strdupz(buffer_tostring(wb));
     buffer_free(wb);
     return CMD_STATUS_SUCCESS;
 }
-#endif
 
 static void cmd_lock_exclusive(unsigned index)
 {
@@ -456,7 +512,7 @@ static void pipe_write_cb(uv_write_t* req, int status)
 
 static inline void add_char_to_command_reply(BUFFER *reply_string, unsigned *reply_string_size, char character)
 {
-    buffer_fast_charcat(reply_string, character);
+    buffer_putc(reply_string, character);
     *reply_string_size +=1;
 }
 

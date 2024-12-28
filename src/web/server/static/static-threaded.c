@@ -123,7 +123,7 @@ static void web_server_file_del_callback(POLLINFO *pi) {
         web_server_log_connection(w, "DISCONNECTED");
         web_client_request_done(w);
         web_client_release_to_cache(w);
-        global_statistics_web_client_disconnected();
+        pulse_web_client_disconnected();
     }
 
     worker_is_idle();
@@ -211,7 +211,6 @@ static void *web_server_add_callback(POLLINFO *pi, short int *events, void *data
         web_client_set_conn_tcp(w);
     }
 
-#ifdef ENABLE_HTTPS
     if ((web_client_check_conn_tcp(w)) && (netdata_ssl_web_server_ctx)) {
         sock_delnonblock(w->ifd);
 
@@ -239,13 +238,10 @@ static void *web_server_add_callback(POLLINFO *pi, short int *events, void *data
 
         sock_setnonblock(w->ifd);
     }
-#endif
 
     netdata_log_debug(D_WEB_CLIENT, "%llu: ADDED CLIENT FD %d", w->id, pi->fd);
 
-#ifdef ENABLE_HTTPS
 cleanup:
-#endif
     worker_is_idle();
     return w;
 }
@@ -273,7 +269,7 @@ static void web_server_del_callback(POLLINFO *pi) {
         web_server_log_connection(w, "DISCONNECTED");
         web_client_request_done(w);
         web_client_release_to_cache(w);
-        global_statistics_web_client_disconnected();
+        pulse_web_client_disconnected();
     }
 
     worker_is_idle();
@@ -503,36 +499,14 @@ void *socket_listen_main_static_threaded(void *ptr) {
     if(!api_sockets.opened)
         fatal("LISTENER: no listen sockets available.");
 
-#ifdef ENABLE_HTTPS
     netdata_ssl_validate_certificate = !config_get_boolean(CONFIG_SECTION_WEB, "ssl skip certificate verification", !netdata_ssl_validate_certificate);
 
     if(!netdata_ssl_validate_certificate_sender)
         netdata_log_info("SSL: web server will skip SSL certificates verification.");
 
     netdata_ssl_initialize_ctx(NETDATA_SSL_WEB_SERVER_CTX);
-#endif
 
-    // 6 threads is the optimal value
-    // since 6 are the parallel connections browsers will do
-    // so, if the machine has more CPUs, avoid using resources unnecessarily
-    int def_thread_count = MIN(get_netdata_cpus(), 6);
-
-    if (!strcmp(config_get(CONFIG_SECTION_WEB, "mode", ""),"single-threaded")) {
-                netdata_log_info("Running web server with one thread, because mode is single-threaded");
-                config_set(CONFIG_SECTION_WEB, "mode", "static-threaded");
-                def_thread_count = 1;
-    }
-    static_threaded_workers_count = config_get_number(CONFIG_SECTION_WEB, "web server threads", def_thread_count);
-
-    if (static_threaded_workers_count < 1) static_threaded_workers_count = 1;
-
-#ifdef ENABLE_HTTPS
-    // See https://github.com/netdata/netdata/issues/11081#issuecomment-831998240 for more details
-    if (OPENSSL_VERSION_NUMBER < OPENSSL_VERSION_110) {
-        static_threaded_workers_count = 1;
-        netdata_log_info("You are running an OpenSSL older than 1.1.0, web server will not enable multithreading.");
-    }
-#endif
+    static_threaded_workers_count = netdata_conf_web_query_threads();
 
     size_t max_sockets = (size_t)config_get_number(CONFIG_SECTION_WEB, "web server max sockets",
                                                    (long long int)(rlimit_nofile.rlim_cur / 4));
@@ -548,7 +522,6 @@ void *socket_listen_main_static_threaded(void *ptr) {
         char tag[50 + 1];
         snprintfz(tag, sizeof(tag) - 1, "WEB[%d]", i+1);
 
-        netdata_log_info("starting worker %d", i+1);
         static_workers_private_data[i].thread = nd_thread_create(tag, NETDATA_THREAD_OPTION_DEFAULT,
                                                                  socket_listen_main_static_threaded_worker,
                                                                  (void *)&static_workers_private_data[i]);

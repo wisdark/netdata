@@ -24,6 +24,10 @@ static void rrdinstance_load_clabel(SQL_CLABEL_DATA *sld, void *data) {
     rrdlabels_add(ri->rrdlabels, sld->label_key, sld->label_value, sld->label_source);
 }
 
+void load_instance_labels_on_demand(nd_uuid_t *uuid, void *data) {
+    ctx_get_label_list(uuid, rrdinstance_load_clabel, data);
+}
+
 static void rrdinstance_load_dimension(SQL_DIMENSION_DATA *sd, void *data) {
     RRDINSTANCE *ri = data;
 
@@ -73,7 +77,6 @@ static void rrdinstance_load_chart_callback(SQL_CHART_DATA *sc, void *data) {
     RRDINSTANCE *ri = rrdinstance_acquired_value(ria);
 
     ctx_get_dimension_list(&ri->uuid, rrdinstance_load_dimension, ri);
-    ctx_get_label_list(&ri->uuid, rrdinstance_load_clabel, ri);
     rrdinstance_trigger_updates(ri, __FUNCTION__ );
     rrdinstance_release(ria);
     rrdcontext_release(rca);
@@ -99,8 +102,11 @@ void rrdhost_load_rrdcontext_data(RRDHOST *host) {
     if(host->rrdctx.contexts) return;
 
     rrdhost_create_rrdcontexts(host);
-    ctx_get_context_list(&host->host_uuid, rrdcontext_load_context_callback, host);
-    ctx_get_chart_list(&host->host_uuid, rrdinstance_load_chart_callback, host);
+    if (host->rrd_memory_mode != RRD_MEMORY_MODE_DBENGINE)
+        return;
+
+    ctx_get_context_list(&host->host_id.uuid, rrdcontext_load_context_callback, host);
+    ctx_get_chart_list(&host->host_id.uuid, rrdinstance_load_chart_callback, host);
 
     RRDCONTEXT *rc;
     dfe_start_read(host->rrdctx.contexts, rc) {
@@ -173,6 +179,8 @@ static void rrdhost_update_cached_retention(RRDHOST *host, time_t first_time_s, 
 
     spinlock_lock(&host->retention.spinlock);
 
+    time_t old_first_time_s = host->retention.first_time_s;
+
     if(global) {
         host->retention.first_time_s = first_time_s;
         host->retention.last_time_s = last_time_s;
@@ -185,7 +193,12 @@ static void rrdhost_update_cached_retention(RRDHOST *host, time_t first_time_s, 
             host->retention.last_time_s = last_time_s;
     }
 
+    bool stream_path_update_required = old_first_time_s != host->retention.first_time_s;
+
     spinlock_unlock(&host->retention.spinlock);
+
+    if(stream_path_update_required)
+        stream_path_retention_updated(host);
 }
 
 void rrdcontext_recalculate_context_retention(RRDCONTEXT *rc, RRD_FLAGS reason, bool worker_jobs) {
@@ -275,7 +288,7 @@ bool rrdmetric_update_retention(RRDMETRIC *rm) {
     }
 
     if(unlikely(!rm->first_time_s && !rm->last_time_s))
-        rrd_flag_set_deleted(rm, RRD_FLAG_UPDATE_REASON_ZERO_RETENTION);
+        rrdmetric_set_deleted(rm, RRD_FLAG_UPDATE_REASON_ZERO_RETENTION);
 
     rrd_flag_set(rm, RRD_FLAG_LIVE_RETENTION);
 
@@ -348,8 +361,11 @@ void rrdcontext_delete_from_sql_unsafe(RRDCONTEXT *rc) {
     rc->hub.units = string2str(rc->units);
     rc->hub.family = string2str(rc->family);
 
+    if (rc->rrdhost->rrd_memory_mode != RRD_MEMORY_MODE_DBENGINE)
+        return;
+
     // delete it from SQL
-    if(ctx_delete_context(&rc->rrdhost->host_uuid, &rc->hub) != 0)
+    if(ctx_delete_context(&rc->rrdhost->host_id.uuid, &rc->hub) != 0)
         netdata_log_error("RRDCONTEXT: failed to delete context '%s' version %"PRIu64" from SQL.",
                           rc->hub.id, rc->hub.version);
 }
@@ -456,11 +472,11 @@ static void rrdmetric_process_updates(RRDMETRIC *rm, bool force, RRD_FLAGS reaso
         worker_is_busy(WORKER_JOB_PP_METRIC);
 
     if(reason & RRD_FLAG_UPDATE_REASON_DISCONNECTED_CHILD) {
-        rrd_flag_set_archived(rm);
+        rrdmetric_set_archived(rm);
         rrd_flag_set(rm, RRD_FLAG_UPDATE_REASON_DISCONNECTED_CHILD);
     }
     if(rrd_flag_is_deleted(rm) && (reason & RRD_FLAG_UPDATE_REASON_UPDATE_RETENTION))
-        rrd_flag_set_archived(rm);
+        rrdmetric_set_archived(rm);
 
     rrdmetric_update_retention(rm);
 
@@ -499,7 +515,7 @@ static void rrdinstance_post_process_updates(RRDINSTANCE *ri, bool force, RRD_FL
                         continue;
                     }
 
-                    if(!currently_collected && rrd_flag_check(rm, RRD_FLAG_COLLECTED) && rm->first_time_s)
+                    if(!currently_collected && rrd_flag_is_collected(rm) && rm->first_time_s)
                         currently_collected = true;
 
                     metrics_active++;
@@ -531,7 +547,7 @@ static void rrdinstance_post_process_updates(RRDINSTANCE *ri, bool force, RRD_FL
             rrd_flag_set_updated(ri, RRD_FLAG_UPDATE_REASON_CHANGED_LAST_TIME_T);
         }
 
-        rrd_flag_set_deleted(ri, RRD_FLAG_UPDATE_REASON_ZERO_RETENTION);
+        rrdinstance_set_deleted(ri, RRD_FLAG_UPDATE_REASON_ZERO_RETENTION);
     }
     else {
         // we have active metrics...
@@ -551,7 +567,7 @@ static void rrdinstance_post_process_updates(RRDINSTANCE *ri, bool force, RRD_FL
             }
 
             if(likely(live_retention))
-                rrd_flag_set_deleted(ri, RRD_FLAG_UPDATE_REASON_ZERO_RETENTION);
+                rrdinstance_set_deleted(ri, RRD_FLAG_UPDATE_REASON_ZERO_RETENTION);
         }
         else {
             rrd_flag_clear(ri, RRD_FLAG_UPDATE_REASON_ZERO_RETENTION);
@@ -567,9 +583,9 @@ static void rrdinstance_post_process_updates(RRDINSTANCE *ri, bool force, RRD_FL
             }
 
             if(likely(currently_collected))
-                rrd_flag_set_collected(ri);
+                rrdinstance_set_collected(ri);
             else
-                rrd_flag_set_archived(ri);
+                rrdinstance_set_archived(ri);
         }
     }
 
@@ -587,7 +603,7 @@ static void rrdcontext_post_process_updates(RRDCONTEXT *rc, bool force, RRD_FLAG
     size_t min_priority_not_collected = LONG_MAX;
     size_t min_priority = LONG_MAX;
     time_t min_first_time_t = LONG_MAX, max_last_time_t = 0;
-    size_t instances_active = 0, instances_deleted = 0, metrics = 0;
+    size_t instances_active = 0, instances_deleted = 0;
     bool live_retention = true, currently_collected = false, hidden = true;
     if(dictionary_entries(rc->rrdinstances) > 0) {
         RRDINSTANCE *ri;
@@ -627,10 +643,9 @@ static void rrdcontext_post_process_updates(RRDCONTEXT *rc, bool force, RRD_FLAG
                                    string2str(rc->units), string2str(ri->units));
 
                     instances_active++;
-                    metrics += dictionary_entries(ri->rrdmetrics);
 
                     if (ri->priority >= RRDCONTEXT_MINIMUM_ALLOWED_PRIORITY) {
-                        if(rrd_flag_check(ri, RRD_FLAG_COLLECTED)) {
+                        if(rrd_flag_is_collected(ri)) {
                             if(ri->priority < min_priority_collected)
                                 min_priority_collected = ri->priority;
                         }
@@ -647,8 +662,6 @@ static void rrdcontext_post_process_updates(RRDCONTEXT *rc, bool force, RRD_FLAG
                         max_last_time_t = ri->last_time_s;
                 }
         dfe_done(ri);
-
-        rc->stats.metrics = metrics;
 
         if(min_priority_collected != LONG_MAX)
             // use the collected priority
@@ -692,7 +705,7 @@ static void rrdcontext_post_process_updates(RRDCONTEXT *rc, bool force, RRD_FLAG
             rrd_flag_set_updated(rc, RRD_FLAG_UPDATE_REASON_CHANGED_LAST_TIME_T);
         }
 
-        rrd_flag_set_deleted(rc, RRD_FLAG_UPDATE_REASON_ZERO_RETENTION);
+        rrdcontext_set_deleted(rc, RRD_FLAG_UPDATE_REASON_ZERO_RETENTION);
     }
     else {
         // we have some active instances...
@@ -711,7 +724,7 @@ static void rrdcontext_post_process_updates(RRDCONTEXT *rc, bool force, RRD_FLAG
                 rrd_flag_set_updated(rc, RRD_FLAG_UPDATE_REASON_CHANGED_LAST_TIME_T);
             }
 
-            rrd_flag_set_deleted(rc, RRD_FLAG_UPDATE_REASON_ZERO_RETENTION);
+            rrdcontext_set_deleted(rc, RRD_FLAG_UPDATE_REASON_ZERO_RETENTION);
         }
         else {
             rrd_flag_clear(rc, RRD_FLAG_UPDATE_REASON_ZERO_RETENTION);
@@ -727,9 +740,9 @@ static void rrdcontext_post_process_updates(RRDCONTEXT *rc, bool force, RRD_FLAG
             }
 
             if(likely(currently_collected))
-                rrd_flag_set_collected(rc);
+                rrdcontext_set_collected(rc);
             else
-                rrd_flag_set_archived(rc);
+                rrdcontext_set_archived(rc);
         }
 
         if (min_priority != LONG_MAX && rc->priority != min_priority) {
@@ -753,30 +766,26 @@ static void rrdcontext_post_process_updates(RRDCONTEXT *rc, bool force, RRD_FLAG
 void rrdcontext_queue_for_post_processing(RRDCONTEXT *rc, const char *function __maybe_unused, RRD_FLAGS flags __maybe_unused) {
     if(unlikely(!rc->rrdhost->rrdctx.pp_queue)) return;
 
-    if(!rrd_flag_check(rc, RRD_FLAG_QUEUED_FOR_PP)) {
-        dictionary_set((DICTIONARY *)rc->rrdhost->rrdctx.pp_queue,
-                       string2str(rc->id),
-                       rc,
-                       sizeof(*rc));
-
-#if(defined(NETDATA_INTERNAL_CHECKS) && defined(LOG_POST_PROCESSING_QUEUE_INSERTIONS))
-        {
-            BUFFER *wb_flags = buffer_create(1000);
-            rrd_flags_to_buffer(flags, wb_flags);
-
-            BUFFER *wb_reasons = buffer_create(1000);
-            rrd_reasons_to_buffer(flags, wb_reasons);
-
-            internal_error(true, "RRDCONTEXT: '%s' update triggered by function %s(), due to flags: %s, reasons: %s",
-                           string2str(rc->id), function,
-                           buffer_tostring(wb_flags),
-                           buffer_tostring(wb_reasons));
-
-            buffer_free(wb_reasons);
-            buffer_free(wb_flags);
-        }
-#endif
+#if 0
+    if(string_strcmp(rc->id, "system.cpu") == 0) {
+        CLEAN_BUFFER *wb = buffer_create(0, NULL);
+        buffer_json_initialize(wb, "\"", "\"", 0, true, BUFFER_JSON_OPTIONS_MINIFY);
+        buffer_json_member_add_array(wb, "flags");
+        rrd_flags_to_buffer_json_array_items(rc->flags, wb);
+        buffer_json_array_close(wb);
+        buffer_json_member_add_array(wb, "reasons");
+        rrd_reasons_to_buffer_json_array_items(rc->flags, wb);
+        buffer_json_array_close(wb);
+        buffer_json_finalize(wb);
+        nd_log(NDLS_DAEMON, NDLP_EMERG, "%s() context '%s', triggered: %s",
+               function, string2str(rc->id), buffer_tostring(wb));
     }
+#endif
+
+    dictionary_set((DICTIONARY *)rc->rrdhost->rrdctx.pp_queue,
+                   string2str(rc->id),
+                   rc,
+                   sizeof(*rc));
 }
 
 static void rrdcontext_dequeue_from_post_processing(RRDCONTEXT *rc) {
@@ -822,7 +831,6 @@ void rrdcontext_message_send_unsafe(RRDCONTEXT *rc, bool snapshot __maybe_unused
     rc->hub.last_time_s = rrd_flag_is_collected(rc) ? 0 : rc->last_time_s;
     rc->hub.deleted = rrd_flag_is_deleted(rc) ? true : false;
 
-#ifdef ENABLE_ACLK
     struct context_updated message = {
             .id = rc->hub.id,
             .version = rc->hub.version,
@@ -844,15 +852,19 @@ void rrdcontext_message_send_unsafe(RRDCONTEXT *rc, bool snapshot __maybe_unused
         else
             contexts_updated_add_ctx_update(bundle, &message);
     }
-#endif
 
     // store it to SQL
 
     if(rrd_flag_is_deleted(rc))
         rrdcontext_delete_from_sql_unsafe(rc);
 
-    else if (ctx_store_context(&rc->rrdhost->host_uuid, &rc->hub) != 0)
-        netdata_log_error("RRDCONTEXT: failed to save context '%s' version %"PRIu64" to SQL.", rc->hub.id, rc->hub.version);
+    else {
+        if (rc->rrdhost->rrd_memory_mode != RRD_MEMORY_MODE_DBENGINE)
+            return;
+        if (ctx_store_context(&rc->rrdhost->host_id.uuid, &rc->hub) != 0)
+            netdata_log_error(
+                "RRDCONTEXT: failed to save context '%s' version %" PRIu64 " to SQL.", rc->hub.id, rc->hub.version);
+    }
 }
 
 static bool check_if_cloud_version_changed_unsafe(RRDCONTEXT *rc, bool sending __maybe_unused) {
@@ -960,14 +972,11 @@ static void rrdcontext_dequeue_from_hub_queue(RRDCONTEXT *rc) {
 static void rrdcontext_dispatch_queued_contexts_to_hub(RRDHOST *host, usec_t now_ut) {
 
     // check if we have received a streaming command for this host
-    if(!rrdhost_flag_check(host, RRDHOST_FLAG_ACLK_STREAM_CONTEXTS) || !aclk_connected || !host->rrdctx.hub_queue)
+    if(UUIDiszero(host->node_id) || !rrdhost_flag_check(host, RRDHOST_FLAG_ACLK_STREAM_CONTEXTS) || !aclk_online_for_contexts() || !host->rrdctx.hub_queue)
         return;
 
     // check if there are queued items to send
     if(!dictionary_entries(host->rrdctx.hub_queue))
-        return;
-
-    if(!host->node_id)
         return;
 
     size_t messages_added = 0;
@@ -982,9 +991,9 @@ static void rrdcontext_dispatch_queued_contexts_to_hub(RRDHOST *host, usec_t now
 
                 worker_is_busy(WORKER_JOB_QUEUED);
                 usec_t dispatch_ut = rrdcontext_calculate_queued_dispatch_time_ut(rc, now_ut);
-                char *claim_id = get_agent_claimid();
+                CLAIM_ID claim_id = claim_id_get();
 
-                if(unlikely(now_ut >= dispatch_ut) && claim_id) {
+                if(unlikely(now_ut >= dispatch_ut) && claim_id_is_set(claim_id)) {
                     worker_is_busy(WORKER_JOB_CHECK);
 
                     rrdcontext_lock(rc);
@@ -992,15 +1001,13 @@ static void rrdcontext_dispatch_queued_contexts_to_hub(RRDHOST *host, usec_t now
                     if(check_if_cloud_version_changed_unsafe(rc, true)) {
                         worker_is_busy(WORKER_JOB_SEND);
 
-#ifdef ENABLE_ACLK
                         if(!bundle) {
                             // prepare the bundle to send the messages
-                            char uuid[UUID_STR_LEN];
-                            uuid_unparse_lower(*host->node_id, uuid);
+                            char uuid_str[UUID_STR_LEN];
+                            uuid_unparse_lower(host->node_id.uuid, uuid_str);
 
-                            bundle = contexts_updated_new(claim_id, uuid, 0, now_ut);
+                            bundle = contexts_updated_new(claim_id.str, uuid_str, 0, now_ut);
                         }
-#endif
                         // update the hub data of the context, give a new version, pack the message
                         // and save an update to SQL
                         rrdcontext_message_send_unsafe(rc, false, bundle);
@@ -1037,11 +1044,9 @@ static void rrdcontext_dispatch_queued_contexts_to_hub(RRDHOST *host, usec_t now
                     else
                         rrdcontext_unlock(rc);
                 }
-                freez(claim_id);
             }
     dfe_done(rc);
 
-#ifdef ENABLE_ACLK
     if(service_running(SERVICE_CONTEXT) && bundle) {
         // we have a bundle to send messages
 
@@ -1053,7 +1058,6 @@ static void rrdcontext_dispatch_queued_contexts_to_hub(RRDHOST *host, usec_t now
     }
     else if(bundle)
         contexts_updated_delete(bundle);
-#endif
 
 }
 
@@ -1092,12 +1096,11 @@ void *rrdcontext_main(void *ptr) {
     worker_register_job_custom_metric(WORKER_JOB_PP_QUEUE_SIZE, "post processing queue size", "contexts", WORKER_METRIC_ABSOLUTE);
 
     heartbeat_t hb;
-    heartbeat_init(&hb);
-    usec_t step = RRDCONTEXT_WORKER_THREAD_HEARTBEAT_USEC;
+    heartbeat_init(&hb, RRDCONTEXT_WORKER_THREAD_HEARTBEAT_USEC);
 
     while (service_running(SERVICE_CONTEXT)) {
         worker_is_idle();
-        heartbeat_next(&hb, step);
+        heartbeat_next(&hb);
 
         if(unlikely(!service_running(SERVICE_CONTEXT))) break;
 
@@ -1132,17 +1135,6 @@ void *rrdcontext_main(void *ptr) {
 
             if (host->rrdctx.contexts)
                 dictionary_garbage_collect(host->rrdctx.contexts);
-
-            // calculate the number of metrics and instances in the host
-            RRDCONTEXT *rc;
-            uint32_t metrics = 0, instances = 0;
-            dfe_start_read(host->rrdctx.contexts, rc) {
-                metrics += rc->stats.metrics;
-                instances += dictionary_entries(rc->rrdinstances);
-            }
-            dfe_done(rc);
-            host->rrdctx.metrics = metrics;
-            host->rrdctx.instances = instances;
         }
         dfe_done(host);
 

@@ -17,19 +17,19 @@
 
 #define LOG_TRANSITIONS false
 
-#define WORKER_JOB_HOSTS            1
-#define WORKER_JOB_CHECK            2
-#define WORKER_JOB_SEND             3
-#define WORKER_JOB_DEQUEUE          4
-#define WORKER_JOB_RETENTION        5
-#define WORKER_JOB_QUEUED           6
-#define WORKER_JOB_CLEANUP          7
-#define WORKER_JOB_CLEANUP_DELETE   8
-#define WORKER_JOB_PP_METRIC        9 // post-processing metrics
-#define WORKER_JOB_PP_INSTANCE     10 // post-processing instances
-#define WORKER_JOB_PP_CONTEXT      11 // post-processing contexts
-#define WORKER_JOB_HUB_QUEUE_SIZE  12
-#define WORKER_JOB_PP_QUEUE_SIZE   13
+#define WORKER_JOB_HOSTS                 1
+#define WORKER_JOB_CHECK                 2
+#define WORKER_JOB_SEND                  3
+#define WORKER_JOB_DEQUEUE               4
+#define WORKER_JOB_RETENTION             5
+#define WORKER_JOB_QUEUED                6
+#define WORKER_JOB_CLEANUP               7
+#define WORKER_JOB_CLEANUP_DELETE        8
+#define WORKER_JOB_PP_METRIC             9 // post-processing metrics
+#define WORKER_JOB_PP_INSTANCE          10 // post-processing instances
+#define WORKER_JOB_PP_CONTEXT           11 // post-processing contexts
+#define WORKER_JOB_HUB_QUEUE_SIZE       12
+#define WORKER_JOB_PP_QUEUE_SIZE        13
 
 
 typedef enum __attribute__ ((__packed__)) {
@@ -39,25 +39,26 @@ typedef enum __attribute__ ((__packed__)) {
     RRD_FLAG_UPDATED        = (1 << 2), // this object has updates to propagate
     RRD_FLAG_ARCHIVED       = (1 << 3), // this object is not currently being collected
     RRD_FLAG_OWN_LABELS     = (1 << 4), // this instance has its own labels - not linked to an RRDSET
-    RRD_FLAG_LIVE_RETENTION = (1 << 5), // we have got live retention from the database
-    RRD_FLAG_QUEUED_FOR_HUB = (1 << 6), // this context is currently queued to be dispatched to hub
-    RRD_FLAG_QUEUED_FOR_PP  = (1 << 7), // this context is currently queued to be post-processed
-    RRD_FLAG_HIDDEN         = (1 << 8), // don't expose this to the hub or the API
+    RRD_FLAG_DEMAND_LABELS  = (1 << 5), // this instance should load labels on demand
+    RRD_FLAG_LIVE_RETENTION = (1 << 6), // we have got live retention from the database
+    RRD_FLAG_QUEUED_FOR_HUB = (1 << 7), // this context is currently queued to be dispatched to hub
+    RRD_FLAG_QUEUED_FOR_PP  = (1 << 8), // this context is currently queued to be post-processed
+    RRD_FLAG_HIDDEN         = (1 << 9), // don't expose this to the hub or the API
 
-    RRD_FLAG_UPDATE_REASON_TRIGGERED               = (1 << 9),  // the update was triggered by the child object
-    RRD_FLAG_UPDATE_REASON_LOAD_SQL                = (1 << 10), // this object has just been loaded from SQL
-    RRD_FLAG_UPDATE_REASON_NEW_OBJECT              = (1 << 11), // this object has just been created
-    RRD_FLAG_UPDATE_REASON_UPDATED_OBJECT          = (1 << 12), // we received an update on this object
-    RRD_FLAG_UPDATE_REASON_CHANGED_LINKING         = (1 << 13), // an instance or a metric switched RRDSET or RRDDIM
-    RRD_FLAG_UPDATE_REASON_CHANGED_METADATA        = (1 << 14), // this context or instance changed uuid, name, units, title, family, chart type, priority, update every, rrd changed flags
-    RRD_FLAG_UPDATE_REASON_ZERO_RETENTION          = (1 << 15), // this object has no retention
-    RRD_FLAG_UPDATE_REASON_CHANGED_FIRST_TIME_T    = (1 << 16), // this object changed its oldest time in the db
-    RRD_FLAG_UPDATE_REASON_CHANGED_LAST_TIME_T     = (1 << 17), // this object change its latest time in the db
-    RRD_FLAG_UPDATE_REASON_STOPPED_BEING_COLLECTED = (1 << 18), // this object has stopped being collected
-    RRD_FLAG_UPDATE_REASON_STARTED_BEING_COLLECTED = (1 << 19), // this object has started being collected
-    RRD_FLAG_UPDATE_REASON_DISCONNECTED_CHILD      = (1 << 20), // this context belongs to a host that just disconnected
-    RRD_FLAG_UPDATE_REASON_UNUSED                  = (1 << 21), // this context is not used anymore
-    RRD_FLAG_UPDATE_REASON_DB_ROTATION             = (1 << 22), // this context changed because of a db rotation
+    RRD_FLAG_UPDATE_REASON_TRIGGERED               = (1 << 10), // the update was triggered by the child object
+    RRD_FLAG_UPDATE_REASON_LOAD_SQL                = (1 << 11), // this object has just been loaded from SQL
+    RRD_FLAG_UPDATE_REASON_NEW_OBJECT              = (1 << 12), // this object has just been created
+    RRD_FLAG_UPDATE_REASON_UPDATED_OBJECT          = (1 << 13), // we received an update on this object
+    RRD_FLAG_UPDATE_REASON_CHANGED_LINKING         = (1 << 14), // an instance or a metric switched RRDSET or RRDDIM
+    RRD_FLAG_UPDATE_REASON_CHANGED_METADATA        = (1 << 15), // this context or instance changed uuid, name, units, title, family, chart type, priority, update every, rrd changed flags
+    RRD_FLAG_UPDATE_REASON_ZERO_RETENTION          = (1 << 16), // this object has no retention
+    RRD_FLAG_UPDATE_REASON_CHANGED_FIRST_TIME_T    = (1 << 17), // this object changed its oldest time in the db
+    RRD_FLAG_UPDATE_REASON_CHANGED_LAST_TIME_T     = (1 << 18), // this object change its latest time in the db
+    RRD_FLAG_UPDATE_REASON_STOPPED_BEING_COLLECTED = (1 << 19), // this object has stopped being collected
+    RRD_FLAG_UPDATE_REASON_STARTED_BEING_COLLECTED = (1 << 20), // this object has started being collected
+    RRD_FLAG_UPDATE_REASON_DISCONNECTED_CHILD      = (1 << 21), // this context belongs to a host that just disconnected
+    RRD_FLAG_UPDATE_REASON_UNUSED                  = (1 << 22), // this context is not used anymore
+    RRD_FLAG_UPDATE_REASON_DB_ROTATION             = (1 << 23), // this context changed because of a db rotation
 
     RRD_FLAG_MERGED_COLLECTED_RI_TO_RC             = (1 << 29),
 
@@ -117,15 +118,14 @@ extern struct rrdcontext_reason rrdcontext_reasons[];
 #define rrd_flag_check_all(obj, flag) (rrd_flag_check(obj, flag) == (flag))
 
 // set one or more flags (bits)
+// NEVER alter RRD_FLAG_COLLECTED, RRD_FLAG_ARCHIVED, RRD_FLAG_DELETED with this
 #define rrd_flag_set(obj, flag)   __atomic_or_fetch(&((obj)->flags), flag, __ATOMIC_SEQ_CST)
 
 // clear one or more flags (bits)
+// NEVER alter RRD_FLAG_COLLECTED, RRD_FLAG_ARCHIVED, RRD_FLAG_DELETED with this
 #define rrd_flag_clear(obj, flag) __atomic_and_fetch(&((obj)->flags), ~(flag), __ATOMIC_SEQ_CST)
 
-// replace the flags of an object, with the supplied ones
-#define rrd_flags_replace(obj, all_flags) __atomic_store_n(&((obj)->flags), all_flags, __ATOMIC_SEQ_CST)
-
-static inline void
+static inline RRD_FLAGS
 rrd_flag_add_remove_atomic(RRD_FLAGS *flags, RRD_FLAGS check, RRD_FLAGS conditionally_add, RRD_FLAGS always_remove) {
     RRD_FLAGS expected, desired;
 
@@ -139,6 +139,19 @@ rrd_flag_add_remove_atomic(RRD_FLAGS *flags, RRD_FLAGS check, RRD_FLAGS conditio
             desired |= (check | conditionally_add);
 
     } while(!__atomic_compare_exchange_n(flags, &expected, desired, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST));
+
+    return expected;
+}
+
+static inline RRD_FLAGS
+rrd_flags_replace_atomic(RRD_FLAGS *flags, RRD_FLAGS desired) {
+    RRD_FLAGS expected;
+    
+    do {
+        expected = *flags;
+    } while(!__atomic_compare_exchange_n(flags, &expected, desired, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST));
+
+    return expected;
 }
 
 #define rrd_flag_set_collected(obj)                                                                             \
@@ -265,25 +278,93 @@ typedef struct rrdcontext {
 
     struct {
         RRD_FLAGS queued_flags;         // the last flags that triggered the post-processing
+        size_t executions;              // how many times this context has been processed
         usec_t queued_ut;               // the last time this was queued
         usec_t dequeued_ut;             // the last time we sent (or deduplicated) this context
-        size_t executions;              // how many times this context has been processed
     } pp;
 
     struct {
         RRD_FLAGS queued_flags;         // the last flags that triggered the queueing
+        size_t dispatches;              // the number of times this has been dispatched to hub
         usec_t queued_ut;               // the last time this was queued
         usec_t delay_calc_ut;           // the last time we calculated the scheduled_dispatched_ut
         usec_t scheduled_dispatch_ut;   // the time it was/is scheduled to be sent
         usec_t dequeued_ut;             // the last time we sent (or deduplicated) this context
-        size_t dispatches;              // the number of times this has been dispatched to hub
     } queue;
-
-    struct {
-        uint32_t metrics;               // the number of metrics in this context
-    } stats;
 } RRDCONTEXT;
 
+// ----------------------------------------------------------------------------
+// helpers for counting collected metrics, instances and contexts
+
+static inline void rrdmetric_set_collected(RRDMETRIC *rm) {
+    RRD_FLAGS old = rrd_flag_set_collected(rm);
+    if(!(old & RRD_FLAG_COLLECTED))
+        __atomic_add_fetch(&rm->ri->rc->rrdhost->collected.metrics_count, 1, __ATOMIC_RELAXED);
+}
+
+static inline void rrdmetric_set_archived(RRDMETRIC *rm) {
+    RRD_FLAGS old = rrd_flag_set_archived(rm);
+    if(old & RRD_FLAG_COLLECTED)
+        __atomic_sub_fetch(&rm->ri->rc->rrdhost->collected.metrics_count, 1, __ATOMIC_RELAXED);
+}
+
+static inline void rrdmetric_set_deleted(RRDMETRIC *rm, RRD_FLAGS reason) {
+    RRD_FLAGS old = rrd_flag_set_deleted(rm, reason);
+    if(old & RRD_FLAG_COLLECTED)
+        __atomic_sub_fetch(&rm->ri->rc->rrdhost->collected.metrics_count, 1, __ATOMIC_RELAXED);
+}
+
+static inline void rrdmetric_set_deleted_overwrite(RRDMETRIC *rm, RRD_FLAGS replacement) {
+    replacement &= ~(RRD_FLAG_COLLECTED|RRD_FLAG_ARCHIVED|RRD_FLAG_DELETED);
+    replacement |= RRD_FLAG_DELETED;
+    RRD_FLAGS old = rrd_flags_replace_atomic(&rm->flags, replacement);
+    if(old & RRD_FLAG_COLLECTED)
+        __atomic_sub_fetch(&rm->ri->rc->rrdhost->collected.metrics_count, 1, __ATOMIC_RELAXED);
+}
+
+static inline void rrdinstance_set_collected(RRDINSTANCE *ri) {
+    RRD_FLAGS old = rrd_flag_set_collected(ri);
+    if(!(old & RRD_FLAG_COLLECTED))
+        __atomic_add_fetch(&ri->rc->rrdhost->collected.instances_count, 1, __ATOMIC_RELAXED);
+}
+
+static inline void rrdinstance_set_archived(RRDINSTANCE *ri) {
+    RRD_FLAGS old = rrd_flag_set_archived(ri);
+    if(old & RRD_FLAG_COLLECTED)
+        __atomic_sub_fetch(&ri->rc->rrdhost->collected.instances_count, 1, __ATOMIC_RELAXED);
+}
+
+static inline void rrdinstance_set_deleted(RRDINSTANCE *ri, RRD_FLAGS reason) {
+    RRD_FLAGS old = rrd_flag_set_deleted(ri, reason);
+    if(old & RRD_FLAG_COLLECTED)
+        __atomic_sub_fetch(&ri->rc->rrdhost->collected.instances_count, 1, __ATOMIC_RELAXED);
+}
+
+static inline void rrdinstance_set_deleted_overwrite(RRDINSTANCE *ri, RRD_FLAGS replacement) {
+    replacement &= ~(RRD_FLAG_COLLECTED|RRD_FLAG_ARCHIVED|RRD_FLAG_DELETED);
+    replacement |= RRD_FLAG_DELETED;
+    RRD_FLAGS old = rrd_flags_replace_atomic(&ri->flags, replacement);
+    if(old & RRD_FLAG_COLLECTED)
+        __atomic_sub_fetch(&ri->rc->rrdhost->collected.instances_count, 1, __ATOMIC_RELAXED);
+}
+
+static inline void rrdcontext_set_collected(RRDCONTEXT *rc) {
+    RRD_FLAGS old = rrd_flag_set_collected(rc);
+    if(!(old & RRD_FLAG_COLLECTED))
+        __atomic_add_fetch(&rc->rrdhost->collected.contexts_count, 1, __ATOMIC_RELAXED);
+}
+
+static inline void rrdcontext_set_archived(RRDCONTEXT *rc) {
+    RRD_FLAGS old = rrd_flag_set_archived(rc);
+    if(old & RRD_FLAG_COLLECTED)
+        __atomic_sub_fetch(&rc->rrdhost->collected.contexts_count, 1, __ATOMIC_RELAXED);
+}
+
+static inline void rrdcontext_set_deleted(RRDCONTEXT *rc, RRD_FLAGS reason) {
+    RRD_FLAGS old = rrd_flag_set_deleted(rc, reason);
+    if(old & RRD_FLAG_COLLECTED)
+        __atomic_sub_fetch(&rc->rrdhost->collected.contexts_count, 1, __ATOMIC_RELAXED);
+}
 
 // ----------------------------------------------------------------------------
 // helper one-liners for RRDMETRIC
@@ -354,6 +435,7 @@ static inline void rrdcontext_release(RRDCONTEXT_ACQUIRED *rca) {
 
 // ----------------------------------------------------------------------------
 // Forward definitions
+void load_instance_labels_on_demand(nd_uuid_t *uuid, void *data);
 
 void rrdcontext_recalculate_context_retention(RRDCONTEXT *rc, RRD_FLAGS reason, bool worker_jobs);
 void rrdcontext_recalculate_host_retention(RRDHOST *host, RRD_FLAGS reason, bool worker_jobs);

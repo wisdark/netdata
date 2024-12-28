@@ -3,8 +3,17 @@
 #ifndef NETDATA_SQLITE_METADATA_H
 #define NETDATA_SQLITE_METADATA_H
 
-#include "sqlite3.h"
+#include "database/sqlite/vendored/sqlite3.h"
 #include "sqlite_functions.h"
+
+typedef enum event_log_type {
+    EVENT_AGENT_START_TIME  = 1,
+    EVENT_AGENT_SHUTDOWN_TIME,
+
+    // terminator
+    EVENT_AGENT_MAX,
+} event_log_type_t;
+void get_agent_event_time_median_init(void);
 
 // return a node list
 struct node_instance_list {
@@ -41,7 +50,7 @@ void vacuum_database(sqlite3 *database, const char *db_alias, int threshold, int
 int sql_metadata_cache_stats(int op);
 
 int get_node_id(nd_uuid_t *host_id, nd_uuid_t *node_id);
-int update_node_id(nd_uuid_t *host_id, nd_uuid_t *node_id);
+int sql_update_node_id(nd_uuid_t *host_id, nd_uuid_t *node_id);
 struct node_instance_list *get_node_list(void);
 void sql_load_node_id(RRDHOST *host);
 
@@ -53,6 +62,16 @@ bool sql_set_host_label(nd_uuid_t *host_id, const char *label_key, const char *l
 
 uint64_t sqlite_get_meta_space(void);
 int sql_init_meta_database(db_check_action_type_t rebuild, int memory);
+
+void cleanup_agent_event_log(void);
+void add_agent_event(event_log_type_t event_id, int64_t value);
+usec_t get_agent_event_time_median(event_log_type_t event_id);
+void metadata_queue_ae_save(RRDHOST *host, ALARM_ENTRY *ae);
+void metadata_queue_ae_deletion(ALARM_ENTRY *ae);
+void commit_alert_transitions(RRDHOST *host);
+
+void metadata_sync_shutdown_background(void);
+void metadata_sync_shutdown_background_wait(void);
 
 // UNIT TEST
 int metadata_unittest(void);
